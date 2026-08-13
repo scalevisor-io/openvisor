@@ -33,21 +33,45 @@ def _host(uri: str | None) -> str | None:
     return (parts.hostname or "").lower() or None
 
 
-def is_gitlab(uri: str | None) -> bool:
-    """True for a URL on a recognisable GitLab host: the configured platform host,
-    gitlab.com, or a host named gitlab.* / *.gitlab.*. Conservative on purpose -
-    an unrecognised self-hosted host stays 'other' and the customer picks the
-    platform explicitly in the UI (detect_provider ambiguity path)."""
+def is_platform_host(uri: str | None) -> bool:
+    """True when the URL points at the platform's OWN GitLab (§ssh remotes).
+
+    The instance knows its forge by two names and they need not match: the API
+    host from GITLAB_URL (`gitlab.example.com`, what /api/v4 answers on) and the
+    SSH host from GITLAB_SSH_HOST (`git.example.com:10022`, what git dials). A
+    repo cloned over the SSH name is still OUR project - recognising that is what
+    lets its API calls use the reachable API host and the platform token instead
+    of being treated as a stranger's forge."""
     host = _host(uri)
     if not host:
         return False
-    platform = _host(settings.gitlab_url) if settings.gitlab_url else None
-    return (host == platform or host == "gitlab.com"
+    api = _host(settings.gitlab_url) if settings.gitlab_url else None
+    ssh = (settings.gitlab_ssh_host or "").strip().lower() or None
+    return host == api or host == ssh
+
+
+def is_gitlab(uri: str | None) -> bool:
+    """True for a URL on a recognisable GitLab host: the configured platform
+    hosts (API or SSH), gitlab.com, or a host named gitlab.* / *.gitlab.*.
+    Conservative on purpose - an unrecognised self-hosted host stays 'other' and
+    the customer picks the platform explicitly in the UI (detect_provider
+    ambiguity path)."""
+    host = _host(uri)
+    if not host:
+        return False
+    return (is_platform_host(uri) or host == "gitlab.com"
             or host.startswith("gitlab.") or ".gitlab." in host)
 
 
 def customer_base_url(uri: str) -> str:
-    """https://<host> for a customer GitLab repo URL (API base host, not path)."""
+    """The API base for a GitLab repo URL (host only, not path).
+
+    A repo on the platform's own GitLab resolves to the configured GITLAB_URL:
+    deriving `https://<ssh-host>` from the remote is wrong whenever the SSH and
+    API hostnames differ - only the API one serves /api/v4, and on a tailnet
+    deployment the SSH name is not even routable from the api/worker pods."""
+    if is_platform_host(uri):
+        return settings.gitlab_url.rstrip("/")
     host = _host(uri)
     if not host:
         raise GitLabError(f"unrecognised GitLab URL: {uri}")

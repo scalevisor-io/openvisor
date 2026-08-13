@@ -899,7 +899,7 @@ def _work_git_facts(db: Session, project: Project, req: Request | None) -> dict 
             return github.pr_change_summary(target["owner"], target["repo"], number,
                                             token=_project_repo_token(db, project, "github"))
         if target["provider"] == "gitlab" and target.get("customer"):
-            token = _project_repo_token(db, project, "gitlab")
+            token = _project_repo_token(db, project, "gitlab", target.get("remote"))
             if not token:
                 return None
             return gitlab.customer_mr_change_summary(target["base_url"], token,
@@ -1274,7 +1274,7 @@ def _comment_source_issue(db: Session, project: Project, target: dict, req: Requ
                                         req.source_issue_iid, body,
                                         token=_project_repo_token(db, project, "github"))
         elif target["provider"] == "gitlab" and target.get("customer"):
-            token = _project_repo_token(db, project, "gitlab")
+            token = _project_repo_token(db, project, "gitlab", target.get("remote"))
             if token:
                 gitlab.customer_create_issue_note(target["base_url"], token,
                                                   target["path"], req.source_issue_iid, body)
@@ -1304,7 +1304,7 @@ def _fetch_watch_issues(db: Session, project: Project,
                           "GITHUB_TOKEN secret to the project Memory so I can poll issues")
         return github.list_open_issues(target["owner"], target["repo"], token=token), None
     if target["provider"] == "gitlab" and target.get("customer"):
-        token = _project_repo_token(db, project, "gitlab")
+        token = _project_repo_token(db, project, "gitlab", target.get("remote"))
         if not token:
             return None, ("No GitLab API token resolves for the push repository - add a "
                           "GITLAB_TOKEN secret to the project Memory so I can poll issues")
@@ -2199,7 +2199,7 @@ def _pr_closed_unmerged(db: Session, project: Project, target: dict | None,
             pr = github.get_pr(target["owner"], target["repo"], pr_number, token=token)
             return pr.get("state") == "closed" and not pr.get("merged")
         if provider == "gitlab" and target.get("customer"):
-            token = _project_repo_token(db, project, "gitlab")
+            token = _project_repo_token(db, project, "gitlab", target.get("remote"))
             if not token:
                 return None
             mr = gitlab.customer_get_mr(target["base_url"], token, target["path"], pr_number)
@@ -2229,7 +2229,7 @@ def _reset_stale_branch(db: Session, project: Project, target: dict) -> None:
         return
     provider = target.get("provider")
     try:
-        token = _project_repo_token(db, project, provider)
+        token = _project_repo_token(db, project, provider, target.get("remote"))
         if not token:
             return
         if provider == "github":
@@ -2641,13 +2641,21 @@ def _repo_target(r: ProjectRepo) -> dict:
     return {**common, "provider": "other"}
 
 
-def _project_repo_token(db: Session, project: Project, provider: str) -> str | None:
-    """The API token for this project's PR/MR on a customer repo: the customer's
-    own GITHUB_TOKEN/GITLAB_TOKEN Memory secret (decrypted) if set, else - for
-    GitHub only - the platform-wide settings.github_token, else None. None means
-    the customer opens/merges the change themselves (the branch push over the
-    deploy key needs no token). A GitLab customer host has no platform fallback
-    (settings.gitlab_token is for the platform host, not the customer's)."""
+def _project_repo_token(db: Session, project: Project, provider: str,
+                        uri: str | None = None) -> str | None:
+    """The API token for this project's PR/MR on a repo: the customer's own
+    GITHUB_TOKEN/GITLAB_TOKEN Memory secret (decrypted) if set, else a platform
+    fallback, else None. None means the customer opens/merges the change
+    themselves (the branch push over the deploy key needs no token).
+
+    The fallbacks differ by host, and `uri` is what keeps that safe. GitHub has
+    one platform token for github.com. GitLab has one only for the platform's
+    OWN GitLab (§ssh remotes: gitlab_url's host, or gitlab_ssh_host when the SSH
+    name differs) - the same server, so the platform token already grants access
+    and nobody has to mint a PAT for a forge we control. A customer GitLab
+    (gitlab.com, their self-hosted) still gets no fallback, and a caller that
+    passes no `uri` gets none either: the platform credential can only ever
+    travel to a host we own."""
     key = repolib.token_key(provider)
     if key:
         row = db.query(ProjectMemory).filter_by(project_id=project.id, key=key).first()
@@ -2660,6 +2668,8 @@ def _project_repo_token(db: Session, project: Project, provider: str) -> str | N
                 return val
     if provider == "github":
         return settings.github_token or None
+    if provider == "gitlab" and uri and gitlab.is_platform_host(uri):
+        return settings.gitlab_token or None
     return None
 
 
@@ -3703,7 +3713,7 @@ def _change_is_merged(db: Session, project: Project, target: dict | None,
                                token=token)
             return bool(pr.get("merged"))
         if target["provider"] == "gitlab" and target.get("customer"):
-            token = _project_repo_token(db, project, "gitlab")
+            token = _project_repo_token(db, project, "gitlab", target.get("remote"))
             if not token:
                 return False
             return gitlab.customer_get_mr(target["base_url"], token,
@@ -3821,7 +3831,7 @@ def _adopt_bound_branch(db: Session, project: Project, target: dict | None,
     if target is None or target.get("provider") not in ("github", "gitlab"):
         return False
     branch = _project_branch(project)
-    token = _project_repo_token(db, project, target["provider"])
+    token = _project_repo_token(db, project, target["provider"], target.get("remote"))
     if not token:
         return False
     try:
@@ -3957,7 +3967,7 @@ def _adopt_declared_change(db: Session, project: Project, thread: str,
             row = next((r for r in repos if _row_matches_url(r, provider, a, b)), None)
             if row is None:
                 continue
-            token = _project_repo_token(db, project, provider)
+            token = _project_repo_token(db, project, provider, row.ssh_uri)
             if token and _try_adopt(row, _fetch(row, token, num=num), token):
                 return True
     # 2) backticked branch-like tokens (`f/#67-…`) - the branch IS the identity,
@@ -3968,7 +3978,7 @@ def _adopt_declared_change(db: Session, project: Project, thread: str,
             branch_toks.append(tok)
     for tok in branch_toks[:8]:
         for row in repos:
-            token = _project_repo_token(db, project, row.provider)
+            token = _project_repo_token(db, project, row.provider, row.ssh_uri)
             if token and _try_adopt(row, _fetch(row, token, head=tok), token):
                 return True
     # 3) explicit "PR #N" / "MR !N" references
@@ -3979,7 +3989,7 @@ def _adopt_declared_change(db: Session, project: Project, thread: str,
             for row in repos:
                 if row.provider != provider:
                     continue
-                token = _project_repo_token(db, project, provider)
+                token = _project_repo_token(db, project, provider, row.ssh_uri)
                 if token and _try_adopt(row, _fetch(row, token, num=num), token):
                     return True
     return False
@@ -4254,7 +4264,8 @@ def _run_development_customer(db: Session, project: Project, target: dict,
     thread = _dev_thread(db, project)
     req = db.get(Request, project.dev_request_id) if project.dev_request_id else None
     # 'other' hosts have no PR/MR API: always the branch-push path (token=None).
-    token = None if provider == "other" else _project_repo_token(db, project, provider)
+    token = None if provider == "other" else _project_repo_token(
+        db, project, provider, target.get("remote"))
     ops = _remote_ops(target, token, _project_branch(project)) if token else None
     noun = {"github": "pull request", "gitlab": "merge request"}.get(provider, "pull request")
 

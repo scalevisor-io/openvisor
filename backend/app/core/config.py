@@ -168,6 +168,14 @@ class Settings(BaseSettings):
     gitlab_url: str
     gitlab_token: str
     gitlab_group: str
+    # §ssh remotes: the hostname the platform's OWN GitLab serves SSH on, when it
+    # differs from gitlab_url's host (`git.example.com` vs `gitlab.example.com`).
+    # Repos cloned over that name are still ours: recognising it makes them
+    # detect as `gitlab` and routes their API calls to gitlab_url with the
+    # platform token, instead of deriving an API base from the SSH host that may
+    # not serve /api/v4 (or, on a tailnet, may not be routable at all). Optional:
+    # empty means the two hostnames are the same and nothing changes.
+    gitlab_ssh_host: str = ""
     # GitHub (customer-owned repos). When a project's push repo is a github.com
     # URL, development pushes the agent branch there over the project deploy key
     # and opens a PR with a token (deploy keys can't open PRs). The token is
