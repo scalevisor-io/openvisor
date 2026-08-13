@@ -75,7 +75,7 @@ def _project(db, oid, tmp_path, **kw):
 
 def _probe(monkeypatch, *, token="tok", branch=True, pr=True,
            diff="+    TRACELIB_VERSION=4.6.0\n-    TRACELIB_VERSION=3.155.1\n"):
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov: token)
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: token)
     monkeypatch.setattr(tasks.github, "branch_exists",
                         lambda owner, repo, b, token=None: branch)
     monkeypatch.setattr(
@@ -166,7 +166,7 @@ def _declared_setup(db, org_id, tmp_path, monkeypatch, *, created_at, state="ope
         "Bumped the proxy image.\n\n"
         f"PR: https://github.com/acme/{pr_repo}/pull/68\n")
 
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, pr, prov: "tok")
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, pr, prov, uri=None: "tok")
     monkeypatch.setattr(
         tasks.github, "get_pr",
         lambda owner, repo, num, token=None: {
@@ -241,7 +241,7 @@ def test_declared_change_found_by_backticked_branch_and_pr_number(
             "Verified: branch `f/#67-bump-proxy` pushed as PR #68 against "
             "`master` (closes #67).\n")
 
-        monkeypatch.setattr(tasks, "_project_repo_token", lambda db, pr, prov: "tok")
+        monkeypatch.setattr(tasks, "_project_repo_token", lambda db, pr, prov, uri=None: "tok")
 
         def fake_find_open_pr(owner, repo, head, token=None):
             if repo == "infra" and head == "f/#67-bump-proxy":
