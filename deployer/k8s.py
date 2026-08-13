@@ -120,6 +120,23 @@ def _not_found(e: ApiException) -> bool:
     return e.status == 404
 
 
+def _apply_extra_host(pod_spec: dict, extra_host: str) -> None:
+    """Add the "host:target" tailnet alias to a sandbox pod spec (§ssh remotes).
+    hostAliases only accepts IPs, but extra_host may name a Service (e.g. the
+    Tailscale egress proxy, whose pod IP changes on restart), so resolve at
+    dispatch time; a literal IP passes through unchanged. Shared by the dev-run
+    and program paths - a program cloning a tailnet-only forge needs exactly the
+    same alias a dev run does."""
+    host, _, target = (extra_host or "").partition(":")
+    if not (host and target):
+        return
+    try:
+        ip = socket.gethostbyname(target)
+    except OSError as e:
+        raise HTTPException(502, f"extra_host target {target!r} does not resolve: {e}")
+    pod_spec["hostAliases"] = [{"ip": ip, "hostnames": [host]}]
+
+
 # --------------------------------------------------------------------------- demos
 
 def demo_pod_name(project_id: str) -> str:
@@ -754,17 +771,7 @@ def dev_run(body, cpu: str, mem: str) -> dict:
             pod_spec["containers"][0]["securityContext"] = {"privileged": True}
     if RUNNER_PULL_SECRETS:
         pod_spec["imagePullSecrets"] = [{"name": s} for s in RUNNER_PULL_SECRETS]
-    if body.extra_host:
-        host, _, target = body.extra_host.partition(":")
-        if host and target:
-            # hostAliases only accepts IPs, but extra_host may name a Service
-            # (e.g. the Tailscale egress proxy, whose pod IP changes on restart),
-            # so resolve at dispatch time; a literal IP passes through unchanged.
-            try:
-                ip = socket.gethostbyname(target)
-            except OSError as e:
-                raise HTTPException(502, f"extra_host target {target!r} does not resolve: {e}")
-            pod_spec["hostAliases"] = [{"ip": ip, "hostnames": [host]}]
+    _apply_extra_host(pod_spec, body.extra_host)
 
     try:
         batch.create_namespaced_job(NAMESPACE, {
@@ -838,7 +845,8 @@ def dev_run(body, cpu: str, mem: str) -> dict:
 # --------------------------------------------------------------------------- programs (§28)
 
 def _program_pod_manifest(name: str, cpu: str, mem: str, cpu_request: str,
-                          mem_request: str, ephemeral: bool) -> dict:
+                          mem_request: str, ephemeral: bool,
+                          extra_host: str = "") -> dict:
     """DinD pod for one program run: the demo manifest shape carrying the
     program label (own NetworkPolicy) and the admin-set per-program resource
     requests+limits. Instance sandboxes keep a {name}-data PVC (docker layer
@@ -847,6 +855,7 @@ def _program_pod_manifest(name: str, cpu: str, mem: str, cpu_request: str,
     manifest["metadata"]["labels"] = {"app": name, "openvisor/program": "true"}
     manifest["spec"]["containers"][0]["resources"] = _resources(
         cpu, mem, cpu_request, mem_request)
+    _apply_extra_host(manifest["spec"], extra_host)
     return manifest
 
 
@@ -975,7 +984,7 @@ def program_run(body, run_abs: str, work: str, log_path: str) -> dict:
         _ensure_program_pvc(name)
     core.create_namespaced_pod(NAMESPACE, _program_pod_manifest(
         name, body.cpu_limit, body.mem_limit, body.cpu_request, body.mem_request,
-        ephemeral))
+        ephemeral, body.extra_host))
     try:
         for _ in range(120):
             if _pod_phase(name) == "Running":
