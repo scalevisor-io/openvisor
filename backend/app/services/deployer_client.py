@@ -76,15 +76,19 @@ def redeploy_demo(project_id: str, subdomain: str, port: int, htpasswd: str,
 
 
 def run_program(name: str, run_dir: str, *, timeout_s: int, cpu_limit: str,
-                mem_limit: str, cpu_request: str = "", mem_request: str = "") -> dict:
+                mem_limit: str, cpu_request: str = "", mem_request: str = "",
+                extra_host: str = "") -> dict:
     """§28 program run in a throwaway DinD. The worker has staged the sandbox
     content under <workspaces>/<run_dir>/work. Same margin rule as dev runs:
     the HTTP client must outlive the deployer's own watchdog (plus DinD boot
-    and image pulls, hence the fatter margin)."""
+    and image pulls, hence the fatter margin). `extra_host` carries the same
+    tailnet git-host alias dev-run sandboxes get - programs clone customer
+    repositories too, and a tailnet-only forge is unreachable without it."""
     return _call("POST", "/programs/run", {
         "name": name, "run_dir": run_dir, "timeout_s": timeout_s,
         "cpu_limit": cpu_limit, "mem_limit": mem_limit,
         "cpu_request": cpu_request, "mem_request": mem_request,
+        "extra_host": extra_host,
     }, timeout=timeout_s + 300)
 
 

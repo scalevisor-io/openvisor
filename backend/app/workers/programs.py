@@ -121,7 +121,12 @@ def _execute(db: Session, run: ProgramRun, program: Program,
                 programs_svc.rel_run_dir(program.id, instance_id, run.id),
                 timeout_s=program.timeout_minutes * 60,
                 cpu_limit=program.cpu_limit, mem_limit=program.mem_limit,
-                cpu_request=program.cpu_request, mem_request=program.mem_request)
+                cpu_request=program.cpu_request, mem_request=program.mem_request,
+                # §ssh remotes: a program clones the customer's repositories, so
+                # it needs the tailnet git-host alias dev-run sandboxes get - a
+                # tailnet-only forge resolves to an unroutable CGNAT address and
+                # the clone just hangs without it.
+                extra_host=settings.git_extra_host)
         except deployer_client.DeployerError as exc:
             run.state, run.error = "failed", str(exc)[:512]
             _wlog(rdir, f"\n===== deployer error =====\n{exc}\n")

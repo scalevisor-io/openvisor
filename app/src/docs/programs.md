@@ -72,7 +72,7 @@ secrets:
 Non-negotiable rules:
 
 - The runnable service MUST be named `program`.
-- Keep `network_mode: host` (platform hostnames resolve from the sandbox) and the `logging.options.max-size: "1m"` cap.
+- Keep `network_mode: host` (platform hostnames resolve from the sandbox, including a git forge the platform reaches over a private network) and the `logging.options.max-size: "1m"` cap. Dropping it costs your program those hostnames: the sandbox carries them in its own `/etc/hosts`, which only a host-networked container shares.
 - Resource keys use `mem_reservation` / `mem_limit` / `cpus` fed by the platform-injected `PROGRAM_*` variables; the `:-` defaults keep local `docker compose run program` working.
 - Keep the `ssh_key` compose secret declared even if you do not use SSH - the platform writes the file before every run.
 
