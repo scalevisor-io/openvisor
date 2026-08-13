@@ -1,0 +1,19 @@
+{
+  "id": "sovereign-secure-docs",
+  "speciality": "sovereign-eu",
+  "sovereign": true,
+  "description": "An internal document-sharing app for a public administration: authenticated upload, list, and download with per-access audit logging. Must be deployable on EU-sovereign infrastructure with no US-hyperscaler managed services.",
+  "onboarding_answers": [
+    {
+      "q": "Data residency?",
+      "a": "EU only"
+    },
+    {
+      "q": "Managed services?",
+      "a": "None; self-hostable only"
+    }
+  ],
+  "from_scratch": true,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

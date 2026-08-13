@@ -1,0 +1,7 @@
+# Openvisor Helm chart (OCPA k8s layout: k8s/ at repo root, values.example.yaml + scripts/deploy-helm.sh)
+apiVersion: v2
+name: openvisor
+description: Openvisor platform - FastAPI API, Celery workers, SPA, landing, MCP server, deployer (DinD demo pods + dev-run Jobs) behind a Gateway API edge (in-cluster Traefik by default)
+type: application
+version: 0.1.0
+appVersion: "alpha"

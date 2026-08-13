@@ -1,0 +1,142 @@
+---
+import Base from './Base.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+
+export interface Props {
+  title: string;
+  description: string;
+  path: string;
+  heading: string;
+  updated: string;
+}
+
+const { title, description, path, heading, updated } = Astro.props;
+---
+
+<Base title={title} description={description} path={path}>
+  <Header />
+  <main class="section">
+    <article class="container legal">
+      <p class="eyebrow">Legal</p>
+      <h1>{heading}</h1>
+      <p class="legal-updated">Last updated: {updated}</p>
+      <slot />
+    </article>
+  </main>
+  <Footer />
+</Base>
+
+<style is:global>
+  .legal {
+    max-width: 46rem;
+  }
+
+  .legal h1 {
+    font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+  }
+
+  .legal-updated {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 2.5rem;
+  }
+
+  .legal h2 {
+    font-size: 1.35rem;
+    margin-top: 2.75rem;
+  }
+
+  .legal h3 {
+    font-size: 1.05rem;
+    margin-top: 1.75rem;
+  }
+
+  .legal p,
+  .legal li {
+    color: var(--text);
+    font-size: 0.98rem;
+  }
+
+  .legal ul {
+    padding-left: 1.25rem;
+    margin: 0 0 1rem;
+  }
+
+  .legal li {
+    margin-bottom: 0.4rem;
+  }
+
+  .legal li::marker {
+    color: var(--text-muted);
+  }
+
+  .legal strong {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .legal .legal-callout {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    padding: 1rem 1.25rem;
+    margin: 1.25rem 0;
+  }
+  /* Corner arcs (the app's accent motif): gradient start top-left, gradient
+     end bottom-right, instead of an edge bar. */
+  .legal .legal-callout::before,
+  .legal .legal-callout::after {
+    content: '';
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+  }
+  .legal .legal-callout::before {
+    top: 2px;
+    left: 2px;
+    border-top: 2px solid var(--speed-from);
+    border-left: 2px solid var(--speed-from);
+    border-top-left-radius: 6px; /* concentric: card radius-sm 8 - inset 2 */
+  }
+  .legal .legal-callout::after {
+    right: 2px;
+    bottom: 2px;
+    border-bottom: 2px solid var(--speed-to);
+    border-right: 2px solid var(--speed-to);
+    border-bottom-right-radius: 6px;
+  }
+
+  .legal .legal-callout p:last-child {
+    margin-bottom: 0;
+  }
+
+  .legal table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+    margin: 0 0 1rem;
+  }
+
+  .legal th,
+  .legal td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--border);
+  }
+
+  .legal th {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+  }
+</style>

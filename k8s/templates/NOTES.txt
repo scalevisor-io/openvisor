@@ -1,0 +1,20 @@
+Openvisor deployed to namespace {{ .Release.Namespace }} (domain: {{ .Values.domain }}).
+
+Gateway address (the platform's public IP):
+  kubectl -n {{ .Release.Namespace }} get gateway {{ .Values.gateway.name }} -o jsonpath='{.status.addresses[0].value}'
+
+If you deployed with a placeholder domain, rebuild+redeploy with DEPLOY_DOMAIN=<that-IP>.nip.io
+(the landing image bakes its app link at build time, so rebuild it too, not just deploy):
+  export DEPLOY_DOMAIN=$(kubectl -n {{ .Release.Namespace }} get gateway {{ .Values.gateway.name }} -o jsonpath='{.status.addresses[0].value}').nip.io
+  DEPLOY_ENV={{ .Values.deployEnv }} ./scripts/deploy-helm.sh build-push
+  DEPLOY_ENV={{ .Values.deployEnv }} ./scripts/deploy-helm.sh deploy
+
+Endpoints:
+  {{ include "openvisor.landingBaseUrl" . }}          (landing)
+  {{ include "openvisor.appBaseUrl" . }}          (SPA; /api + /ws -> api)
+  {{ .Values.scheme }}://mcp.{{ .Values.domain }}   (MCP server)
+{{- if .Values.mailpit.enabled }}
+  {{ .Values.scheme }}://mail.{{ .Values.domain }}  (mailpit)
+{{- end }}
+
+Demos appear as {{ .Values.scheme }}://<uuid-prefix>-<slug>.{{ .Values.domain }} (basic-auth protected).

@@ -1,0 +1,137 @@
+---
+import Legal from '../layouts/Legal.astro';
+import { brandName } from '../lib/site';
+import content from '../lib/content';
+
+const { entity, consultant, contactEmail, termsUpdated } = content.legal;
+---
+
+<Legal
+  title={`Terms of service - ${brandName}`}
+  description={`The terms governing your use of ${brandName}: an experimental, AI-assisted consulting platform operated by ${entity}.`}
+  path="/terms"
+  heading="Terms of service"
+  updated={termsUpdated}
+>
+  <p>
+    These terms govern your use of <strong>{brandName}</strong> (the "Platform"), a service
+    operated by <strong>{entity}</strong>, represented by {consultant} ("we", "us"). By
+    creating an account or using the Platform you accept these terms. If you use the Platform on
+    behalf of a company, you confirm you are authorized to bind it.
+  </p>
+
+  <h2>1. The service</h2>
+  <p>The Platform offers two delivery modes:</p>
+  <ul>
+    <li><strong>Curated AI MVP</strong> ("AI-curated works"): AI agents build a software MVP under the direction and supervision of {consultant}. You follow the build live, read the code as pull requests, and approve the delivery.</li>
+    <li><strong>Direct quote</strong>: a bespoke engagement hand-built by {consultant}, scoped and priced through a custom quote.</li>
+  </ul>
+  <p>
+    The Platform is in <strong>alpha</strong>. It is an <strong>experimental product</strong>,
+    provided without any availability commitment or service-level agreement. Features may change,
+    be interrupted, or be withdrawn at any time.
+  </p>
+
+  <h2>2. Experimental product - AI-curated works and liability</h2>
+  <div class="legal-callout">
+    <p>
+      <strong>AI-curated works are experimental and delivered "as is".</strong> Any work produced
+      by AI agents through the Platform does not engage {entity} in any liability, to the
+      maximum extent permitted by applicable law. This is an experimental product: you are solely
+      responsible for reviewing, testing, and validating every AI-curated deliverable before any
+      use, and for any consequence of using it.
+    </p>
+  </div>
+  <p>
+    {entity} gives no warranty, express or implied, that AI-curated works are free of defects,
+    secure, fit for a particular purpose, or compliant with regulations applicable to your
+    activity. Human review by {consultant} is a quality practice, not a guarantee of the
+    output. Where applicable law does not allow a full exclusion of liability (in particular in
+    case of gross negligence, willful misconduct, or mandatory consumer rights), {entity}'s
+    total liability is capped at the amounts you paid for the project concerned in the 12 months
+    preceding the claim.
+  </p>
+
+  <h2>3. MVP only - do not use against production infrastructure</h2>
+  <div class="legal-callout">
+    <p>
+      <strong>AI-curated works are for MVP and demonstration purposes only.</strong> We strongly
+      advise against running, connecting, or deploying an AI-curated work on or against
+      production infrastructure, production data, or any system whose failure could cause harm.
+      This is for MVP!
+    </p>
+    <p>
+      <strong>For production deployments, use the Direct quote path:</strong> a production-grade
+      engagement reviewed, hardened, and delivered by {consultant} under a separate,
+      explicitly agreed scope.
+    </p>
+  </div>
+  <p>
+    If you nonetheless choose to use an AI-curated work in production or against production
+    systems, you do so entirely at your own risk and against our express advice, and you release
+    {entity} from any resulting claim to the maximum extent permitted by law.
+  </p>
+
+  <h2>4. Accounts</h2>
+  <ul>
+    <li>You must provide accurate information and keep your credentials confidential; you are responsible for activity under your account.</li>
+    <li>A verified email address is required before creating a project, because project lifecycle notifications are sent by email.</li>
+    <li>We may suspend or close accounts that breach these terms or threaten the security of the Platform.</li>
+  </ul>
+
+  <h2>5. Credits, quotes, and payment</h2>
+  <ul>
+    <li>Curated AI MVPs are paid with <strong>prepaid credits</strong> (1 credit = 1 EUR), topped up through Stripe. Builds consume credits based on actual AI usage, metered live on your dashboard.</li>
+    <li>Estimates shown before a build are good-faith estimates, not fixed prices; actual consumption may differ.</li>
+    <li>Direct-quote work is priced by a custom quote you explicitly accept before work starts. Submitting a request is free.</li>
+    <li>Credits are not transferable between organizations. For questions about refunds of unused credits, contact us at <a href={`mailto:${contactEmail}`}>{contactEmail}</a>; statutory rights, where applicable, are unaffected.</li>
+  </ul>
+
+  <h2>6. Your content and obligations</h2>
+  <ul>
+    <li>You warrant that the content you submit (project descriptions, attachments, code, credentials) is lawful and that you hold the rights needed to share it.</li>
+    <li>You must not request work that is illegal, infringes third-party rights, or falls under our review triggers for prohibited or sensitive actions (for example malicious tooling or acting on infrastructure you do not control); such requests are refused or routed to human review.</li>
+    <li>Credentials you store in project Memory are shared at your own initiative so the build agent can use them; scope them to the minimum access needed and rotate them after the engagement.</li>
+    <li>You must not attempt to probe, disrupt, or access data on the Platform that is not yours.</li>
+  </ul>
+
+  <h2>7. Intellectual property</h2>
+  <ul>
+    <li>Upon full payment, the code delivered to your repository for your project is yours.</li>
+    <li>{entity} retains all rights to the Platform itself, its knowledge base, prompts, tooling, and pre-existing know-how, which are licensed to no one through a delivery.</li>
+    <li>Deliverables may include open-source components, which remain governed by their own licenses.</li>
+  </ul>
+
+  <h2>8. Demos</h2>
+  <p>
+    Live demos run on temporary, password-protected subdomains for evaluation only. They are not
+    hosting: demos can be stopped, restarted, or removed at any time and carry no uptime or data
+    persistence commitment.
+  </p>
+
+  <h2>9. Termination</h2>
+  <p>
+    You can close your account at any time. We can terminate or suspend access for breach of
+    these terms, with notice where reasonably possible. Sections 2, 3, and 7 survive termination.
+    Personal data is handled as described in the <a href="/privacy">privacy policy</a>.
+  </p>
+
+  <h2>10. Changes to these terms</h2>
+  <p>
+    We may update these terms as the service evolves. Material changes are announced on the
+    Platform or by email before they take effect; continued use after that constitutes
+    acceptance.
+  </p>
+
+  <h2>11. Governing law and jurisdiction</h2>
+  <p>
+    These terms are governed by the law of the country where {entity} is established. Any dispute
+    that cannot be resolved amicably is submitted to the competent courts of that country, without
+    prejudice to mandatory jurisdiction rules protecting consumers.
+  </p>
+
+  <h2>12. Contact</h2>
+  <p>
+    Questions about these terms: <a href={`mailto:${contactEmail}`}>{contactEmail}</a>.
+  </p>
+</Legal>

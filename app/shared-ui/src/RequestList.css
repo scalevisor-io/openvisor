@@ -1,0 +1,138 @@
+/* Shared request list. Uses design tokens both apps define, with literal
+   fallbacks. Badge hues key off semantic kinds (ok|info|warn|err|muted). */
+.rq { display: flex; flex-direction: column; gap: 1rem; }
+.rq-search {
+  width: 100%;
+  max-width: 360px;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--gray-0, #fff);
+  color: var(--text, inherit);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 4px);
+  outline: none;
+}
+.rq-search:focus {
+  border-color: var(--speed-from, #4f46e5);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--speed-from, #4f46e5) 12%, transparent);
+}
+.rq-empty {
+  text-align: center;
+  color: var(--text-dim, #6b7280);
+  font-size: 0.9rem;
+  padding: 1.25rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius, 8px);
+  background: var(--surface, #fff);
+}
+.rq-list { display: flex; flex-direction: column; gap: 0.3rem; }
+/* One line per request: badges, title and PR chips read left to right, usage and
+   date sit at the right edge. The row wraps instead of squashing when narrow. */
+.rq-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius, 8px);
+  padding: 0.45rem 0.7rem;
+  background: var(--surface, #fff);
+}
+.rq-card:hover {
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 40%, var(--border, #e5e7eb));
+}
+.rq-card-main {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.55rem;
+  min-width: 0;
+  flex: 1 1 20rem;
+}
+.rq-badges { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.rq-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  text-transform: capitalize;
+  letter-spacing: 0.02em;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--text-dim, #6b7280);
+  background: var(--surface-2, #f6f7fa);
+}
+.rq-status-ok {
+  color: var(--ok-text, #15803d);
+  border-color: color-mix(in srgb, var(--ok, #22c55e) 40%, transparent);
+  background: color-mix(in srgb, var(--ok, #22c55e) 10%, transparent);
+}
+.rq-status-warn {
+  color: var(--warn-text, #b45309);
+  border-color: color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent);
+  background: color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent);
+}
+.rq-status-info {
+  color: var(--speed-text, #4338ca);
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 40%, transparent);
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 10%, transparent);
+}
+.rq-status-err {
+  color: var(--danger-text, #b91c1c);
+  border-color: color-mix(in srgb, var(--danger, #ef4444) 40%, transparent);
+  background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent);
+}
+/* Long titles ellipsize rather than wrapping the row open; the full text is in
+   the title attribute and on the request's own page. */
+.rq-title {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rq-right {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--text-faint, #9ca3af);
+}
+.rq-right > * + *::before {
+  content: "· ";
+  color: var(--text-faint, #9ca3af);
+}
+.rq-price {
+  background: var(--gradient-speed, linear-gradient(135deg, #4f46e5, #0ea5e9));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  font-weight: 600;
+}
+.rq-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.rq-pbtn {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-2, #f6f7fa);
+  color: var(--text, inherit);
+  cursor: pointer;
+}
+.rq-pbtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.rq-page { font-size: 0.72rem; color: var(--text-faint, #9ca3af); }

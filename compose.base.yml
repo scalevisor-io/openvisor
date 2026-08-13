@@ -1,0 +1,229 @@
+name: openvisor
+
+x-backend-env: &backend-env
+  env_file: .env
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openvisor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openvisor}
+      POSTGRES_DB: ${POSTGRES_DB:-openvisor}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-openvisor}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [internal]
+    restart: unless-stopped
+
+  # Retrieval engine for the local /knowledge KB (hybrid BM25 + vector). No host
+  # port (internal only); the per-instance data volume is auto-prefixed with the
+  # compose project name so parallel worktrees never collide. MEILI_MASTER_KEY is
+  # required (OCPA: crash if unset). api/worker/beat reach it via MEILI_URL in .env.
+  meilisearch:
+    image: getmeili/meilisearch:v1.13
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY}
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili:/meili_data
+    networks: [internal]
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    <<: *backend-env
+    command: ["/app/entrypoint.sh", "api"]
+    volumes:
+      - workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal, edge]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-api.rule=Host(`app.${DEPLOY_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-api.priority=100
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-api.loadbalancer.server.port=8000
+
+  worker:
+    build: ./backend
+    <<: *backend-env
+    command: ["/app/entrypoint.sh", "worker"]
+    volumes:
+      - workspaces:/workspaces
+      - ./knowledge:/knowledge:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal]
+    restart: unless-stopped
+
+  beat:
+    build: ./backend
+    <<: *backend-env
+    command: ["/app/entrypoint.sh", "beat"]
+    volumes:
+      - ./knowledge:/knowledge:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [internal]
+    restart: unless-stopped
+
+  mcp:
+    build: ./mcp
+    <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [internal, edge]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-mcp.rule=Host(`mcp.${DEPLOY_DOMAIN}`)
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-mcp.loadbalancer.server.port=8100
+
+  deployer:
+    build: ./deployer
+    <<: *backend-env
+    environment:
+      WORKSPACES_VOLUME: ${COMPOSE_PROJECT_NAME:-openvisor}_workspaces
+      PLATFORM_NETWORK: ${COMPOSE_PROJECT_NAME:-openvisor}_internal
+      RUNNER_IMAGE: ${COMPOSE_PROJECT_NAME:-openvisor}-runner
+      DEMOS_NETWORK: ${DEMOS_NETWORK:-openvisor-demos}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik-dynamic:/traefik-dynamic
+      - workspaces:/workspaces
+    networks: [internal]
+    restart: unless-stopped
+
+  # Built only so the image exists for the deployer to launch as a sibling
+  # container; never started as a long-running service.
+  runner:
+    build: ./runner
+    image: ${COMPOSE_PROJECT_NAME:-openvisor}-runner
+    profiles: ["build-only"]
+    command: ["--help"]
+
+  context7:
+    image: node:20-alpine
+    # pinned: newer releases require an Upstash Redis session store for HTTP transport
+    command: ["npx", "-y", "@upstash/context7-mcp@1.0.14", "--transport", "http", "--port", "3000"]
+    environment:
+      CONTEXT7_API_KEY: ${CONTEXT7_API_KEY:-}
+    # demos network too (like chrome): program sandboxes (§28) receive
+    # CONTEXT7_MCP_URL and must be able to resolve/reach it from their DinD
+    networks: [internal, demos]
+    restart: unless-stopped
+
+  chrome:
+    image: zenika/alpine-chrome:latest
+    command:
+      - --headless
+      - --disable-gpu
+      - --no-sandbox
+      - --remote-debugging-address=0.0.0.0
+      - --remote-debugging-port=9222
+      - --remote-allow-origins=*
+    networks: [internal, demos]
+    restart: unless-stopped
+
+  websearch-mcp:
+    # Web-search MCP for dev runs (§KB `websearch` kind): stateless bridge to the
+    # configured provider's search API (mcp/websearch.py, one route per provider),
+    # the KB row's key forwarded per request as Authorization: Bearer. Internal-only,
+    # same image as the mcp sidecar; the worker injects WEBSEARCH_MCP_URL/<provider>/mcp
+    # into a build's mcp.json for every enabled+selected websearch KB row.
+    build: ./mcp
+    command: ["uvicorn", "websearch:app", "--host", "0.0.0.0", "--port", "3000"]
+    networks: [internal]
+    restart: unless-stopped
+
+  browser-mcp:
+    # The dev agent's browser tool: Playwright MCP in HTTP mode bridging over CDP
+    # to the shared `chrome` service - no browser binaries here, page loads run in
+    # chrome, which reaches the runner container's dev server over `internal`.
+    # Internal-only: dev runners consume it via BROWSER_MCP_URL; demos and program
+    # sandboxes never see it. The CDP hop rides an in-container localhost relay
+    # because Chromium rejects DevTools HTTP requests whose Host header is a DNS
+    # name (IP/localhost only); the endpoint pins 127.0.0.1 because `localhost` can
+    # resolve to ::1, which the relay does not bind. It re-resolves `chrome` per connection, so
+    # a chrome restart never strands it.
+    image: node:20-alpine
+    command:
+      - sh
+      - -c
+      - |
+        node -e "const net=require('net');net.createServer(s=>{const c=net.connect(9222,'chrome');s.pipe(c).pipe(s);s.on('error',()=>c.destroy());c.on('error',()=>s.destroy());}).listen(9222,'127.0.0.1')" &
+        exec npx -y @playwright/mcp@0.0.79 --port 3000 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint http://127.0.0.1:9222
+    environment:
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    networks: [internal]
+    restart: unless-stopped
+
+  traefik:
+    # v3.6+: Docker Engine 29 dropped API < 1.40; v3.1's docker provider pins 1.24
+    image: traefik:v3.6
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/static:/etc/traefik
+      - ./traefik/certs:/certs:ro
+      - traefik-dynamic:/dynamic
+    networks: [edge, demos]
+    restart: unless-stopped
+
+  landing:
+    build: ./landing
+    networks: [edge]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-landing.rule=Host(`${DEPLOY_DOMAIN}`) || Host(`www.${DEPLOY_DOMAIN}`)
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-landing.loadbalancer.server.port=80
+
+  app:
+    build: ./app
+    networks: [edge]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-app.rule=Host(`app.${DEPLOY_DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-app.priority=10
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-app.loadbalancer.server.port=80
+
+volumes:
+  pgdata:
+  meili:
+  workspaces:
+  traefik-dynamic:
+
+networks:
+  internal:
+  edge:
+  demos:
+    name: ${DEMOS_NETWORK:-openvisor-demos}
+    attachable: true

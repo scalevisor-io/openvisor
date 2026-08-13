@@ -1,0 +1,15 @@
+{
+  "id": "webapp-url-shortener",
+  "speciality": "general-webapp",
+  "description": "A URL shortener with a create form, a redirect endpoint, and a per-link click counter shown on a stats page.",
+  "onboarding_answers": [
+    {
+      "q": "Custom slugs?",
+      "a": "Optional"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

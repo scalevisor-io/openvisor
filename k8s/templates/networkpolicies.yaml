@@ -1,0 +1,264 @@
+{{- if .Values.networkPolicy.enabled }}
+# Restores the locked compose isolation property (demos live on the separate
+# openvisor-demos network, unreachable from postgres/redis/deployer). On the flat
+# pod network these policies re-impose it. REQUIRES a policy-enforcing CNI
+# (Cilium, Calico...); with a non-enforcing CNI they are silently no-ops, so the
+# deployer API being unauthenticated is the residual risk - keep it internal.
+#
+# Demo pods (untrusted customer code): ingress only from the gateway; egress only
+# DNS + public internet (image pulls). No path to any in-cluster platform service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: demo-isolation
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      openvisor/demo: "true"
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: traefik
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
+---
+# Dev-run Jobs (untrusted agent build): egress to DNS, the in-cluster MCP tools
+# (context7, browser-mcp, websearch-mcp) and the public internet (git remotes,
+# package registries) - but NOT postgres/redis/deployer/api, and NOT link-local/
+# cloud metadata (169.254.0.0/16, blocked via privateCidrs so the agent can't SSRF
+# the instance metadata service for node credentials). Set networkPolicy.egressAllowlist
+# to switch to a Copilot-style default-deny allowlist. Ingress only from the
+# chrome pod: the agent's browser tool (browser-mcp) drives chrome, whose page
+# loads must reach the dev server the agent starts inside its own pod.
+#
+# §egress: this policy governs UNLOCKED runs only - a run the admin's per-run
+# lockdown labels `openvisor/egress-locked` is excluded here (NetworkPolicies are
+# additive, so the union of a broad + a narrow policy is broad; the exclusion is
+# what makes the lockdown policy below actually restrict). Locked runs get all
+# their rules from `devrun-egress-locked`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devrun-isolation
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      openvisor/dev-run: "true"
+    matchExpressions:
+      - { key: openvisor/egress-locked, operator: DoesNotExist }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: chrome
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: context7
+      ports:
+        - { protocol: TCP, port: 3000 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: browser-mcp
+      ports:
+        - { protocol: TCP, port: 3000 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: websearch-mcp
+      ports:
+        - { protocol: TCP, port: 3000 }
+    # The platform-GitLab SSH remote runs through the Tailscale operator egress
+    # proxy (k8s/tailscale-egress.example.yaml): the deployer hostAliases the git
+    # host to the proxy's in-cluster IP, which privateCidrs would otherwise block
+    # (pod/CGNAT ranges) and silently sever every fetch/push. Allow that namespace
+    # explicitly so the restricted modes below never cut the runner off its remote;
+    # on clusters without the tailscale namespace the selector matches nothing.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+    {{- if .Values.networkPolicy.devRunOpenEgress }}
+    # Open-egress mode (operator overlay, meant as temporary): dev runs may reach
+    # everything outbound EXCEPT link-local - the cloud metadata service
+    # (169.254.169.254) stays blocked, an SSRF there steals node credentials and
+    # can never be a legitimate build dependency.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+    {{- else if .Values.networkPolicy.egressAllowlist }}
+    # Default-deny allowlist mode: only these CIDRs are reachable outbound.
+    - to:
+      {{- range .Values.networkPolicy.egressAllowlist }}
+        - ipBlock:
+            cidr: {{ . }}
+      {{- end }}
+    {{- else }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
+    {{- end }}
+---
+# §egress LOCKDOWN (K8s enforcement). When the admin enables the egress allowlist
+# (/admin/settings), the deployer labels the run's Job pod `openvisor/egress-locked`
+# and stands up a per-run filtering proxy (labelled `openvisor/egress-proxy`). This
+# policy is the hard boundary: a locked run may egress ONLY to DNS, the in-cluster
+# tools, the Tailscale git path, and its proxy - NO direct public internet. The
+# proxy (own policy below) then permits just the allowlisted hosts, so an agent that
+# ignores HTTP(S)_PROXY still has no route out except through the filter. Ingress
+# from chrome is preserved (the browser tool). This policy exists regardless of the
+# Helm egress mode above; the label is what activates it, set per run at dispatch.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devrun-egress-locked
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      openvisor/egress-locked: "true"
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: chrome
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector: { matchLabels: { app: context7 } }
+        - podSelector: { matchLabels: { app: browser-mcp } }
+        - podSelector: { matchLabels: { app: websearch-mcp } }
+      ports:
+        - { protocol: TCP, port: 3000 }
+    # git-over-SSH to the platform GitLab still rides the Tailscale egress proxy
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tailscale
+    # the per-run filtering proxy - the ONLY public-internet path for a locked run
+    - to:
+        - podSelector:
+            matchLabels:
+              openvisor/egress-proxy: "true"
+      ports:
+        - { protocol: TCP, port: 3128 }
+---
+# §egress: the per-run filtering proxy's own policy. It reaches the public internet
+# (that is its job - it self-restricts to the allowlist in userspace) but is denied
+# the cluster-internal/private ranges + cloud metadata, so even a bypassed proxy
+# can't be pivoted onto postgres/redis/deployer or the node metadata service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy-isolation
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      openvisor/egress-proxy: "true"
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
+---
+# Program-run sandboxes (§28, admin-authored code processing customer inputs):
+# egress to DNS, context7 (the one in-cluster tool their env carries) and the
+# public internet (base images, the program's own data sources / LLM endpoint)
+# - but NOT postgres/redis/deployer/api/chrome/browser-mcp. No ingress: programs
+# are run-to-exit jobs, nothing routes to them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: program-isolation
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      openvisor/program: "true"
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: context7
+      ports:
+        - { protocol: TCP, port: 3000 }
+    {{- if .Values.networkPolicy.egressAllowlist }}
+    # Default-deny allowlist mode: only these CIDRs are reachable outbound.
+    - to:
+      {{- range .Values.networkPolicy.egressAllowlist }}
+        - ipBlock:
+            cidr: {{ . }}
+      {{- end }}
+    {{- else }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,248 @@
+"""Repo-management policy shared by the projects API and the dev worker: provider
+detection from a URL, the per-provider auth check, and the auto-merge token key.
+github.py / gitlab.py hold the transport; this is the thin policy layer on top."""
+import os
+import re
+import subprocess
+import tempfile
+import urllib.parse
+from pathlib import Path
+
+from app.core.config import settings
+from app.services import github, gitlab
+
+# Providers whose PR/MR flow we can auto-merge. "other" repos are still buildable
+# (branch pushed over the deploy key, customer merges) but never auto-merged.
+AUTO_MERGE_PROVIDERS = ("github", "gitlab")
+
+
+def detect_provider(uri: str | None) -> str:
+    """github | gitlab | other from the repo URL host. 'other' = a host with no
+    PR/MR API integration; the UI disables auto-merge and asks the user to pick a
+    platform when it's actually a self-hosted GitHub/GitLab on an odd domain."""
+    if github.is_github(uri):
+        return "github"
+    if gitlab.is_gitlab(uri):
+        return "gitlab"
+    return "other"
+
+
+def token_key(provider: str) -> str | None:
+    """The Memory secret name whose PAT authenticates auto-merge for this provider."""
+    return {"github": "GITHUB_TOKEN", "gitlab": "GITLAB_TOKEN"}.get(provider)
+
+
+def default_git_identity() -> tuple[str, str]:
+    """(name, email) the agent commits as when a project sets no override. Derived
+    from the brand so a white-label spoke never signs commits with another brand's
+    identity."""
+    return f"{settings.brand_name} agent", f"agent@{settings.deploy_domain}"
+
+
+def git_identity(project) -> tuple[str, str]:
+    """(name, email) for THIS project's commits: the per-project override where
+    set, else the instance default. The single resolution point - the worker, the
+    API payload and the UI hint all read it, so they can never disagree."""
+    name, email = default_git_identity()
+    return ((project.git_author_name or "").strip() or name,
+            (project.git_author_email or "").strip() or email)
+
+
+def check_auth(provider: str, ssh_uri: str, token: str) -> tuple[bool, str]:
+    """Authenticated repo-access check gating the auto-merge toggle: a real API
+    call confirming the token is valid AND can reach THAT repo. Returns
+    (ok, detail). Only github/gitlab are checkable."""
+    if provider == "github":
+        try:
+            owner, repo = github.parse_repo(ssh_uri)
+        except github.GitHubError as exc:
+            return False, str(exc)
+        return github.check_repo_access(owner, repo, token)
+    if provider == "gitlab":
+        try:
+            base_url = gitlab.customer_base_url(ssh_uri)
+            path = gitlab.parse_repo_path(ssh_uri)
+        except gitlab.GitLabError as exc:
+            return False, str(exc)
+        return gitlab.check_repo_access(base_url, path, token)
+    return False, "Auto-merge is only available for GitHub or GitLab repositories."
+
+
+def is_ssh_uri(uri: str | None) -> bool:
+    """True for a git SSH remote the customer authenticates with the deploy key:
+    an `ssh://…` URL or the scp-like `git@host:path`. https:// / http:// remotes
+    (and the platform repo, which the platform pushes with its own key) are not
+    deploy-key-over-SSH and never need the SSH reachability check."""
+    u = (uri or "").strip()
+    if u.startswith("ssh://"):
+        return True
+    if "://" in u:  # http(s):// or any other scheme
+        return False
+    # scp-like `user@host:path`: an `@`, and a `:` whose left side carries no `/`.
+    host, sep, _ = u.partition(":")
+    return sep == ":" and "@" in host and "/" not in host
+
+
+def check_ssh(ssh_uri: str, deploy_private_key: str) -> tuple[bool, str]:
+    """Reachability + deploy-key-access check for a customer's own remote repo,
+    run BEFORE development so a missing/mis-added deploy key surfaces here instead
+    of failing the dev run at push time. Runs `git ls-remote --heads <ssh_uri>`
+    over SSH with the project's deploy key in a throwaway tempdir, BatchMode (never
+    prompts), accept-new host key, tight timeout. Returns (ok, detail); never leaks
+    the key. Only meaningful for an SSH URI (git@… / ssh://) - an https:// or the
+    platform repo returns a clear, non-actionable note. Shells out, so callers run
+    it in a threadpool."""
+    uri = (ssh_uri or "").strip()
+    if not uri:
+        return False, "No repository URL to check."
+    if not is_ssh_uri(uri):
+        return False, ("SSH reachability applies to an SSH remote (git@host:path). This "
+                       "repository is reached over HTTPS or managed by the platform, so it "
+                       "doesn't use the project's deploy key.")
+    key = (deploy_private_key or "").strip()
+    if not key:
+        return False, "This project has no deploy key yet - it's generated when the project is created."
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            keyfile = Path(td) / "id"
+            keyfile.write_text(key + "\n")
+            keyfile.chmod(0o600)
+            env = {**os.environ,
+                   "GIT_SSH_COMMAND": (f"ssh -i {keyfile} -o IdentitiesOnly=yes "
+                                       "-o BatchMode=yes -o StrictHostKeyChecking=accept-new "
+                                       "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"),
+                   "GIT_TERMINAL_PROMPT": "0"}
+            proc = subprocess.run(["git", "ls-remote", "--heads", uri], env=env,
+                                  capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return False, "Couldn't reach the host in time (timed out). Check the URL and that the host is reachable."
+    except Exception as exc:  # pragma: no cover - defensive; git missing etc.
+        return False, f"Couldn't run the SSH check ({exc})."
+    if proc.returncode == 0:
+        return True, "Reachable. The deploy key has access to this repository."
+    err = (proc.stderr or "").strip()
+    detail = err.splitlines()[-1].strip() if err else "unknown error"
+    low = err.lower()
+    if "permission denied" in low or "publickey" in low:
+        return False, ("The repository isn't authorized for this project's deploy key yet - add "
+                       "the public key shown above as a deploy key on the repository, then retry.")
+    if ("could not resolve" in low or "name or service not known" in low
+            or "no route to host" in low or "connection refused" in low
+            or "connection timed out" in low or "network is unreachable" in low
+            or "timed out" in low):
+        return False, f"Couldn't reach the host ({detail})."
+    if "repository not found" in low or "does not appear to be a git repository" in low:
+        return False, ("Reached the host, but the repository path wasn't found - check the URL "
+                       "(and that the deploy key is on the intended repository).")
+    return False, f"SSH check failed ({detail})."
+
+
+def detect_default_branch(ssh_uri: str, deploy_private_key: str) -> str | None:
+    """The remote's real default branch (its HEAD symref) over SSH with the
+    project's deploy key - `git ls-remote --symref <uri> HEAD` prints
+    `ref: refs/heads/<name>\tHEAD`. Hardcoding "main" broke repos whose default
+    is "master": the runner read the mismatch as an empty remote and built an
+    orphan branch. None on any failure (caller falls back); provider-agnostic
+    (works on github/gitlab/other alike, no API token needed)."""
+    uri = (ssh_uri or "").strip()
+    key = (deploy_private_key or "").strip()
+    if not uri or not key or not is_ssh_uri(uri):
+        return None
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            keyfile = Path(td) / "id"
+            keyfile.write_text(key + "\n")
+            keyfile.chmod(0o600)
+            env = {**os.environ,
+                   "GIT_SSH_COMMAND": (f"ssh -i {keyfile} -o IdentitiesOnly=yes "
+                                       "-o BatchMode=yes -o StrictHostKeyChecking=accept-new "
+                                       "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"),
+                   "GIT_TERMINAL_PROMPT": "0"}
+            proc = subprocess.run(["git", "ls-remote", "--symref", uri, "HEAD"], env=env,
+                                  capture_output=True, text=True, timeout=15)
+    except Exception:  # noqa: BLE001 - timeout, git missing: caller falls back
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("ref:") and line.rstrip().endswith("HEAD"):
+            ref = line.split()[1]
+            if ref.startswith("refs/heads/"):
+                return ref[len("refs/heads/"):]
+    return None
+
+
+# ---- HTTP(S) git remotes (knowledge-base git sources, §KB) ----
+
+_USERINFO_RE = re.compile(r"(https?://)[^/@\s]+@")
+
+
+def redact_secret(text: str, *secrets: str) -> str:
+    """Strip any embedded credentials from a git error string before it is stored
+    or returned: every provided secret value, plus any `scheme://user:pass@` userinfo
+    (belt-and-braces so a PAT injected into a clone URL never surfaces in a message)."""
+    out = text or ""
+    for s in secrets:
+        if s:
+            out = out.replace(s, "***")
+    return _USERINFO_RE.sub(r"\1***@", out)
+
+
+def https_with_pat(uri: str, pat: str, username: str | None = None) -> str:
+    """Inject a token into an https:// git URL as userinfo (`https://<user>:<pat>@host/path`).
+    The token rides as the PASSWORD; `username` defaults to `oauth2`, which works for
+    GitHub and GitLab PATs (GitLab rejects a token-as-username/empty-password
+    credential with a 401, GitHub accepts any username when the password is a token).
+    Credentials that CHECK the username - a GitLab deploy token's generated
+    `gitlab+deploy-token-N`, a Bitbucket app password's real account name - pass
+    theirs explicitly. Both halves are percent-encoded so odd characters can't
+    corrupt the URL; never logged or stored."""
+    u = (uri or "").strip()
+    parts = urllib.parse.urlsplit(u)
+    host = parts.netloc.rsplit("@", 1)[-1]  # drop any userinfo already present
+    token = urllib.parse.quote(pat or "", safe="")
+    user = urllib.parse.quote((username or "").strip() or "oauth2", safe="")
+    netloc = f"{user}:{token}@{host}" if token else host
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def check_http_git(uri: str, pat: str, username: str | None = None) -> tuple[bool, str]:
+    """Reachability + auth check for an HTTP(S) git remote using a PAT, run before a
+    git knowledge source is enabled so a bad token/URL surfaces here instead of at
+    reindex time. `git ls-remote --heads` with the PAT injected into the URL, prompts
+    disabled, tight timeout. Returns (ok, detail) - the PAT is NEVER leaked into the
+    detail string. Shells out, so callers run it in a threadpool."""
+    u = (uri or "").strip()
+    if not u:
+        return False, "No repository URL to check."
+    if not re.match(r"^https?://", u, re.I):
+        return False, "An HTTP(S) git source needs a URL starting with http:// or https://."
+    token = (pat or "").strip()
+    if not token:
+        return False, "No access token stored for this source."
+    try:
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
+               "GIT_SSH_COMMAND": "ssh -o BatchMode=yes"}
+        proc = subprocess.run(["git", "ls-remote", "--heads", https_with_pat(u, token, username)],
+                              env=env, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return False, "Couldn't reach the host in time (timed out). Check the URL and that the host is reachable."
+    except Exception as exc:  # pragma: no cover - defensive; git missing etc.
+        return False, f"Couldn't run the connection check ({redact_secret(str(exc), token)})."
+    if proc.returncode == 0:
+        return True, "Reachable. The access token can read this repository."
+    err = redact_secret((proc.stderr or "").strip(), token)
+    detail = err.splitlines()[-1].strip() if err else "unknown error"
+    low = err.lower()
+    if ("authentication failed" in low or "invalid username or password" in low
+            or "403" in low or "401" in low or "could not read" in low
+            or "terminal prompts disabled" in low):
+        return False, "Authentication failed - check the access token has read access to this repository."
+    if ("could not resolve" in low or "name or service not known" in low
+            or "no route to host" in low or "connection refused" in low
+            or "connection timed out" in low or "network is unreachable" in low
+            or "timed out" in low):
+        return False, f"Couldn't reach the host ({detail})."
+    if "not found" in low or "404" in low or "repository not found" in low:
+        return False, "Repository not found - check the URL (and that the token can see it)."
+    return False, f"Connection check failed ({detail})."

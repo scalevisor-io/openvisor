@@ -1,0 +1,39 @@
+/* ✓/✗ request-confirmation panel. Uses design tokens both apps define, with
+   literal fallbacks (QuestionPrompt.css parity). */
+.cp { display: flex; gap: 0.4rem; margin-top: 0.5rem; align-items: center; }
+.cp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius, 8px);
+  padding: 0.4rem 0.75rem;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+.cp-btn:disabled { cursor: default; opacity: 0.6; }
+.cp-ico { font-weight: 700; line-height: 1; }
+.cp-approve .cp-ico { color: var(--ok-text, #15803d); }
+.cp-dismiss .cp-ico { color: var(--danger-text, #b91c1c); }
+.cp-approve:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ok-text, #15803d) 45%, var(--border, #e5e7eb));
+  background: color-mix(in srgb, var(--ok-text, #15803d) 6%, var(--surface, #fff));
+}
+.cp-dismiss:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger-text, #b91c1c) 45%, var(--border, #e5e7eb));
+  background: color-mix(in srgb, var(--danger-text, #b91c1c) 6%, var(--surface, #fff));
+}
+.cp-outcome {
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  color: var(--text-dim, #6b7280);
+  background: var(--surface-2, #f6f7fa);
+}
+.cp-ok { color: var(--ok-text, #15803d); }
+.cp-no { color: var(--text-dim, #6b7280); }

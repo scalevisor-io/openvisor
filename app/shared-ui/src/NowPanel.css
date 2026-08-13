@@ -1,0 +1,80 @@
+/* NowPanel - the project page's spine. Owner temperatures follow the brand:
+   agent/machine = cool, consultant = warm, you = neutral strong. Var fallbacks
+   keep it working in both consoles' token sets. */
+
+.now-panel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.1rem;
+  margin: 1rem 0 1.25rem;
+  padding: 0.95rem 1.15rem;
+  border: 1px solid var(--border, var(--line, #e3e8f2));
+  border-left-width: 3px;
+  border-radius: var(--radius, 12px);
+  background: var(--surface, #fff);
+}
+
+.now-owner-you { border-left-color: var(--accent, #4f46e5); }
+.now-owner-agent { border-left-color: var(--speed-from, #22d3ee); }
+.now-owner-consultant { border-left-color: #b27a34; }
+.now-owner-done { border-left-color: var(--ok, #159d5b); }
+.now-owner-none { border-left-color: var(--border, #e3e8f2); }
+
+.now-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted, #66708a);
+}
+.now-dot { width: 0.5rem; height: 0.5rem; border-radius: 999px; background: currentColor; }
+.now-owner-you .now-chip { color: var(--accent, #4f46e5); }
+.now-owner-agent .now-chip { color: var(--speed-from, #0ea5e9); }
+.now-owner-consultant .now-chip { color: #8c5c22; }
+.now-owner-done .now-chip { color: var(--ok, #159d5b); }
+.now-owner-agent .now-dot { animation: now-pulse 1.8s ease-out infinite; }
+
+@keyframes now-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  70% { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .now-owner-agent .now-dot { animation: none; }
+}
+
+.now-copy { flex: 1 1 16rem; min-width: 0; }
+.now-headline {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-strong, var(--text, #0b1220));
+}
+.now-body {
+  margin: 0.15rem 0 0;
+  font-size: 0.86rem;
+  color: var(--text-muted, #66708a);
+}
+
+.now-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  flex: none;
+}
+.now-sublabel { opacity: 0.75; margin-left: 0.35rem; font-weight: 400; }
+
+@media (max-width: 640px) {
+  .now-panel { align-items: flex-start; flex-direction: column; gap: 0.55rem; }
+  /* flex-basis would become height in the column direction */
+  .now-copy { flex: 0 1 auto; }
+  .now-actions { width: 100%; }
+  .now-actions .now-btn { flex: 1 1 auto; justify-content: center; }
+}

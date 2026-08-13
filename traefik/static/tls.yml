@@ -1,0 +1,12 @@
+# Production TLS: wildcard cert for *.<your-domain> issued manually via DNS-01
+# off-box and pasted into ./traefik/certs/ as
+# cert.pem + key.pem. No ACME on the VM.
+tls:
+  certificates:
+    - certFile: /certs/cert.pem
+      keyFile: /certs/key.pem
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/cert.pem
+        keyFile: /certs/key.pem

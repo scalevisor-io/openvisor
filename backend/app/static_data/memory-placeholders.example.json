@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "note": "Conventional project-Memory keys the customer can pre-fill. Each carries a description that is passed to the dev agent (key + description + value) so it has proper context. `is_secret` pre-checks the hidden toggle.",
+  "placeholders": [
+    {
+      "key": "GITHUB_TOKEN",
+      "category": "Version control",
+      "is_secret": true,
+      "description": "GitHub personal access token (or fine-grained token) with repo scope. Used by the agent to read/create branches, open pull requests and read issues on the project's GitHub repository."
+    },
+    {
+      "key": "GITLAB_TOKEN",
+      "category": "Version control",
+      "is_secret": true,
+      "description": "GitLab personal/project access token with api + write_repository scope. Used to push branches, open merge requests and read CI results on the project's GitLab repository."
+    },
+    {
+      "key": "AWS_ACCESS_KEY_ID",
+      "category": "AWS",
+      "is_secret": false,
+      "description": "AWS access key ID (public part of the IAM credentials). Identifies the AWS account/role used to inspect target infrastructure."
+    },
+    {
+      "key": "AWS_SECRET_ACCESS_KEY",
+      "category": "AWS",
+      "is_secret": true,
+      "description": "AWS secret access key (paired with AWS_ACCESS_KEY_ID). Grants AWS API access; used read-only to describe/plan, never to apply changes."
+    },
+    {
+      "key": "AWS_REGION",
+      "category": "AWS",
+      "is_secret": false,
+      "description": "Default AWS region (e.g. eu-west-1) the target resources are deployed in."
+    },
+    {
+      "key": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+      "category": "Google Cloud",
+      "is_secret": true,
+      "description": "Full GCP service-account key JSON. Authenticates gcloud/Google client libraries; the agent uses it read-only to inspect the target GCP project."
+    },
+    {
+      "key": "GCP_PROJECT_ID",
+      "category": "Google Cloud",
+      "is_secret": false,
+      "description": "Google Cloud project ID the resources belong to."
+    },
+    {
+      "key": "SUPABASE_URL",
+      "category": "Supabase",
+      "is_secret": false,
+      "description": "Base URL of the Supabase project (https://<ref>.supabase.co). The frontend/backend connects to this endpoint for auth and data."
+    },
+    {
+      "key": "SUPABASE_ANON_KEY",
+      "category": "Supabase",
+      "is_secret": true,
+      "description": "Supabase anonymous/public API key used by the client SDK to reach the project with row-level-security enforced."
+    },
+    {
+      "key": "SUPABASE_SERVICE_ROLE_KEY",
+      "category": "Supabase",
+      "is_secret": true,
+      "description": "Supabase service-role key (bypasses row-level security). Only for trusted server-side use; handle with care."
+    },
+    {
+      "key": "DATABASE_URL",
+      "category": "Database",
+      "is_secret": true,
+      "description": "Full database connection string (postgres://user:pass@host:port/db). The app reads/writes persistent data through it."
+    },
+    {
+      "key": "DOCKER_REGISTRY_TOKEN",
+      "category": "Container registry",
+      "is_secret": true,
+      "description": "Token/password to authenticate against the container registry where images are pushed/pulled."
+    },
+    {
+      "key": "OPENAI_API_KEY",
+      "category": "AI provider",
+      "is_secret": true,
+      "description": "API key for an OpenAI-compatible endpoint the built application should call at runtime (distinct from the platform's own build model)."
+    },
+    {
+      "key": "SMTP_URL",
+      "category": "Email",
+      "is_secret": true,
+      "description": "SMTP connection string (smtp://user:pass@host:port) the application uses to send transactional email."
+    },
+    {
+      "key": "STRIPE_SECRET_KEY",
+      "category": "Payments",
+      "is_secret": true,
+      "description": "Stripe secret API key (sk_...) the application uses server-side for payments. Use a test key for non-production builds."
+    }
+  ]
+}

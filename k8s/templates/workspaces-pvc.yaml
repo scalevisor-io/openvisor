@@ -1,0 +1,18 @@
+# Shared /workspaces volume: api + worker write project checkouts and .openvisor/
+# runner inputs; deployer reads them (demo workspace sync) and dev-run Jobs mount
+# a per-project subPath. RWO by default - consumers are co-scheduled (see values).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspaces
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ ternary "ReadWriteMany" "ReadWriteOnce" .Values.workspaces.rwx }}
+  {{- with .Values.workspaces.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.workspaces.size }}

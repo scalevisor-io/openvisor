@@ -1,0 +1,40 @@
+.pr-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  vertical-align: middle;
+}
+
+.pr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.08rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--speed-from, #4f46e5);
+  border: 1px solid color-mix(in srgb, var(--speed-from, #4f46e5) 35%, transparent);
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 10%, transparent);
+}
+
+.pr-chip:hover {
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 18%, transparent);
+  text-decoration: none;
+}
+
+.pr-chip svg {
+  flex: none;
+}
+
+/* A non-clickable branch chip (no URL yet): same body, no pointer affordance. */
+.pr-chip-static {
+  cursor: default;
+}
+.pr-chip .mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+}

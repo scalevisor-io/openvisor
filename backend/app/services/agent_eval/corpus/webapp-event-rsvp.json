@@ -1,0 +1,19 @@
+{
+  "id": "webapp-event-rsvp",
+  "speciality": "general-webapp",
+  "description": "A single-event RSVP page: a guest enters name and email, sees a live attendee count, and the organizer sees the full list on a protected page.",
+  "onboarding_answers": [
+    {
+      "q": "Capacity limit?",
+      "a": "No"
+    },
+    {
+      "q": "Organizer auth?",
+      "a": "A shared passphrase"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

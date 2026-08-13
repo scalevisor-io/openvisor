@@ -1,0 +1,8 @@
+# Live static_data files are operator-local (materialized from *.example.json by
+# entrypoint.sh); only the templates may reach registry images.
+app/static_data/*.json
+!app/static_data/*.example.json
+
+__pycache__/
+*.pyc
+.pytest_cache/

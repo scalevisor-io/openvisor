@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp
+  template:
+    metadata:
+      labels:
+        app: mcp
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: mcp
+          image: {{ include "openvisor.image" (dict "root" . "name" "mcp") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecretName }}
+          {{- if .Values.postgres.enabled }}
+          env:
+            - name: DATABASE_URL
+              value: {{ include "openvisor.databaseUrl" . | quote }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8100
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: mcp
+  ports:
+    - name: http
+      port: 8100
+      targetPort: http

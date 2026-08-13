@@ -1,0 +1,78 @@
+{{- if .Values.meilisearch.enabled }}
+# In-cluster Meilisearch (StatefulSet) - the retrieval engine for the local
+# /knowledge KB. The master key is pulled from the single openvisor-env Secret (the
+# same MEILI_MASTER_KEY api/worker/beat read), so the key can never drift between
+# the engine and its clients. Disable to use an external Meilisearch: then MEILI_URL
+# / MEILI_MASTER_KEY must come from the env secret / backendEnv.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: meilisearch
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  serviceName: meilisearch
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meilisearch
+  template:
+    metadata:
+      labels:
+        app: meilisearch
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: meilisearch
+          image: {{ .Values.meilisearch.image }}
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: MEILI_MASTER_KEY
+            - name: MEILI_ENV
+              value: "production"
+            - name: MEILI_NO_ANALYTICS
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 7700
+          volumeMounts:
+            - name: meili-data
+              mountPath: /meili_data
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.meilisearch.resources | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: meili-data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.meilisearch.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.meilisearch.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: meilisearch
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: meilisearch
+  ports:
+    - name: http
+      port: 7700
+      targetPort: http
+{{- end }}

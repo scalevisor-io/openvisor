@@ -1,0 +1,19 @@
+{
+  "id": "sovereign-citizen-form",
+  "speciality": "sovereign-eu",
+  "sovereign": true,
+  "description": "A GDPR-compliant citizen contact form with explicit consent capture, a data-retention note, and an admin inbox. Data stays in an EU-hostable Postgres.",
+  "onboarding_answers": [
+    {
+      "q": "PII fields?",
+      "a": "Name, email, message"
+    },
+    {
+      "q": "Consent?",
+      "a": "Explicit checkbox, logged"
+    }
+  ],
+  "from_scratch": true,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

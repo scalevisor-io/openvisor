@@ -1,0 +1,58 @@
+# Tailscale egress Service: lets in-cluster pods (the dev-runner Jobs) reach the
+# platform GitLab's SSH endpoint over the tailnet. Deliberately NOT a Helm template:
+# the Tailscale operator rewrites spec.externalName to its proxy's DNS name, and a
+# templated copy would revert it on every `helm upgrade`. Apply once with kubectl.
+#
+# Prerequisites (one-time):
+#   1. Tailnet ACL (login.tailscale.com -> Access controls):
+#        "tagOwners": {"tag:k8s-operator": [], "tag:k8s": ["tag:k8s-operator"]}
+#        "acls": [..., {"action": "accept", "src": ["tag:k8s"], "dst": ["<gitlab-tailnet-ip>:10022"]}]
+#   2. OAuth client (Settings -> Trust credentials -> Credential -> OAuth client):
+#      scopes Devices:Core (write) + Keys:Auth Keys (write), tag tag:k8s-operator.
+#   3. helm repo add tailscale https://pkgs.tailscale.com/helmcharts
+#      helm upgrade --install tailscale-operator tailscale/tailscale-operator \
+#        -n tailscale --create-namespace \
+#        --set-string oauth.clientId=<id> --set-string oauth.clientSecret=<secret>
+#   4. kubectl apply -f this file (edit the tailnet-ip annotation first).
+#   5. CGNAT workaround, REQUIRED when the cluster pod CIDR sits inside Tailscale's
+#      100.64.0.0/10 range (Scaleway Kapsule/Cilium uses 100.64.0.0/15): tailscaled's
+#      anti-spoofing rule drops forwarded packets whose source is a pod IP, before
+#      containerboot's SNAT can rewrite it. Turn tailscaled's netfilter off in the
+#      proxy (containerboot's own DNAT/SNAT rules for the egress target survive, so
+#      forwarding still works and traffic still leaves SNATed to the proxy's tailnet
+#      IP). The pref persists in the proxy's state Secret across pod restarts:
+#        kubectl -n tailscale exec <ts-gitlab-ssh-...-0> -c tailscale -- \
+#          tailscale set --netfilter-mode=off
+#      Re-run it if the egress Service (and thus the proxy's state) is ever recreated.
+#   5b. fwmark collision, same CGNAT setup: tailscaled keeps its POLICY ROUTING even
+#      with netfilter off - `ip rule 5210: from all fwmark 0x80000/0xff0000 lookup
+#      main` steers marked packets away from the tailnet table. Cilium stamps the
+#      SOURCE pod's security identity into the packet mark ((id << 16) | magic), so a
+#      pod whose identity ends in byte 0x08 has its forwarded SSH routed out the
+#      proxy's eth0 and dropped as "Invalid source ip" - for that pod's whole life,
+#      one identity in 256. Nothing here fixes it; the platform survives it instead
+#      (§sandbox git preflight: the sandbox proves the remote answers before it
+#      builds, and every dispatch draws a fresh identity through the deployer's
+#      `openvisor/dispatch` label). Diagnose a stuck sandbox with:
+#        kubectl -n kube-system exec ds/cilium -c cilium-agent -- \
+#          cilium-dbg endpoint list          # its identity's low byte is 0x08
+#        kubectl -n kube-system exec ds/cilium -c cilium-agent -- \
+#          cilium-dbg monitor -t drop        # "Invalid source ip" from the proxy
+#   6. Point GIT_EXTRA_HOST at the Service in .env.k8s (see scripts/deploy-helm.sh),
+#      keeping your GitLab's SSH hostname as the host part:
+#        GIT_EXTRA_HOST=gitlab.example.com:gitlab-ssh.openvisor.svc.cluster.local
+#      The K8s deployer resolves the name to the proxy pod's IP at Job dispatch.
+#
+# Verify end-to-end:
+#   kubectl -n openvisor run ssh-test --rm -i --restart=Never --image=alpine:3.20 \
+#     --command -- sh -c 'apk add -q openssh-client && ssh-keyscan -p 10022 gitlab-ssh.openvisor.svc.cluster.local'
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-ssh
+  namespace: openvisor
+  annotations:
+    tailscale.com/tailnet-ip: "100.x.y.z" # your GitLab machine's tailnet IP (`tailscale status`)
+spec:
+  type: ExternalName
+  externalName: placeholder # rewritten by the operator

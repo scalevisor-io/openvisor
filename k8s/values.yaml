@@ -1,0 +1,248 @@
+# Openvisor chart defaults. Deploy with scripts/deploy-helm.sh, which renders
+# k8s/values.example.yaml (envsubst) into a gitignored overlay and passes it with -f.
+# One release per namespace: Services keep the compose service names (api, postgres,
+# redis, deployer, ...) so the same .env URLs work under compose and Kubernetes.
+
+# Public domain the platform is served on. For throwaway test clusters use
+# <LB-IP>.nip.io once the gateway LoadBalancer IP is known.
+domain: openvisor.example.com
+# http or https - must match gateway.tls.enabled (https when TLS terminates at the gateway;
+# scripts/deploy-helm.sh keeps the two consistent).
+scheme: http
+# production | local (local: no TLS assumptions, LLM heuristics fallback, relaxed cookies)
+deployEnv: production
+
+# Registry prefix for the locally-built images (backend, mcp, app, landing, deployer, runner).
+imageRegistry: registry.example.com/openvisor
+imageTag: latest
+imagePullPolicy: Always
+# Names of docker-registry secrets (created by scripts/deploy-helm.sh, not the chart).
+imagePullSecrets:
+  - openvisor-registry
+
+# Name of the Secret holding the backend .env (created by scripts/deploy-helm.sh with
+# `kubectl create secret generic ... --from-env-file=.env`). Explicit env entries the
+# chart renders (service DNS names, domain-derived URLs) override same-named keys.
+envSecretName: openvisor-env
+
+# Extra/override env vars merged into the api, worker and beat containers last
+# (highest precedence). The deployer takes its config from explicit env only.
+backendEnv: {}
+
+gateway:
+  # Deploy in-cluster Traefik v3.6 as the Gateway API controller (also serves the
+  # traefik.io Middleware CRD used for demo basicAuth). Disable to bring your own
+  # Gateway API implementation - then demo basicAuth needs an equivalent of the
+  # traefik.io/v1alpha1 Middleware ExtensionRef the deployer creates.
+  install: true
+  createGatewayClass: true
+  gatewayClassName: traefik
+  # Gateway resource name; the deployer references it when creating demo HTTPRoutes.
+  name: openvisor
+  # Allow HTTPRoutes from other namespaces to attach to the web/websecure
+  # listeners (multi-tenant gateway, e.g. a Scalevisor Hub release on the same
+  # cluster). Default keeps the original same-namespace behavior.
+  crossNamespaceRoutes: false
+  # Additional HTTPS listeners on port 443 for foreign hostnames with their own
+  # cert (e.g. hostname "*.scalevisor.io" + a Cloudflare Origin cert Secret).
+  # Items: {name, hostname, secretName, secretNamespace?, crossNamespace?}.
+  extraListeners: []
+  service:
+    # LoadBalancer provisions the cloud LB whose IP becomes the platform address.
+    type: LoadBalancer
+    annotations: {}
+  tls:
+    # Terminate TLS on the gateway with a manually-pasted wildcard cert
+    # (kubectl create secret tls <secretName> --cert=cert.pem --key=key.pem).
+    # No ACME / cert-manager (locked platform decision).
+    enabled: false
+    secretName: openvisor-wildcard-tls
+  # Traefik dashboard on the traefik entrypoint (debug only; not exposed by a route).
+  dashboard: false
+  image: traefik:v3.6
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+postgres:
+  # In-cluster pgvector Postgres (StatefulSet). Disable to use an external DB:
+  # then DATABASE_URL must come from the env secret / backendEnv.
+  enabled: true
+  image: pgvector/pgvector:pg16
+  user: openvisor
+  password: openvisor
+  db: openvisor
+  storage: 10Gi
+  storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+redis:
+  # Ephemeral like compose (no volume): broker/results/rate-limits reset on restart.
+  enabled: true
+  image: redis:7-alpine
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+meilisearch:
+  # In-cluster Meilisearch (StatefulSet) - retrieval engine for the local /knowledge
+  # KB (hybrid BM25 + vector). MEILI_MASTER_KEY rides the openvisor-env Secret (from
+  # .env); the pod pulls that one key so it can't drift from the api/worker clients.
+  # Disable to point MEILI_URL/MEILI_MASTER_KEY at an external Meilisearch.
+  enabled: true
+  image: getmeili/meilisearch:v1.13
+  storage: 5Gi
+  storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# Shared /workspaces PVC (api + worker + deployer + dev-run Jobs). With the default
+# ReadWriteOnce block storage every consumer is co-scheduled onto the api pod's node
+# (pod affinity; Jobs are pinned by the deployer via its own NODE_NAME). Set rwx: true
+# with an RWX storageClassName (NFS, cloud file store) to lift that constraint.
+workspaces:
+  size: 10Gi
+  storageClassName: ""
+  rwx: false
+
+api:
+  replicas: 1 # keep 1: the entrypoint runs alembic migrations + admin seed on start
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
+
+worker:
+  replicas: 1
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
+
+beat:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+mcp:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+deployer:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    # headroom for the kubernetes client + streaming the workspace tar to demos
+    limits: { cpu: "1", memory: 512Mi }
+
+app:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 128Mi }
+
+landing:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 500m, memory: 128Mi }
+
+context7:
+  image: node:20-alpine
+  # pinned: newer releases require an Upstash Redis session store for HTTP transport
+  package: "@upstash/context7-mcp@1.0.14"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+chrome:
+  image: zenika/alpine-chrome:latest
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# Web-search MCP (§KB websearch kind) - runs the mcp image with mcp/websearch.py.
+websearchMcp:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
+browserMcp:
+  image: node:20-alpine
+  package: "@playwright/mcp@0.0.79"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+mailpit:
+  # Dev/test mail sink (compose.dev parity). When enabled the chart also points
+  # SMTP_HOST/SMTP_PORT at it and routes mail.<domain>.
+  enabled: false
+  image: axllent/mailpit:latest
+
+# Stripe webhook relay (compose.dev stripe-cli sidecar parity). Enable when the
+# env secret carries a real sk_ key and you want top-up credits to land without
+# registering an inbound dashboard webhook - `stripe listen` uses OUTBOUND egress
+# only, so it works behind a firewall that blocks inbound from Stripe. Requires
+# STRIPE_WEBHOOK_SECRET in the env secret to match the listen session's secret
+# (deterministic per API key).
+stripe:
+  relayEnabled: false
+  image: stripe/stripe-cli:latest
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+
+# Per-project demo pods (Docker-in-Docker), created at runtime by the deployer.
+demo:
+  dindImage: docker:27-dind
+  cpuLimit: "1"
+  memLimit: 2Gi
+  # RuntimeClass for hardened DinD (e.g. sysbox-runc). Empty = privileged pods
+  # (local-dev parity; install Sysbox on the nodes for production).
+  runtimeClassName: ""
+  # Seconds the demo app gets to answer HTTP after compose up ("0" disables the gate).
+  healthcheckTimeout: "60"
+  # Per-demo /var/lib/docker PVC (image/build cache kept across stop/start - fast resume).
+  volumeSize: 10Gi
+  storageClassName: ""
+
+# One-shot dev-run Jobs (OpenHands runner), created at runtime by the deployer.
+runner:
+  cpuLimit: "2"
+  memLimit: 4Gi
+
+# NetworkPolicies confining demo pods and dev-run Jobs (untrusted code) away from
+# the platform's internal Services - the K8s equivalent of the compose
+# openvisor-demos network isolation. Requires a policy-enforcing CNI (Cilium/Calico);
+# a non-enforcing CNI makes them no-ops. privateCidrs are the in-cluster/RFC1918
+# ranges demos and dev runs may NOT reach (public internet stays allowed).
+networkPolicy:
+  enabled: true
+  # Egress-blocked ranges for the untrusted sandboxes (demo, dev-run, program).
+  # 169.254.0.0/16 is link-local and MUST stay here: it covers the cloud instance
+  # metadata service (169.254.169.254), whose theft of node/role credentials is a
+  # top exfiltration path for untrusted code - the pre-push file leak-scan cannot
+  # see an SSRF to it. The RFC1918 + CGNAT ranges keep the sandboxes off the
+  # platform's own Services.
+  privateCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 100.64.0.0/10
+    - 169.254.0.0/16
+  # Temporary escape hatch for dev-run pods ONLY: when true, their egress opens to
+  # everything except link-local/cloud-metadata (169.254.0.0/16 - the SSRF block
+  # stays), overriding privateCidrs and egressAllowlist for that policy. Set via the
+  # operator overlay (values.local.yaml) when the restricted mode blocks a needed
+  # remote; prefer re-tightening once the route is understood. Demo and program
+  # sandboxes are NOT affected.
+  devRunOpenEgress: false
+  # Optional Copilot-style default-deny EGRESS ALLOWLIST for dev-run + program pods.
+  # When non-empty, those sandboxes may egress ONLY to these CIDRs (plus DNS and the
+  # in-cluster MCP tools) instead of "all public internet minus privateCidrs" - so an
+  # operator who has pinned their LLM endpoint / git host / package-registry ranges
+  # can shut every other outbound flow (web/DNS/odd-port exfil). Empty = keep the
+  # permissive default so arbitrary `pip`/`npm` installs in a build still resolve.
+  egressAllowlist: []

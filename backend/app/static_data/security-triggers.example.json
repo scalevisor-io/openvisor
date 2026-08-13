@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "meta": {
+    "purpose": "Deterministic floor for the §14.7 AI security review of an agent PR before an auto-merge. Each pattern is matched against the ADDED lines of the PR diff; a hit forces a finding at its declared severity that the review model can raise but never remove. A critical/high finding blocks the auto-merge and (unless attempts are exhausted) re-dispatches a scoped fix run. Mirrors forbidden-actions.json's 'model can only tighten, never loosen' guardrail, applied to code instead of onboarding answers.",
+    "used_by": ["security_review"],
+    "owner_todo": [
+      "Tune severities and add organisation-specific patterns (internal hostnames, proprietary token prefixes).",
+      "Patterns are Python re, matched case-insensitively against added diff lines only (lines starting with '+', excluding the '+++' file header)."
+    ],
+    "field_reference": {
+      "severity": "critical | high | medium | low. critical/high block an auto-merge.",
+      "pattern": "Python regular expression matched (re.IGNORECASE | re.MULTILINE) against the added diff lines.",
+      "issue": "Human-readable finding shown to the customer and fed back to the fix run."
+    }
+  },
+  "triggers": [
+    {
+      "id": "private-key-material",
+      "severity": "critical",
+      "pattern": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----",
+      "issue": "A private key block is committed in the diff. Secrets must never be committed to the repository."
+    },
+    {
+      "id": "aws-access-key-id",
+      "severity": "critical",
+      "pattern": "\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b",
+      "issue": "An AWS access key ID appears in the diff. Credentials must be provided at runtime, never hardcoded."
+    },
+    {
+      "id": "aws-secret-access-key",
+      "severity": "high",
+      "pattern": "aws_secret_access_key\\s*[=:]\\s*['\"]?[A-Za-z0-9/+]{40}",
+      "issue": "An AWS secret access key appears to be hardcoded in the diff."
+    },
+    {
+      "id": "generic-hardcoded-secret",
+      "severity": "high",
+      "pattern": "(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd)\\s*[=:]\\s*['\"][^'\"\\s${}]{8,}['\"]",
+      "issue": "A credential looks hardcoded to a literal value in the diff. Read secrets from the environment instead."
+    },
+    {
+      "id": "private-key-assignment",
+      "severity": "high",
+      "pattern": "(?:private[_-]?key|deploy[_-]?key|ssh[_-]?key)\\s*[=:]\\s*['\"][^'\"\\s${}]{16,}['\"]",
+      "issue": "A private/deploy/ssh key looks assigned to a literal value in the diff."
+    },
+    {
+      "id": "reverse-shell",
+      "severity": "critical",
+      "pattern": "(?:bash\\s+-i\\s*>&\\s*/dev/tcp/|nc(?:\\.traditional)?\\s+[^\\n]*-e\\s+/bin/(?:ba)?sh|socket\\.socket\\([^)]*\\)[^\\n]*(?:connect|dup2))",
+      "issue": "The diff contains what looks like a reverse-shell / remote-shell payload."
+    },
+    {
+      "id": "remote-code-pipe-to-shell",
+      "severity": "high",
+      "pattern": "(?:curl|wget)\\s+[^\\n|]*\\|\\s*(?:sudo\\s+)?(?:ba)?sh\\b",
+      "issue": "The diff pipes a downloaded script straight into a shell (curl|sh), a common backdoor/supply-chain vector."
+    },
+    {
+      "id": "dynamic-eval-of-input",
+      "severity": "high",
+      "pattern": "(?:eval|exec)\\s*\\(\\s*(?:request|input|req\\.|params|body|query|os\\.environ)",
+      "issue": "User-controlled input is passed to eval/exec, a code-injection risk."
+    },
+    {
+      "id": "shell-injection-shell-true",
+      "severity": "medium",
+      "pattern": "subprocess\\.(?:call|run|Popen|check_output)\\([^)]*shell\\s*=\\s*True[^)]*(?:\\+|%|format|f['\"]|request|input|params)",
+      "issue": "A subprocess call with shell=True interpolates dynamic data, a command-injection risk."
+    },
+    {
+      "id": "sql-string-interpolation",
+      "severity": "medium",
+      "pattern": "(?:execute|executemany|cursor\\.execute)\\s*\\(\\s*(?:f['\"]|['\"][^'\"]*['\"]\\s*(?:%|\\+|\\.format))",
+      "issue": "A SQL query is built by string interpolation, an SQL-injection risk. Use parameterised queries."
+    },
+    {
+      "id": "tls-verification-disabled",
+      "severity": "medium",
+      "pattern": "(?:verify\\s*=\\s*False|rejectUnauthorized\\s*:\\s*false|InsecureSkipVerify\\s*:\\s*true|curl_setopt\\([^)]*SSL_VERIFYPEER[^)]*(?:false|0))",
+      "issue": "TLS certificate verification is disabled, exposing traffic to interception."
+    }
+  ]
+}

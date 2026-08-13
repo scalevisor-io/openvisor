@@ -1,0 +1,155 @@
+---
+import { appUrl, signupUrl, brandName, wordmarkHead, wordmarkTail } from '../lib/site';
+import Mark from './Mark.astro';
+import content from '../lib/content';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <span class="wordmark"><Mark size={19} id="ov-mark-f" /> {wordmarkHead}<span class="gradient-text">{wordmarkTail}</span></span>
+      <p class="footer-tagline" set:html={content.footer.tagline} />
+    </div>
+
+    <nav class="footer-nav" aria-label="Footer">
+      <div class="footer-col">
+        <h3>Product</h3>
+        <a href="/#two-ways">The choice</a>
+        <a href="/#projects">Projects</a>
+        <a href="/#programs">Programs</a>
+        <a href="/#how-it-works">How it works</a>
+        <a href="/#pricing">Pricing</a>
+        <a href="/#sovereign">Trust</a>
+        <a href="/sota">Security &amp; SOTA</a>
+      </div>
+      <div class="footer-col">
+        <h3>Get started</h3>
+        <a href={signupUrl}>Create an account</a>
+        <a href={appUrl}>Sign in</a>
+      </div>
+      <div class="footer-col">
+        <h3>Company</h3>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="/privacy">Privacy policy</a>
+        <a href="/terms">Terms of service</a>
+      </div>
+    </nav>
+  </div>
+
+  <div class="container footer-bottom">
+    <div class="footer-legal">
+      <span>© {year} {brandName} - a {content.legal.entity} service.</span>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </div>
+    <span class="footer-alpha">alpha</span>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--border);
+    padding-block: 3.5rem 2rem;
+    background: rgba(20, 25, 37, 0.35);
+  }
+
+  .footer-inner {
+    display: grid;
+    grid-template-columns: 1.5fr 2fr;
+    gap: 2.5rem;
+  }
+
+  .wordmark {
+    font-family: var(--font-brand);
+    font-size: 1.2rem;
+    color: var(--text-strong);
+  }
+
+  .footer-tagline {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    max-width: 26rem;
+    margin-top: 0.75rem;
+  }
+
+  .footer-nav {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+
+  .footer-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .footer-col h3 {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 0.4rem;
+  }
+
+  .footer-col a {
+    color: var(--text);
+    font-size: 0.92rem;
+  }
+
+  .footer-col a:hover {
+    color: var(--text-strong);
+  }
+
+  .footer-bottom {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    letter-spacing: 0.03em;
+  }
+
+  .footer-legal {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .footer-legal a {
+    color: var(--text-muted);
+  }
+
+  .footer-legal a:hover {
+    color: var(--text-strong);
+    text-decoration: none;
+  }
+
+  .footer-alpha {
+    color: var(--alpha-red);
+    font-weight: 600;
+  }
+
+  @media (max-width: 720px) {
+    .footer-inner {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+  }
+
+  @media (max-width: 460px) {
+    .footer-nav {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+</style>

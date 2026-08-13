@@ -1,0 +1,202 @@
+/* ------------------------------------------------------------------ *
+ * Openvisor landing - global styles & design tokens (see docs/DESIGN.md)
+ * Dark-first. Navy gray base + electric "speed" accent.
+ * ------------------------------------------------------------------ */
+
+:root {
+  /* Navy gray scale */
+  --gray-0: #090b11;
+  --gray-50: #141925;
+  --gray-100: #283044;
+  --gray-200: #3d4663;
+  --gray-300: #505d84;
+  --gray-400: #6474a2;
+  --gray-500: #8490b5;
+  --gray-600: #a3acc8;
+  --gray-700: #c3cadb;
+  --gray-800: #e3e6ee;
+  --gray-900: #f3f4f7;
+  --gray-999: #ffffff;
+
+  /* Legacy blue accent (links, secondary) */
+  --accent-light: #61a1f6;
+  --accent-dark: #002656;
+
+  /* Speed accent - electric cyan → violet */
+  --speed-from: #22d3ee;
+  --speed-to: #7c3aed;
+  --gradient-speed: linear-gradient(135deg, #22d3ee, #7c3aed);
+
+  /* Alpha badge red */
+  --alpha-red: #dc2626;
+
+  --font-system: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Brand display font: system stack by default. Drop your own font files into
+     public/fonts, declare @font-face here, and point --font-brand at it. */
+  --font-brand: var(--font-system);
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  /* Semantic */
+  --bg: var(--gray-0);
+  --bg-elevated: var(--gray-50);
+  --text: var(--gray-800);
+  --text-muted: var(--gray-500);
+  --text-strong: var(--gray-999);
+  --border: var(--gray-100);
+
+  --radius: 0.75rem;
+  --radius-sm: 0.5rem;
+  --maxw: 68rem;
+
+  --shadow-elev: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(9, 11, 17, 0.55);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-system);
+  color: var(--text);
+  background-color: var(--bg);
+  /* Subtle radial gradient wash */
+  background-image:
+    radial-gradient(60rem 40rem at 75% -10%, color-mix(in srgb, var(--speed-to) 14%, transparent), transparent 60%),
+    radial-gradient(50rem 34rem at 5% 0%, color-mix(in srgb, var(--speed-from) 10%, transparent), transparent 55%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-brand);
+  color: var(--text-strong);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+  margin: 0 0 0.5em;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+a {
+  color: var(--accent-light);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+}
+
+:focus-visible {
+  outline: 2px solid var(--speed-from);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+/* Layout helpers ---------------------------------------------------- */
+
+.container {
+  width: 100%;
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+}
+
+.section {
+  padding-block: clamp(3.5rem, 8vw, 6.5rem);
+}
+
+.eyebrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--speed-from);
+  margin-bottom: 1.1rem;
+}
+
+.gradient-text {
+  background: var(--gradient-speed);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Buttons ----------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1.4rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.98rem;
+  line-height: 1;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  text-decoration: none;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  color: var(--gray-0);
+  background: var(--gradient-speed);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--speed-from) 18%, transparent);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--speed-to) 32%, transparent);
+}
+
+.btn-ghost {
+  color: var(--text-strong);
+  background: transparent;
+  border-color: var(--gray-200);
+}
+
+.btn-ghost:hover {
+  border-color: var(--gray-300);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}

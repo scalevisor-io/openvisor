@@ -1,0 +1,19 @@
+{
+  "id": "audit-dependency-supply-chain",
+  "speciality": "supply-chain-audit",
+  "from_scratch": false,
+  "deliverable_type": "audit_report",
+  "description": "Audit the dependency supply chain of an existing repository and produce a report of risky, outdated, unpinned, or unmaintained dependencies with remediation notes.",
+  "onboarding_answers": [
+    {
+      "q": "Ecosystem?",
+      "a": "Python + npm"
+    },
+    {
+      "q": "Output?",
+      "a": "A written report, not a deployed app"
+    }
+  ],
+  "notes": "Deliberately deliverable_type=audit_report: exercises the boot-gate mis-fire (the boot gate would park this run because it only understands deployed_demo).",
+  "sovereign": false
+}

@@ -1,0 +1,140 @@
+{{- if .Values.gateway.install }}
+# In-cluster Traefik v3.6 acting as the Gateway API controller (kubernetesGateway
+# provider) plus the kubernetesCRD provider, required so demo HTTPRoutes can attach
+# basicAuth via ExtensionRef -> traefik.io/v1alpha1 Middleware.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-traefik
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get]
+  - apiGroups: [""]
+    # v3.6 providers watch nodes (NodePort LB support); a denied watch stalls
+    # the whole informer sync and no dynamic config ever loads
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [services, secrets, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gatewayclasses, gateways, httproutes, grpcroutes, referencegrants, backendtlspolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gatewayclasses/status, gateways/status, httproutes/status, grpcroutes/status, backendtlspolicies/status]
+    verbs: [update]
+  - apiGroups: [traefik.io]
+    resources: [middlewares, middlewaretcps, serverstransports, serverstransporttcps, traefikservices, ingressroutes, ingressroutetcps, ingressrouteudps, tlsoptions, tlsstores]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-traefik
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ .Release.Name }}-traefik
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: traefik
+      containers:
+        - name: traefik
+          image: {{ .Values.gateway.image }}
+          args:
+            - --entrypoints.web.address=:80
+            {{- if .Values.gateway.tls.enabled }}
+            - --entrypoints.websecure.address=:443
+            {{- end }}
+            - --entrypoints.traefik.address=:8080
+            - --ping=true
+            - --providers.kubernetesgateway=true
+            - --providers.kubernetesgateway.statusaddress.service.name=traefik
+            - --providers.kubernetesgateway.statusaddress.service.namespace={{ .Release.Namespace }}
+            - --providers.kubernetescrd=true
+            - --providers.kubernetescrd.namespaces={{ .Release.Namespace }}
+            {{- if .Values.gateway.dashboard }}
+            - --api.dashboard=true
+            - --api.insecure=true
+            {{- end }}
+            - --log.level=INFO
+          ports:
+            - name: web
+              containerPort: 80
+            {{- if .Values.gateway.tls.enabled }}
+            - name: websecure
+              containerPort: 443
+            {{- end }}
+            - name: traefik
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /ping, port: traefik }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /ping, port: traefik }
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+  {{- with .Values.gateway.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.gateway.service.type }}
+  selector:
+    app: traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+    {{- if .Values.gateway.tls.enabled }}
+    - name: websecure
+      port: 443
+      targetPort: websecure
+    {{- end }}
+{{- end }}

@@ -1,0 +1,107 @@
+---
+import { appUrl, signupUrl, brandName, wordmarkHead, wordmarkTail } from '../lib/site';
+import Mark from './Mark.astro';
+---
+
+<header class="site-header">
+  <div class="container header-inner">
+    <a href="/" class="wordmark" aria-label={`${brandName} home`}>
+      <Mark size={22} />
+      {wordmarkHead}<span class="gradient-text">{wordmarkTail}</span>
+      <span class="alpha-badge" title="This platform is in alpha">alpha</span>
+    </a>
+
+    <nav class="nav" aria-label="Primary">
+      <a href="/#how-it-works">How it works</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/sota">Security</a>
+      <a href={appUrl} class="nav-signin">Sign in</a>
+      <a href={signupUrl} class="btn btn-primary btn-sm">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(9, 11, 17, 0.72);
+    backdrop-filter: saturate(160%) blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    height: 4rem;
+  }
+
+  .wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--font-brand);
+    font-size: 1.3rem;
+    color: var(--text-strong);
+    letter-spacing: -0.02em;
+  }
+
+  .wordmark:hover {
+    text-decoration: none;
+  }
+
+  .alpha-badge {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--alpha-red);
+    padding: 0.12rem 0.4rem;
+    border-radius: 0.35rem;
+    line-height: 1.4;
+  }
+
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  .nav a {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 500;
+  }
+
+  .nav a:hover {
+    color: var(--text-strong);
+    text-decoration: none;
+  }
+
+  .nav-signin {
+    color: var(--text) !important;
+  }
+
+  .btn-sm {
+    padding: 0.55rem 1rem;
+    font-size: 0.9rem;
+  }
+
+  /* Hide secondary links on small screens; keep brand + CTA */
+  @media (max-width: 640px) {
+    .nav a:not(.btn):not(.nav-signin) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 460px) {
+    .nav-signin {
+      display: none;
+    }
+  }
+</style>

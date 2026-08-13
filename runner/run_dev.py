@@ -1,0 +1,259 @@
+"""Openvisor OpenHands dev driver (SDK v1). Runs one headless build against the
+mounted /workspace using the platform's OpenAI-compatible model, the default
+tool preset, and the project's MCP servers (Context7 + browser + connected KBs).
+Reads its inputs
+from /workspace/.openvisor/."""
+import json
+import os
+import sys
+import time
+from pathlib import Path
+
+from openhands.sdk import LLM, Conversation
+from openhands.sdk.context.condenser import LLMSummarizingCondenser
+from openhands.sdk.tool import Tool
+from openhands.tools.glob import GlobTool  # importing auto-registers the tool
+from openhands.tools.grep import GrepTool  # importing auto-registers the tool
+from openhands.tools.preset.default import get_default_agent
+
+import live_events
+
+OPENVISOR = Path("/workspace/.openvisor")
+
+
+class RetryingCondenser(LLMSummarizingCondenser):
+    """The condensation call is the ONE chat-completions request in a build (agent
+    steps ride the Responses API for gpt-5-family models) and litellm never retries
+    4xx - so a single transient provider rejection there (OpenAI has intermittently
+    403'd gpt-5.6 chat completions) killed whole runs. Bounded retry; the last
+    error still propagates."""
+
+    def get_condensation(self, *args, **kwargs):
+        for attempt in range(3):
+            try:
+                return super().get_condensation(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 2:
+                    raise
+                print(f"driver: condensation attempt {attempt + 1} failed "
+                      f"({type(exc).__name__}); retrying", file=sys.stderr)
+                time.sleep(10 * (attempt + 1))
+
+
+def _with_condenser_retry(agent):
+    """Swap the preset condenser for the retrying one, field-for-field. Best-effort:
+    on any SDK drift keep the stock condenser rather than fail the build."""
+    try:
+        base = agent.condenser
+        if not isinstance(base, LLMSummarizingCondenser):
+            return agent
+        wrapped = RetryingCondenser(
+            **{f: getattr(base, f) for f in LLMSummarizingCondenser.model_fields})
+        return agent.model_copy(update={"condenser": wrapped})
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: condenser retry wrapper skipped: {exc}", file=sys.stderr)
+        return agent
+
+
+def _model_for_litellm(model: str) -> str:
+    # Route any custom OpenAI-compatible endpoint through LiteLLM's openai
+    # provider (honours base_url); leave already-prefixed models untouched.
+    return model if "/" in model else f"openai/{model}"
+
+
+# Providers where sending prompt_cache_key is known-safe: Mistral needs it to
+# opt IN to prompt caching (cache reads then come back in usage and bill at the
+# §18 cached rate); OpenAI accepts it as an official hit-rate hint. Everyone
+# else: never send it - a strict OpenAI-compatible gateway may 400 on unknown
+# params, which would fail every call of the build.
+_CACHE_KEY_HOSTS = {"api.mistral.ai", "api.openai.com"}
+
+
+def _cache_key_supported(base_url: str | None) -> bool:
+    if not base_url:
+        return True  # no override = LiteLLM's default OpenAI endpoint
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(base_url).hostname or "") in _CACHE_KEY_HOSTS
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _dump_usage(llm: LLM, quiet: bool = False) -> None:
+    """Report the run's accumulated LLM usage for the platform to bill
+    (§14.6). Written incrementally during the run (§Phase 1) so a hard
+    deployer timeout kill (SIGKILL, no finally) still leaves a recent report
+    for _bill_dev_run to meter - closing the unbilled-COGS hole. Atomic
+    (tmp + os.replace) so a kill mid-write leaves the prior complete file, never
+    a torn one. Best-effort: never fail the build over metering."""
+    try:
+        tu = llm.metrics.accumulated_token_usage
+        usage = {
+            # the pricing table is keyed on the raw api_model, not the
+            # LiteLLM-prefixed routing name
+            "model": os.environ["LLM_MODEL"].split("/")[-1],
+            "input_tokens": int(getattr(tu, "prompt_tokens", 0) or 0),
+            "output_tokens": int(getattr(tu, "completion_tokens", 0) or 0),
+            # prompt-cache READS (subset of prompt_tokens) - billed at the
+            # model's cached rate (§18)
+            "cached_input_tokens": int(getattr(tu, "cache_read_tokens", 0) or 0),
+        }
+        path = OPENVISOR / "usage.json"
+        tmp = path.with_name("usage.json.tmp")
+        # The agent can delete .openvisor/ mid-run (it is gitignored, so a
+        # `git clean -fdx` takes it out); recreate it or the run goes unbilled.
+        OPENVISOR.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(usage))
+        os.replace(tmp, path)  # atomic swap
+        if not quiet:
+            print(f"driver: usage {usage}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: usage dump failed: {exc}", file=sys.stderr)
+
+
+def _dump_error(exc: Exception) -> None:
+    """Leave a structured, secret-free crash report for the worker to surface in
+    chat - a driver death used to reach the customer as an opaque 'Runner exited
+    1' while the real cause (e.g. the endpoint 400-rejecting the model id) sat
+    buried in the log. Best-effort; never masks the original failure."""
+    try:
+        text = f"{type(exc).__name__}: {exc}"
+        for name in ("LLM_API_KEY",):
+            val = os.environ.get(name) or ""
+            if val:
+                text = text.replace(val, "***")
+        low = text.lower()
+        if "invalid model" in low or "model_not_found" in low or "does not exist" in low:
+            category = "llm_model"
+            message = ("the model endpoint rejected the configured model "
+                       f"({text[:200]})")
+        elif "authentication" in low or "401" in low or "invalid api key" in low:
+            category = "llm_auth"
+            message = f"the model endpoint rejected the API key ({text[:200]})"
+        elif "connection" in low or "timeout" in low or "unreachable" in low:
+            category = "llm_unreachable"
+            message = f"the model endpoint could not be reached ({text[:200]})"
+        else:
+            category = "agent_error"
+            message = f"the build agent crashed ({text[:300]})"
+        (OPENVISOR / "error.json").write_text(
+            json.dumps({"category": category, "message": message}))
+        print(f"driver: error report written ({category})", file=sys.stderr)
+    except Exception as dump_exc:  # noqa: BLE001
+        print(f"driver: error report failed: {dump_exc}", file=sys.stderr)
+
+
+def main() -> int:
+    task = (OPENVISOR / "task.md").read_text()
+    # A previous session's end-of-run marker must never drive this run's copy.
+    (OPENVISOR / "exit_reason.json").unlink(missing_ok=True)
+    # §effort: providers that don't know reasoning_effort must not fail the
+    # build - LiteLLM drops unsupported params instead of erroring.
+    try:
+        import litellm
+        litellm.drop_params = True
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: litellm drop_params unavailable: {exc}", file=sys.stderr)
+    llm_kwargs = dict(
+        model=_model_for_litellm(os.environ["LLM_MODEL"]),
+        api_key=os.environ["LLM_API_KEY"],
+        base_url=os.environ.get("LLM_BASE_URL") or None,
+        service_id="openvisor-agent",
+    )
+    effort = (os.environ.get("LLM_REASONING_EFFORT") or "").strip()
+    if effort:
+        llm_kwargs["reasoning_effort"] = effort
+    cache_key = (os.environ.get("LLM_CACHE_KEY") or "").strip()
+    if cache_key and _cache_key_supported(llm_kwargs["base_url"]):
+        llm_kwargs["litellm_extra_body"] = {"prompt_cache_key": cache_key}
+    try:
+        llm = LLM(**llm_kwargs)
+    except Exception:  # noqa: BLE001 - SDK without the fields: run at provider default
+        llm_kwargs.pop("reasoning_effort", None)
+        llm_kwargs.pop("litellm_extra_body", None)
+        llm = LLM(**llm_kwargs)
+        if effort or cache_key:
+            print("driver: reasoning_effort/prompt_cache_key not supported by this SDK; "
+                  "provider default", file=sys.stderr)
+    agent = get_default_agent(llm=llm, cli_mode=True)  # cli_mode: no browser GUI deps
+    # §Phase 1: add purpose-built grep + glob so the agent navigates the repo with
+    # real search tools instead of shelling out (the SWE-agent ACI thesis). They ship
+    # with openhands-tools but aren't in the default preset; model_copy keeps the
+    # preset's condenser/system-prompt intact and just extends the tool list.
+    agent = agent.model_copy(update={
+        "tools": list(agent.tools) + [Tool(name=GrepTool.name), Tool(name=GlobTool.name)]})
+    agent = _with_condenser_retry(agent)
+
+    # Attach the project's MCP servers if present (best-effort - never fail the
+    # build because an MCP server is unavailable).
+    mcp_path = OPENVISOR / "mcp.json"
+    if mcp_path.exists():
+        try:
+            cfg = json.loads(mcp_path.read_text())
+            if cfg.get("mcpServers"):  # empty config makes the SDK raise
+                agent = agent.model_copy(update={"mcp_config": cfg})
+        except Exception as exc:  # noqa: BLE001
+            print(f"driver: MCP config skipped: {exc}", file=sys.stderr)
+
+    # Live build-panel feed (§14.8): sanitized event summaries + a throttled
+    # token snapshot, streamed to the customer via the platform API. The SDK's
+    # constructor signature drifts across versions, so fall back to a feed-less
+    # run rather than fail the build.
+    feed = live_events.LiveFeed(OPENVISOR, llm=llm,
+                                model=os.environ["LLM_MODEL"].split("/")[-1],
+                                on_snapshot=lambda: _dump_usage(llm, quiet=True))
+    # Fail-safe token cap: bound the number of agent iterations so a stuck or
+    # looping run can't burn the customer's budget. The hard wall-clock timeout
+    # (enforced by the deployer) is the backstop; this is the finer guard. The
+    # cap is a Conversation constructor arg (run() takes none), and the SDK
+    # swallows unknown constructor kwargs - so verify it landed and warn loudly
+    # when a future rename silently drops it.
+    max_iters = int(os.environ.get("LLM_MAX_ITERATIONS") or 0)
+    conv_kwargs = {"agent": agent, "workspace": "/workspace", "callbacks": [feed]}
+    if max_iters > 0:
+        conv_kwargs["max_iteration_per_run"] = max_iters
+    try:
+        conversation = Conversation(**conv_kwargs)
+    except TypeError:
+        print("driver: callbacks kwarg unsupported; running without the live feed",
+              file=sys.stderr)
+        conversation = Conversation(agent=agent, workspace="/workspace")
+    if max_iters > 0 and getattr(conversation, "max_iteration_per_run", None) != max_iters:
+        print("driver: iteration cap NOT applied by this SDK version "
+              "(deployer timeout still applies)", file=sys.stderr)
+    conversation.send_message(task)
+
+    try:
+        conversation.run()
+    except Exception as exc:
+        _dump_error(exc)
+        raise
+    finally:
+        # bill whatever was spent, even when the run errors or hits the cap
+        _dump_usage(llm)
+        try:
+            feed.dump_progress(force=True)  # final live-counter snapshot
+        except Exception:  # noqa: BLE001
+            pass
+    if feed.exit_reason == "max_iterations":
+        # Structured, secret-free end-of-session marker (error.json parity): the
+        # worker turns it into the customer-facing "iteration cap" copy instead
+        # of the misleading generic "no changes to publish".
+        try:
+            (OPENVISOR / "exit_reason.json").write_text(
+                json.dumps({"reason": "max_iterations", "limit": max_iters}))
+            print(f"driver: session ended at the iteration cap ({max_iters})")
+        except Exception as exc:  # noqa: BLE001 - copy plumbing never fails the run
+            print(f"driver: exit-reason dump failed: {exc}", file=sys.stderr)
+    print("driver: conversation finished")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - setup failures (before the run loop)
+        _dump_error(exc)
+        raise

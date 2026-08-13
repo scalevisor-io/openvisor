@@ -1,0 +1,19 @@
+{
+  "id": "api-webhook-relay",
+  "speciality": "api-backend",
+  "description": "A webhook relay: accept inbound POSTs, persist them, forward to a configured target URL with bounded retries and backoff, and expose a health endpoint.",
+  "onboarding_answers": [
+    {
+      "q": "Delivery guarantee?",
+      "a": "At-least-once"
+    },
+    {
+      "q": "Max retries?",
+      "a": "5"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

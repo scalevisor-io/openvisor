@@ -1,0 +1,168 @@
+---
+import Legal from '../layouts/Legal.astro';
+import { brandName } from '../lib/site';
+import content from '../lib/content';
+
+const { entity, consultant, contactEmail, privacyUpdated } = content.legal;
+---
+
+<Legal
+  title={`Privacy policy - ${brandName}`}
+  description={`How ${brandName} collects, uses, and protects your personal data, in compliance with the GDPR.`}
+  path="/privacy"
+  heading="Privacy policy"
+  updated={privacyUpdated}
+>
+  <p>
+    This policy explains what personal data <strong>{brandName}</strong>, a service operated by
+    <strong>{entity}</strong> ("we", "us"), collects, why we collect it, and the rights you have
+    over it. It is written to comply with Regulation (EU) 2016/679 (the <strong>GDPR</strong>)
+    and applicable national data-protection law.
+  </p>
+
+  <h2>1. Data controller</h2>
+  <p>
+    The data controller is <strong>{entity}</strong>, represented by {consultant}. For any
+    question about this policy or your data, contact us at
+    <a href={`mailto:${contactEmail}`}>{contactEmail}</a>.
+  </p>
+
+  <h2>2. What we collect and why</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Data</th>
+        <th>Purpose</th>
+        <th>Legal basis</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Account data: email address, password (stored hashed, never in clear)</td>
+        <td>Creating and securing your account, signing you in, sending verification and password-reset emails</td>
+        <td>Performance of a contract (Art. 6(1)(b))</td>
+      </tr>
+      <tr>
+        <td>Organization and billing data: organization name, company name, VAT ID, credit balance and transaction history</td>
+        <td>Managing your workspace, metering credits, invoicing</td>
+        <td>Performance of a contract; legal obligation for accounting records (Art. 6(1)(b) and (c))</td>
+      </tr>
+      <tr>
+        <td>Project data: project descriptions, chat messages, requests, attachments, repository URLs</td>
+        <td>Reviewing, estimating, and delivering your project; keeping an auditable history of the engagement</td>
+        <td>Performance of a contract (Art. 6(1)(b))</td>
+      </tr>
+      <tr>
+        <td>Project Memory entries, including credentials you choose to share</td>
+        <td>Allowing the build agent to complete tasks that need them; entries are encrypted at rest</td>
+        <td>Performance of a contract (Art. 6(1)(b))</td>
+      </tr>
+      <tr>
+        <td>Payment data</td>
+        <td>Processing credit top-ups and quote payments. Payments are handled by Stripe; we never see or store your card number, only payment references</td>
+        <td>Performance of a contract; legal obligation (Art. 6(1)(b) and (c))</td>
+      </tr>
+      <tr>
+        <td>Technical data: IP address, server and proxy logs, essential cookies</td>
+        <td>Keeping the platform secure, preventing abuse and fraud, rate limiting, diagnosing incidents</td>
+        <td>Legitimate interest in securing the service (Art. 6(1)(f))</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    We collect nothing beyond the table above. In particular, we do <strong>not</strong> use
+    third-party analytics, advertising trackers, or marketing databases, we do not send marketing
+    emails, and we never sell or rent personal data.
+  </p>
+
+  <h2>3. Cookies</h2>
+  <p>
+    The platform uses <strong>strictly necessary cookies only</strong>: a session cookie to keep
+    you signed in and a CSRF token to protect forms. These are exempt from consent under the
+    ePrivacy rules, which is why you see no cookie banner. We set no analytics, advertising, or
+    cross-site tracking cookies. The signup captcha (Altcha) is self-hosted and sends nothing to
+    third parties.
+  </p>
+
+  <h2>4. AI processing of your project content</h2>
+  <p>
+    To deliver an AI-curated build, your project description, chat messages, and relevant Memory
+    entries are processed by our AI model provider, acting as a processor on our instructions,
+    strictly to review, estimate, and generate your deliverables. This content is not used to
+    train models. Builds run in an isolated, sandboxed environment; secrets you store in Memory
+    reach only that sandbox, never demo containers or logs.
+  </p>
+  <p>
+    No decision producing legal effects on you is made by automated means alone: every project is
+    reviewed by a human ({consultant}) before and during delivery (no processing within the
+    meaning of Art. 22 GDPR).
+  </p>
+
+  <h2>5. Who receives your data</h2>
+  <p>Your data is shared only with the processors needed to run the service:</p>
+  <ul>
+    <li><strong>Our hosting provider</strong>, which operates the servers the platform runs on.</li>
+    <li><strong>Stripe</strong>, for payment processing (credit top-ups and quotes).</li>
+    <li><strong>Our AI model provider</strong>, for the processing described in section 4.</li>
+    <li><strong>GitHub or our self-hosted GitLab</strong>, to deliver code: if you connect your own GitHub repository, code and pull requests are pushed there under GitHub's own terms; otherwise delivery happens on our self-hosted GitLab.</li>
+    <li><strong>Our email delivery provider</strong>, for transactional emails only (verification, password reset, project status notifications).</li>
+  </ul>
+  <p>
+    Each processor is bound by a data-processing agreement under Art. 28 GDPR. We may also
+    disclose data where the law requires it (for example to competent authorities on a valid
+    request).
+  </p>
+
+  <h2>6. International transfers</h2>
+  <p>
+    The platform is designed to keep data under European jurisdiction. Where a processor
+    transfers data outside the EU/EEA (for example Stripe), the transfer is covered by an adequacy
+    decision or the European Commission's Standard Contractual Clauses.
+  </p>
+
+  <h2>7. How long we keep your data</h2>
+  <ul>
+    <li><strong>Account, organization, and project data:</strong> for as long as your account is active, then deleted or anonymized within 90 days of account closure.</li>
+    <li><strong>Billing records and invoices:</strong> for the retention period required by applicable accounting law.</li>
+    <li><strong>Memory entries and stored credentials:</strong> until you delete them (they are editable and deletable at any time) or your account is closed.</li>
+    <li><strong>Technical logs:</strong> up to 12 months.</li>
+  </ul>
+
+  <h2>8. How we protect your data</h2>
+  <ul>
+    <li>All traffic is encrypted in transit (TLS).</li>
+    <li>Passwords are stored hashed; sensitive values (credentials, tokens, Memory secrets) are envelope-encrypted at rest.</li>
+    <li>AI builds run in isolated, hardened sandboxes; an automated scan blocks any publication that would leak a stored secret.</li>
+    <li>Access to production data is restricted to the operator of the service.</li>
+  </ul>
+  <p>
+    If a personal-data breach is likely to result in a risk to your rights, we will notify the
+    competent supervisory authority within 72 hours and inform you as required by Art. 33
+    and 34 GDPR.
+  </p>
+
+  <h2>9. Your rights</h2>
+  <p>Under the GDPR you can, at any time:</p>
+  <ul>
+    <li><strong>Access</strong> the personal data we hold about you (Art. 15);</li>
+    <li><strong>Rectify</strong> inaccurate or incomplete data (Art. 16);</li>
+    <li><strong>Erase</strong> your data ("right to be forgotten", Art. 17);</li>
+    <li><strong>Restrict</strong> processing (Art. 18);</li>
+    <li><strong>Receive</strong> your data in a portable format (Art. 20);</li>
+    <li><strong>Object</strong> to processing based on legitimate interest (Art. 21).</li>
+  </ul>
+  <p>
+    To exercise any of these rights, write to
+    <a href={`mailto:${contactEmail}`}>{contactEmail}</a>. We answer within one month. If you
+    believe your rights are not respected, you can lodge a complaint with the supervisory
+    authority of the country where {entity} is established, or with the supervisory
+    authority of your country of residence.
+  </p>
+
+  <h2>10. Changes to this policy</h2>
+  <p>
+    We may update this policy as the service evolves. Material changes are announced on the
+    platform or by email before they take effect. The date at the top of this page always
+    reflects the latest version.
+  </p>
+</Legal>

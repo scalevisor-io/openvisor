@@ -1,0 +1,53 @@
+# Alembic migrations + admin seed, run as a Helm hook so `helm upgrade` (make
+# helm-deploy) ALWAYS applies them, regardless of whether the api pod restarts
+# (the api Deployment keeps the same :latest tag across a code change, so a bare
+# upgrade need not recreate it - which is why the api-entrypoint approach could
+# silently skip migrations).
+#
+# Hook events:
+#   pre-upgrade  - on upgrades, migrate BEFORE the new code rolls out (Postgres is
+#                  already up from the running release; correct migrate-then-deploy order).
+#   post-install - on a fresh install, migrate AFTER the chart's Postgres is created
+#                  and Ready. This can't deadlock: no pod's readiness probe touches
+#                  the schema (api/mcp /health return {"ok":true}; worker/beat have
+#                  no readiness probe), so --wait completes without the schema.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-migrate
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: migrate
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      {{- if .Values.postgres.enabled }}
+      initContainers:
+        - name: wait-postgres
+          image: busybox:1.36
+          command: ["sh", "-c", "until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done"]
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "openvisor.image" (dict "root" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/app/entrypoint.sh", "migrate"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecretName }}
+          env:
+            {{- include "openvisor.backendEnv" . | nindent 12 }}
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }

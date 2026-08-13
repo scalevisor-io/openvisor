@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "meta": {
+    "purpose": "Per-model LLM token pricing used to estimate and bill demo generation cost. Prices are per 1,000,000 tokens, split by input (prompt) and output (completion).",
+    "checked_at": "2026-07-04",
+    "owner_todo": [
+      "LLM pricing drifts - re-verify against the source URLs and bump checked_at periodically.",
+      "Currencies are mixed: Anthropic/OpenAI/Mistral bill in USD, Scaleway in EUR. Normalize with a live FX rate before summing across providers; do not hardcode a rate here.",
+      "Prompt-cache READ rates are now encoded per row as `cached_input` (billing bills reported cached tokens at that rate; rows without it give no discount) - keep them verified alongside input/output. Still NOT encoded: cache-write surcharges, Anthropic & Scaleway Batch API (-50%), OpenAI Flex/Priority tiers.",
+      "Scaleway also hosts Mistral/Qwen/Llama/gpt-oss at EUR rates; add scaleway/* rows if you route those models through Scaleway instead of the native provider.",
+      "Add context_window / max_output columns if the estimator needs them.",
+      "Bill by `api_model` (the exact usage-reported model string), NOT `id`; an unknown model string must fail loud, never bill 0. The in-use Mistral rows now carry `api_model`; add it (and `type` if embedding) to the anthropic/openai/scaleway rows before routing projects to them.",
+      "Embedding tokens are billable and now included: pgvector RAG ingestion (whole knowledge repo + CVE feeds) and every retrieval query run through mistral-embed - meter them like chat input tokens. Reranker (currently unset in .env) has no row yet; add one if you route to a token-billed reranker."
+    ],
+    "field_reference": {
+      "id": "Stable key, formatted as \"<provider>/<model>\".",
+      "api_model": "THE BILLING LOOKUP KEY: the exact model string the OpenAI-compatible endpoint returns in its usage/model field (e.g. \"mistral-large-latest\", \"mistral-embed\"). Look prices up by this, NOT by `id`. May be a single string or an array of aliases. An unknown api_model must fail loud - never bill 0.",
+      "provider": "Billing vendor / API endpoint the price applies to (anthropic, openai, scaleway, mistral).",
+      "model": "Human-readable model name.",
+      "type": "\"chat\" (input + output tokens; the default when absent) or \"embedding\" (input tokens only, output = 0).",
+      "input": "Cost per 1,000,000 input (prompt) tokens, in `currency`.",
+      "output": "Cost per 1,000,000 output (completion) tokens, in `currency`. 0 for embedding models.",
+      "cached_input": "Optional: cost per 1,000,000 prompt-cache READ tokens (the provider-reported cached subset of input), in `currency`. Absent = cached reads bill at `input` (no discount).",
+      "currency": "USD or EUR. See owner_todo on normalization.",
+      "notes": "Optional free-text context."
+    },
+    "sources": {
+      "anthropic": "Bundled Anthropic pricing reference (cached 2026-06-24)",
+      "openai": "https://developers.openai.com/api/docs/pricing",
+      "scaleway": "https://www.scaleway.com/en/pricing/model-as-a-service/",
+      "mistral": "https://mistral.ai/pricing/api/"
+    }
+  },
+  "models": [
+    { "id": "anthropic/claude-opus-4-8", "provider": "anthropic", "model": "Claude Opus 4.8", "input": 5.00, "output": 25.00, "currency": "USD", "notes": "Flagship; 1M context." },
+    { "id": "anthropic/claude-fable-5", "provider": "anthropic", "model": "Claude Fable 5", "input": 10.00, "output": 50.00, "currency": "USD", "notes": "Most capable." },
+    { "id": "anthropic/claude-sonnet-5", "provider": "anthropic", "model": "Claude Sonnet 5", "input": 3.00, "output": 15.00, "currency": "USD", "notes": "Standard rate; introductory $2/$10 ended 2026-08-31." },
+    { "id": "anthropic/claude-haiku-4-5", "provider": "anthropic", "model": "Claude Haiku 4.5", "input": 1.00, "output": 5.00, "currency": "USD", "notes": "Cheapest/fastest." },
+
+    { "id": "openai/gpt-5.6-luna", "provider": "openai", "model": "GPT-5.6 Luna", "api_model": "gpt-5.6-luna", "type": "chat", "input": 0.20, "cached_input": 0.02, "output": 1.20, "currency": "USD", "notes": "Verified 2026-08-10; OpenAI cut Luna -80% on 2026-07-30 (was 1.00/6.00)." },
+    { "id": "openai/gpt-5.5", "provider": "openai", "model": "GPT-5.5", "input": 5.00, "output": 30.00, "currency": "USD", "notes": "Flagship." },
+    { "id": "openai/gpt-5.4", "provider": "openai", "model": "GPT-5.4", "input": 2.50, "output": 15.00, "currency": "USD", "notes": "Balanced." },
+    { "id": "openai/gpt-5.4-mini", "provider": "openai", "model": "GPT-5.4 mini", "input": 0.75, "output": 4.50, "currency": "USD" },
+    { "id": "openai/gpt-5.4-nano", "provider": "openai", "model": "GPT-5.4 nano", "input": 0.20, "output": 1.25, "currency": "USD", "notes": "Cheapest." },
+    { "id": "openai/gpt-5.3-codex", "provider": "openai", "model": "GPT-5.3 Codex", "input": 1.75, "output": 14.00, "currency": "USD", "notes": "Coding." },
+
+    { "id": "scaleway/glm-5.2", "provider": "scaleway", "model": "GLM-5.2", "input": 1.80, "output": 5.50, "currency": "EUR", "notes": "Zhipu GLM-5.2 via Scaleway Generative APIs." },
+
+    { "id": "mistral/mistral-large-3", "provider": "mistral", "model": "Mistral Large 3", "api_model": "mistral-large-latest", "type": "chat", "input": 0.50, "cached_input": 0.05, "output": 1.50, "currency": "USD", "notes": "Main model configured in .env OPENAI_MODEL." },
+    { "id": "mistral/mistral-medium-3.5", "provider": "mistral", "model": "Mistral Medium 3.5", "api_model": "mistral-medium-latest", "type": "chat", "input": 1.50, "cached_input": 0.15, "output": 7.50, "currency": "USD", "notes": "cached_input = 10% of input per Mistral prompt-caching policy (verified 2026-08-10; opt-in via prompt_cache_key, which the platform sends on dev runs and project chat)." },
+    { "id": "mistral/mistral-small-4", "provider": "mistral", "model": "Mistral Small 4", "api_model": "mistral-small-latest", "type": "chat", "input": 0.15, "cached_input": 0.015, "output": 0.60, "currency": "USD" },
+    { "id": "mistral/magistral-medium", "provider": "mistral", "model": "Magistral Medium", "api_model": "magistral-medium-latest", "type": "chat", "input": 2.00, "cached_input": 0.20, "output": 5.00, "currency": "USD", "notes": "Reasoning." },
+    { "id": "mistral/codestral", "provider": "mistral", "model": "Codestral", "api_model": "codestral-latest", "type": "chat", "input": 0.30, "cached_input": 0.03, "output": 0.90, "currency": "USD", "notes": "Coding." },
+
+    { "id": "mistral/mistral-embed", "provider": "mistral", "model": "Mistral Embed", "api_model": "mistral-embed", "type": "embedding", "input": 0.10, "output": 0.00, "currency": "USD", "notes": "Embedding model (input tokens only); .env EMBEDDING_MODEL. Used for pgvector RAG ingestion + per-query embedding." }
+  ]
+}

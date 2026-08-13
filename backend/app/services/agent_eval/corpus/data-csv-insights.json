@@ -1,0 +1,19 @@
+{
+  "id": "data-csv-insights",
+  "speciality": "data-ai",
+  "description": "Upload a CSV, compute summary statistics per column, and render two server-side charts (a histogram and a bar chart). No external AI calls.",
+  "onboarding_answers": [
+    {
+      "q": "Max file size?",
+      "a": "10 MB"
+    },
+    {
+      "q": "Charts?",
+      "a": "Server-rendered PNG or SVG"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

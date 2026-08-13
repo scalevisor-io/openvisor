@@ -1,0 +1,112 @@
+.status-timeline {
+  display: flex;
+  list-style: none;
+  margin: 0.9rem 0 0;
+  padding: 0;
+}
+.status-timeline li {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+.status-timeline li:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: calc(-50% + 13px);
+  right: calc(50% + 13px);
+  height: 2px;
+  background: var(--gray-100, var(--line, #e3e8f2));
+}
+.status-timeline li.t-done:not(:first-child)::before,
+.status-timeline li.t-active:not(:first-child)::before {
+  background: color-mix(in srgb, var(--speed-from, #22d3ee) 55%, transparent);
+}
+.status-timeline .t-node {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--gray-200, var(--line-strong, #d2d9e8));
+  background: var(--surface, #fff);
+  display: grid;
+  place-items: center;
+}
+.status-timeline .t-node svg {
+  width: 11px;
+  height: 11px;
+  color: var(--on-gradient-text, #05070d);
+}
+.status-timeline .t-done .t-node {
+  background: var(--speed-from, #22d3ee);
+  border-color: transparent;
+}
+.status-timeline .t-done .t-node svg {
+  /* the check sits on the cyan fill in both themes */
+  color: #05070d;
+}
+.status-timeline .t-active .t-node {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--surface, #fff), var(--surface, #fff)) padding-box,
+    var(--gradient-speed, linear-gradient(135deg, #22d3ee, #7c3aed)) border-box;
+  animation: st-pulse-ring 2.4s ease-out infinite;
+}
+.status-timeline .t-active .t-node::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gradient-speed, linear-gradient(135deg, #22d3ee, #7c3aed));
+}
+.status-timeline .t-label {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint, var(--text-muted, #8a93a8));
+}
+.status-timeline .t-done .t-label {
+  color: var(--text-dim, var(--text, #4b5568));
+}
+.status-timeline .t-active .t-label {
+  color: var(--gray-900, var(--text-strong, #0b1220));
+  font-weight: 600;
+}
+.status-timeline.canceled {
+  opacity: 0.45;
+  filter: grayscale(0.8);
+}
+.status-timeline.compact {
+  margin-top: 0.85rem;
+}
+.status-timeline.compact .t-node {
+  width: 16px;
+  height: 16px;
+}
+.status-timeline.compact .t-node svg {
+  width: 9px;
+  height: 9px;
+}
+.status-timeline.compact li:not(:first-child)::before {
+  top: 8px;
+  left: calc(-50% + 11px);
+  right: calc(50% + 11px);
+}
+.status-timeline.compact .t-label {
+  font-size: 0.56rem;
+}
+/* Detail page: the timeline sits in a quiet strip between head and tabs. */
+
+@keyframes st-pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--speed-from, #22d3ee) 40%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-timeline .t-active .t-node { animation: none; }
+}
