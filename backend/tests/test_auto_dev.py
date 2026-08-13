@@ -130,7 +130,7 @@ def test_sweep_records_unpollable_watch_once(org, quiet, monkeypatch):
     under the wrong Memory key, prod regression) must say so in the history,
     once per 24h, instead of an eternal silent "Nothing yet"."""
     pid = _project(org)
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, project, provider: None)
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, project, provider, uri=None: None)
 
     class FakeRedis:
         def __init__(self):

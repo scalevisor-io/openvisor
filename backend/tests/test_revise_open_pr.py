@@ -164,7 +164,7 @@ def test_reset_stale_branch_clears_the_bound_run_row_too(project, monkeypatch):
     the run row's branch copy survived, so the resume re-pushed the deleted
     branch and the agent reopened the closed PR it was still handed."""
     pid, _, run_id, _ = project
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov: "tok")
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: "tok")
     monkeypatch.setattr(tasks.github, "branch_exists",
                         lambda o, r, b, token=None: False)
     with SyncSession() as db:
@@ -182,7 +182,7 @@ def test_reset_stale_branch_treats_a_closed_unmerged_pr_as_stale(project, monkey
     """The branch still exists but its PR was closed without merging: same
     verdict - rejected work, fresh unit."""
     pid, _, run_id, _ = project
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov: "tok")
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: "tok")
     monkeypatch.setattr(tasks.github, "branch_exists",
                         lambda o, r, b, token=None: True)
     monkeypatch.setattr(tasks.github, "get_pr",
@@ -199,7 +199,7 @@ def test_reset_stale_branch_treats_a_closed_unmerged_pr_as_stale(project, monkey
 
 def test_reset_stale_branch_keeps_an_open_pr(project, monkeypatch):
     pid, _, run_id, _ = project
-    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov: "tok")
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: "tok")
     monkeypatch.setattr(tasks.github, "branch_exists",
                         lambda o, r, b, token=None: True)
     monkeypatch.setattr(tasks.github, "get_pr",
