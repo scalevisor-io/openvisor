@@ -130,6 +130,13 @@ class ProgramRunIn(BaseModel):
     mem_limit: str = "1g"
     mem_request: str = ""  # docker --memory-reservation (soft floor); "" = none
     cpu_request: str = ""  # honored on Kubernetes only (docker has no cpu request)
+    # "host:target" - the SAME tailnet mapping dev-run sandboxes get (§ssh
+    # remotes). A git host reachable only over the tailnet resolves to a CGNAT
+    # address a sandbox cannot route to, so a program cloning the customer's
+    # repositories hangs until git gives up with "Could not read from remote
+    # repository". The inner program container runs network_mode: host, so the
+    # DinD's /etc/hosts is the program's too.
+    extra_host: str = ""
 
 
 class ProgramCleanupIn(BaseModel):
@@ -184,9 +191,11 @@ def ensure_compose_plugin(name: str) -> None:
 
 
 def create_dind(name: str, cpus: str = "", memory: str = "",
-                memory_reservation: str = "") -> None:
+                memory_reservation: str = "", extra_host: str = "") -> None:
     """Defaults keep the demo/verify limits (DEMO_*); program sandboxes pass
-    their own per-program resources."""
+    their own per-program resources. `extra_host` ("host:target") adds the
+    tailnet git-host alias - inner containers on network_mode: host share this
+    /etc/hosts, which is how a program reaches a tailnet-only forge."""
     cmd = [
         "docker", "run", "-d", "--name", name,
         "--network", DEMOS_NETWORK,
@@ -197,6 +206,8 @@ def create_dind(name: str, cpus: str = "", memory: str = "",
         "-v", f"{name}-data:/var/lib/docker",
         "--restart", "unless-stopped",
     ]
+    if extra_host:
+        cmd += ["--add-host", extra_host]
     if memory_reservation:
         cmd += [f"--memory-reservation={memory_reservation}"]
     if RUNTIME:
@@ -671,7 +682,7 @@ def program_run(body: ProgramRunIn):
 
     run(["docker", "rm", "-f", name], check=False)
     create_dind(name, cpus=body.cpu_limit, memory=body.mem_limit,
-                memory_reservation=body.mem_request)
+                memory_reservation=body.mem_request, extra_host=body.extra_host)
     try:
         wait_for_inner_docker(name)
         ensure_compose_plugin(name)
