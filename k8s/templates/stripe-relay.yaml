@@ -1,0 +1,57 @@
+{{- if .Values.stripe.relayEnabled }}
+# Stripe webhook relay (K8s port of the compose.dev stripe-cli sidecar). `stripe
+# listen` opens an OUTBOUND connection to Stripe and streams events back down it,
+# forwarding them to the in-cluster api - so top-up credits land even when the
+# cluster accepts no inbound traffic from Stripe (firewalled ingress). The listen
+# session's signing secret is deterministic per API key, so it matches the
+# STRIPE_WEBHOOK_SECRET already in the env secret; it warns loudly on mismatch.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stripe-relay
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stripe-relay
+  template:
+    metadata:
+      labels:
+        app: stripe-relay
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: stripe-cli
+          image: {{ .Values.stripe.image }}
+          env:
+            - name: STRIPE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: STRIPE_SECRET_KEY
+            - name: EXPECTED_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: STRIPE_WEBHOOK_SECRET
+                  optional: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              case "$STRIPE_API_KEY" in
+                sk_*placeholder*|"") echo "STRIPE_SECRET_KEY not configured; relay idle."; exec sleep infinity;;
+                sk_*) ;;
+                *) echo "STRIPE_SECRET_KEY not configured; relay idle."; exec sleep infinity;;
+              esac
+              secret="$(stripe listen --print-secret)" || exit 1
+              if [ "$secret" != "$EXPECTED_WEBHOOK_SECRET" ]; then
+                echo "WARNING: STRIPE_WEBHOOK_SECRET does not match this listen session ($secret)."
+                echo "WARNING: the api will reject relayed webhooks (400) until it is updated."
+              fi
+              exec stripe listen --forward-to http://api:8000/api/billing/stripe/webhook
+          resources:
+            {{- toYaml .Values.stripe.resources | nindent 12 }}
+{{- end }}

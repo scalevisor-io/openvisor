@@ -1,0 +1,277 @@
+# MCP tooling reachable from dev-run Jobs: Context7 (live library docs; needs npm
+# egress at start - it npx-installs the pinned package), headless Chrome (the
+# shared browser the demos network resolves), and browser-mcp (Playwright MCP
+# bridging to chrome over CDP - the dev agent's browser tool; npx-installed at
+# start like context7).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context7
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: context7
+  template:
+    metadata:
+      labels:
+        app: context7
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: context7
+          image: {{ .Values.context7.image }}
+          command: ["npx", "-y", {{ .Values.context7.package | quote }}, "--transport", "http", "--port", "3000"]
+          env:
+            - name: CONTEXT7_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: CONTEXT7_API_KEY
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.context7.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: context7
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: context7
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chrome
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: chrome
+  template:
+    metadata:
+      labels:
+        app: chrome
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: chrome
+          image: {{ .Values.chrome.image }}
+          args:
+            - --headless
+            - --disable-gpu
+            - --no-sandbox
+            - --remote-debugging-address=0.0.0.0
+            - --remote-debugging-port=9222
+            - --remote-allow-origins=*
+          ports:
+            - name: cdp
+              containerPort: 9222
+          readinessProbe:
+            tcpSocket: { port: cdp }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: cdp }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.chrome.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chrome
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: chrome
+  ports:
+    - name: cdp
+      port: 9222
+      targetPort: cdp
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: browser-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: browser-mcp
+  template:
+    metadata:
+      labels:
+        app: browser-mcp
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: browser-mcp
+          image: {{ .Values.browserMcp.image }}
+          # The CDP hop rides an in-container localhost relay: Chromium rejects
+          # DevTools HTTP requests whose Host header is a DNS name (IP/localhost
+          # only; pinned to 127.0.0.1 - `localhost` can resolve to ::1, which the
+          # relay does not bind), re-resolving the `chrome` Service per connection.
+          command:
+            - sh
+            - -c
+            - |
+              node -e "const net=require('net');net.createServer(s=>{const c=net.connect(9222,'chrome');s.pipe(c).pipe(s);s.on('error',()=>c.destroy());c.on('error',()=>s.destroy());}).listen(9222,'127.0.0.1')" &
+              exec npx -y {{ .Values.browserMcp.package }} --port 3000 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint http://127.0.0.1:9222
+          env:
+            - name: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.browserMcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: browser-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: browser-mcp
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: websearch-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: websearch-mcp
+  template:
+    metadata:
+      labels:
+        app: websearch-mcp
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: websearch-mcp
+          # Web-search MCP for dev runs (§KB `websearch` kind): the mcp image with
+          # the websearch app instead of the public MCP server. Stateless - the KB
+          # row's provider key rides each request as Authorization: Bearer.
+          image: {{ include "openvisor.image" (dict "root" . "name" "mcp") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["uvicorn", "websearch:app", "--host", "0.0.0.0", "--port", "3000"]
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.websearchMcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: websearch-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: websearch-mcp
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+{{- if .Values.mailpit.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: mailpit
+          image: {{ .Values.mailpit.image }}
+          ports:
+            - name: http
+              containerPort: 8025
+            - name: smtp
+              containerPort: 1025
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: mailpit
+  ports:
+    - name: http
+      port: 8025
+      targetPort: http
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+{{- end }}

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+        {{- include "openvisor.workspacesConsumerLabel" . | nindent 8 }}
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      {{- include "openvisor.workspacesAffinity" . | nindent 6 }}
+      containers:
+        - name: worker
+          image: {{ include "openvisor.image" (dict "root" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/app/entrypoint.sh", "worker"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecretName }}
+          env:
+            {{- include "openvisor.backendEnv" . | nindent 12 }}
+          volumeMounts:
+            - name: workspaces
+              mountPath: /workspaces
+            # Empty in K8s (the local KB is a compose concept); rag ingestion no-ops
+            # gracefully on an empty tree. Read-write for a forthcoming git-KB feature.
+            - name: knowledge
+              mountPath: /knowledge
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+        - name: knowledge
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beat
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1 # beat must be a singleton (celerybeat-schedule file, duplicate ticks otherwise)
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: beat
+  template:
+    metadata:
+      labels:
+        app: beat
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: beat
+          image: {{ include "openvisor.image" (dict "root" . "name" "backend") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/app/entrypoint.sh", "beat"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecretName }}
+          env:
+            {{- include "openvisor.backendEnv" . | nindent 12 }}
+          volumeMounts:
+            # Empty in K8s (the local KB is a compose concept); rag ingestion no-ops
+            # gracefully on an empty tree. Read-write for a forthcoming git-KB feature.
+            - name: knowledge
+              mountPath: /knowledge
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+      volumes:
+        - name: knowledge
+          emptyDir: {}

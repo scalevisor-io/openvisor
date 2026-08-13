@@ -1,0 +1,12 @@
+{
+  "name": "@openvisor/shared-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Framework-light React components shared between the Openvisor spoke SPA and the Scalevisor hub customer console (§hub pass-through). Consumed as TypeScript source via a build-time path alias - no build step. Apache-2.0 so a closed hub and the open-source spoke can both depend on it.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "react": ">=18"
+  }
+}

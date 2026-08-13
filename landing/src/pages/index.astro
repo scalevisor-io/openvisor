@@ -1,0 +1,2089 @@
+---
+import Base from '../layouts/Base.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+
+import { aiIntakeUrl, programsUrl, signupUrl } from '../lib/site';
+import content from '../lib/content';
+
+// Hand-drawn inline SVG icon set - one stroke grammar (24px grid, 1.7 stroke,
+// round caps) so every visual on the page reads as the same family.
+const icon = (paths: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+const icons: Record<string, string> = {
+  pulse: icon('<path d="M3 12h4l3-7 4 14 3-7h4"/>'),
+  thread: icon(
+    '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><rect x="9.5" y="9.2" width="5" height="4" rx="0.8"/><path d="M10.7 9.2V8.1a1.3 1.3 0 0 1 2.6 0v1.1"/>'
+  ),
+  terminal: icon(
+    '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m8 9 3 3-3 3"/><path d="M13 15h4"/>'
+  ),
+  pr: icon(
+    '<circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="18" r="2.6"/><path d="M6 8.6v6.8"/><path d="M12 6h3a3 3 0 0 1 3 3v6.4"/>'
+  ),
+  meter: icon(
+    '<path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4.2-5"/><circle cx="12" cy="16" r="1"/>'
+  ),
+  key: icon(
+    '<circle cx="7.5" cy="16.5" r="3.5"/><path d="m10.2 13.8 8.8-8.8"/><path d="m15.5 8.5 2.6 2.6"/><path d="m19 5 2 2"/>'
+  ),
+  shieldNode: icon(
+    '<path d="M12 3l7 2.6v5c0 4.4-2.9 7.5-7 9.4-4.1-1.9-7-5-7-9.4v-5L12 3z"/><circle cx="12" cy="10.8" r="1.6"/><path d="M12 12.4v3"/><path d="M10.6 9.8 8.8 8.4"/><path d="m13.4 9.8 1.8-1.4"/>'
+  ),
+  pen: icon(
+    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>'
+  ),
+  globe: icon(
+    '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.8 2.6 2.8 14.4 0 17-2.8-2.6-2.8-14.4 0-17z"/>'
+  ),
+  badge: icon(
+    '<circle cx="12" cy="9" r="5.2"/><path d="m8.6 13.1-1.1 7.6 4.5-2.6 4.5 2.6-1.1-7.6"/>'
+  ),
+  box: icon(
+    '<path d="M21 8.2 12 3 3 8.2v7.6L12 21l9-5.2V8.2z"/><path d="m3 8.2 9 5.2 9-5.2"/><path d="M12 13.4V21"/>'
+  ),
+  layers: icon('<path d="m12 3-9 5 9 5 9-5-9-5z"/><path d="m3 13 9 5 9-5"/>'),
+  zap: icon('<path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/>'),
+  check: icon('<path d="m5 13 4 4L19 7"/>'),
+  message: icon(
+    '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'
+  ),
+};
+
+// Animated status glyphs shown inside the chip - each signals what the phase is
+// doing: hourglass (draining) = waiting on a person, chrono = timing an
+// estimate, spinner = the agent is actively building (Claude Code style),
+// broadcast = the demo is live, check = delivered. Styled + animated in the
+// <style> block; `stroke/color: currentColor` so they inherit the chip's tone
+// (amber / cyan / green).
+const glyphs: Record<string, string> = {
+  hourglass:
+    '<svg class="chip-glyph chip-glyph--hourglass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12M6 20h12M7.5 4 12 12 7.5 20M16.5 4 12 12 16.5 20"/><path class="hg-sand" d="M8.6 18.8h6.8L12 13z" fill="currentColor" stroke="none"/></svg>',
+  chrono:
+    '<svg class="chip-glyph chip-glyph--chrono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="7"/><path d="M12 6.5V4M10 4h4"/><path class="chrono-hand" d="M12 13.5V8.2" stroke-width="2"/></svg>',
+  spinner: '<span class="ascii-spin" aria-hidden="true">/</span>',
+  broadcast:
+    '<svg class="chip-glyph chip-glyph--live" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/><path class="live-w1" d="M8.3 8.3a5.2 5.2 0 0 0 0 7.4M15.7 8.3a5.2 5.2 0 0 1 0 7.4"/><path class="live-w2" d="M5.8 5.8a8.8 8.8 0 0 0 0 12.4M18.2 5.8a8.8 8.8 0 0 1 0 12.4"/></svg>',
+  check:
+    '<svg class="chip-glyph chip-glyph--check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="done-check" d="M5 13l4 4L19 7"/></svg>',
+};
+
+// All activity-specific copy + data lives in src/data/site.example.yml (or a
+// gitignored site.yml override); see src/lib/content.ts. The icon + glyph SVG
+// sets above stay in code and are referenced by id from the YAML. Phase and
+// feature-request icon ids are resolved to inline SVG here so both the server
+// render and the client cycle scripts (which get these via define:vars) carry
+// the markup. The hero card is the customer project dashboard, cycled through
+// the §8 lifecycle so a visitor watches a project move Review → Delivery;
+// PHASE_START renders server-side so the first paint shows the signature build.
+const { hero, twoWays, projects, programs, how, pricing, sovereign, finalCta } = content;
+
+const stageLabels = content.stageLabels;
+const phases = content.phases.map((phase) => ({
+  ...phase,
+  events: phase.events.map((ev) => ({ ...ev, icon: icons[ev.icon] })),
+}));
+const PHASE_START = 2; // render the "In build" phase first (signature look)
+
+const featureRequests = content.featureRequests.map((fr) => ({
+  ...fr,
+  icon: icons[fr.icon],
+}));
+
+const specs = content.specs;
+
+const platformPoints = projects.points;
+const trustPoints = sovereign.trustPoints;
+const steps = how.steps;
+const programExamples = programs.examples;
+
+const pad = (i: number) => String(i + 1).padStart(2, '0');
+---
+
+<Base>
+  <Header />
+  <main>
+    <!-- HERO ------------------------------------------------------ -->
+    <section class="hero section">
+      <div class="container hero-inner">
+        <div>
+          <p class="eyebrow hero-eyebrow rise r1">
+            {hero.eyebrow[0]} <span class="sep">/</span> {hero.eyebrow[1]}
+            <span class="sep">/</span> {hero.eyebrow[2]}
+          </p>
+          <h1 class="hero-title rise r2">
+            {hero.titleLead}<br />
+            <span class="gradient-text">{hero.titleAccent}</span>
+          </h1>
+          <p class="hero-lede rise r3">
+            {hero.lede}
+          </p>
+          <div class="hero-cta rise r4">
+            <a href={aiIntakeUrl} class="btn btn-primary">{hero.ctaPrimary}</a>
+            <a href="#two-ways" class="btn btn-ghost">{hero.ctaSecondary}</a>
+          </div>
+          <p class="hero-note rise r5">
+            {hero.note}
+          </p>
+        </div>
+
+        <!-- Signature visual: the project dashboard, as the customer sees it -->
+        <div class="hero-visual rise r4" aria-hidden="true">
+          <div class="demo-card" data-crm-card>
+            <div class="demo-head">
+              <span class="demo-name">{hero.visualName}</span>
+              <span class={`demo-chip demo-chip--${phases[PHASE_START].chip.tone}`}>
+                <span
+                  class="chip-indicator"
+                  set:html={glyphs[phases[PHASE_START].chip.indicator]}
+                />
+                <span class="chip-label">{phases[PHASE_START].chip.label}</span>
+              </span>
+            </div>
+            <ol class="demo-timeline">
+              {
+                stageLabels.map((label, i) => {
+                  const state = phases[PHASE_START].stages[i];
+                  return (
+                    <li class={state ? `t-${state}` : ''}>
+                      <span class="t-node">
+                        {state === 'done' && <Fragment set:html={icons.check} />}
+                      </span>
+                      <span class="t-label">{label}</span>
+                    </li>
+                  );
+                })
+              }
+            </ol>
+            <div class="demo-events">
+              {
+                phases[PHASE_START].events.map((ev) => (
+                  <div class="demo-event">
+                    <span class="event-icon" set:html={ev.icon} />
+                    <p class="event-body">
+                      {ev.body}
+                      <span class="event-meta">{ev.meta}</span>
+                    </p>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+          <p class="hero-visual-caption">
+            {hero.visualCaption}
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SPEC STRIP -------------------------------------------------- -->
+    <div class="spec-strip rise r6">
+      <div class="container spec-inner">
+        {specs.map((spec) => <span class="spec-item">{spec}</span>)}
+      </div>
+    </div>
+
+    <!-- THE CHOICE ------------------------------------------------- -->
+    <section id="two-ways" class="section two-ways">
+      <div class="container">
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">01</span>{twoWays.eyebrow}</p>
+        <h2 class="section-title" data-reveal style="--d: 60ms">{twoWays.title}</h2>
+        <p class="section-intro" data-reveal style="--d: 120ms">
+          {twoWays.intro}
+        </p>
+
+        <div class="ways-grid">
+          <!-- Primary: Curated AI MVP -->
+          <article class="way-card way-card--primary" data-reveal>
+            <span class="way-glyph" set:html={icons.shieldNode} />
+            <span class="way-tag">{twoWays.primary.tag}</span>
+            <h3 class="way-title">{twoWays.primary.title}</h3>
+            <p class="way-lede">
+              {twoWays.primary.lede}
+            </p>
+            <ul class="way-list">
+              {twoWays.primary.list.map((item) => <li>{item}</li>)}
+            </ul>
+            <p class="way-for">
+              <span>{twoWays.primary.forLabel}</span> {twoWays.primary.forText}
+            </p>
+            <a href={signupUrl} class="btn btn-primary way-cta">{twoWays.primary.cta}</a>
+          </article>
+
+          <!-- Secondary: Direct quote -->
+          <article class="way-card" data-reveal style="--d: 120ms">
+            <span class="way-glyph way-glyph--muted" set:html={icons.pen} />
+            <span class="way-tag way-tag--muted">{twoWays.secondary.tag}</span>
+            <h3 class="way-title">{twoWays.secondary.title}</h3>
+            <p class="way-lede">
+              {twoWays.secondary.lede}
+            </p>
+            <ul class="way-list">
+              {twoWays.secondary.list.map((item) => <li>{item}</li>)}
+            </ul>
+            <p class="way-for">
+              <span>{twoWays.secondary.forLabel}</span> {twoWays.secondary.forText}
+            </p>
+            <a href={signupUrl} class="btn btn-ghost way-cta">{twoWays.secondary.cta}</a>
+          </article>
+        </div>
+        <p class="ways-note" data-reveal>
+          {twoWays.note}
+        </p>
+      </div>
+    </section>
+
+    <!-- PROJECTS ---------------------------------------------------- -->
+    <section id="projects" class="section platform">
+      <div class="container">
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">02</span>{projects.eyebrow}</p>
+        <h2 class="section-title" data-reveal style="--d: 60ms">{projects.title}</h2>
+        <p class="section-intro" data-reveal style="--d: 120ms">
+          {projects.intro}
+        </p>
+
+        <div class="platform-grid">
+          {
+            platformPoints.map((point, i) => (
+              <article class="platform-card" data-reveal style={`--d: ${i * 70}ms`}>
+                <div class="platform-head">
+                  <span class="platform-icon" set:html={icons[point.icon]} />
+                  <span class="platform-i">/ {pad(i)}</span>
+                </div>
+                <h3 class="platform-title">{point.title}</h3>
+                <div class="platform-surface" set:html={point.surface} />
+                <p class="platform-caption">{point.caption}</p>
+              </article>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <!-- PROGRAMS ---------------------------------------------------- -->
+    <section id="programs" class="section programs">
+      <div class="container">
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">03</span>{programs.eyebrow}</p>
+        <h2 class="section-title" data-reveal style="--d: 60ms">{programs.title}</h2>
+        <p class="section-intro" data-reveal style="--d: 120ms">
+          {programs.intro}
+        </p>
+
+        <div class="program-examples">
+          {
+            programExamples.map((ex, i) => (
+              <article class="program-card" data-reveal style={`--d: ${i * 70}ms`}>
+                <div class="program-head">
+                  <span
+                    class="program-tile"
+                    aria-hidden="true"
+                    style={`background: linear-gradient(135deg, ${ex.from}, ${ex.to})`}
+                  >
+                    {ex.monogram}
+                  </span>
+                  <div class="program-titles">
+                    <h3>{ex.title}</h3>
+                    <span class="program-mode">{ex.mode}</span>
+                  </div>
+                </div>
+                <p class="program-body">{ex.body}</p>
+                <p class="program-meta">{ex.meta}</p>
+              </article>
+            ))
+          }
+        </div>
+        <div class="program-run" data-program-run data-reveal>
+          <div class="run-head">
+            <span
+              class="run-tile"
+              aria-hidden="true"
+              style={`background: linear-gradient(135deg, ${programExamples[0].from}, ${programExamples[0].to})`}
+            >
+              {programExamples[0].monogram}
+            </span>
+            <span class="run-name">{programExamples[0].title}</span>
+            <span class="run-id">{programExamples[0].run.id}</span>
+            <span class="demo-chip demo-chip--done run-chip">
+              <span class="chip-indicator" set:html={glyphs.check} />
+              <span class="chip-label">succeeded</span>
+            </span>
+          </div>
+          <div class="run-log">
+            {
+              programExamples[0].run.lines.map((l) => (
+                <p class={`run-line is-on${l.tone ? ` run-line--${l.tone}` : ''}`}>
+                  <span class="run-g">{l.g}</span>
+                  {l.text}
+                </p>
+              ))
+            }
+          </div>
+        </div>
+
+        <div class="programs-cta" data-reveal>
+          <a href={programsUrl} class="btn btn-primary">{programs.cta}</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS ---------------------------------------------- -->
+    <section id="how-it-works" class="section">
+      <div class="container">
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">04</span>{how.eyebrow}</p>
+        <h2 class="section-title" data-reveal style="--d: 60ms">{how.title}</h2>
+        <p class="section-intro" data-reveal style="--d: 120ms" set:html={how.intro} />
+
+        <ol class="steps">
+          {
+            steps.map((step, i) => (
+              <li class="step" data-reveal style={`--d: ${i * 60}ms`}>
+                <span class="step-n">{step.n}</span>
+                <div class="step-content">
+                  <h3 class="step-title">
+                    {step.title}
+                    {step.who && <span class="step-who">{step.who}</span>}
+                  </h3>
+                  <p class="step-body">{step.body}</p>
+                </div>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+    </section>
+
+    <!-- PRICING TEASER -------------------------------------------- -->
+    <section id="pricing" class="section pricing">
+      <div class="container">
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">05</span>{pricing.eyebrow}</p>
+        <h2 class="section-title" data-reveal style="--d: 60ms">{pricing.title}</h2>
+        <p class="section-intro" data-reveal style="--d: 120ms">
+          {pricing.intro}
+        </p>
+
+        <div class="price-grid">
+          <div class="price-card price-card--accent" data-reveal>
+            <span class="price-tag">{pricing.primary.tag}</span>
+            <h3 class="price-title">{pricing.primary.title}</h3>
+            <p>
+              {pricing.primary.body}
+            </p>
+          </div>
+          <div class="price-card" data-reveal style="--d: 120ms">
+            <span class="price-tag price-tag--muted">{pricing.secondary.tag}</span>
+            <h3 class="price-title">{pricing.secondary.title}</h3>
+            <p>
+              {pricing.secondary.body}
+            </p>
+          </div>
+        </div>
+        <div class="pricing-cta" data-reveal>
+          <a href={signupUrl} class="btn btn-primary">{pricing.cta}</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- SOVEREIGN / TRUST ------------------------------------------ -->
+    <section id="sovereign" class="section sovereign">
+      <div class="container sovereign-inner">
+        <div data-reveal>
+          <p class="eyebrow"><span class="eyebrow-i">06</span>{sovereign.eyebrow}</p>
+          <h2 class="section-title">{sovereign.title}</h2>
+          <p class="section-intro">
+            {sovereign.intro}
+          </p>
+        </div>
+        <ul class="trust-list">
+          {
+            trustPoints.map((point, i) => (
+              <li data-reveal style={`--d: ${i * 70}ms`}>
+                <span class="trust-icon" set:html={icons[point.icon]} />
+                <span>
+                  <strong>{point.strong}</strong> {point.text}
+                </span>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </section>
+
+    <!-- FINAL CTA -------------------------------------------------- -->
+    <section class="section final-cta">
+      <div class="container final-cta-inner" data-reveal>
+        <h2 class="final-title">
+          {finalCta.titleLead} <span class="gradient-text">{finalCta.titleAccent}</span>
+        </h2>
+        <p class="final-lede">
+          {finalCta.lede}
+        </p>
+        <div class="hero-cta">
+          <a href={signupUrl} class="btn btn-primary">{finalCta.ctaPrimary}</a>
+          <a href={finalCta.ctaSecondaryHref} class="btn btn-ghost">{finalCta.ctaSecondaryLabel}</a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <Footer />
+
+  <script>
+    // Scroll reveal: fade-rise elements as they enter the viewport.
+    // html.js gates the hidden state, so no-JS visitors see everything.
+    const els = document.querySelectorAll('[data-reveal]');
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-in');
+            io.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' }
+    );
+    els.forEach((el) => io.observe(el));
+  </script>
+
+  <script define:vars={{ phases, glyphs, featureRequests, start: PHASE_START, checkIcon: icons.check }}>
+    // Cycle the hero project card through the lifecycle phases every 2.3s, so the
+    // visitor watches a project advance Review → Delivery. Held still for
+    // reduced-motion visitors (they keep the server-rendered "In build" phase).
+    const card = document.querySelector('[data-crm-card]');
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (card && !reduce.matches) {
+      const chip = card.querySelector('.demo-chip');
+      const chipLabel = card.querySelector('.chip-label');
+      const chipIndicator = card.querySelector('.chip-indicator');
+      const nodes = card.querySelectorAll('.demo-timeline > li');
+      const list = card.querySelector('.demo-events');
+      const tones = ['wait', 'build', 'done'];
+      const isBuild = (i) => phases[i].chip.indicator === 'spinner';
+
+      // Write a message's icon + copy into a .demo-event node, keeping the
+      // server-rendered children (which carry Astro's scoped-style attribute).
+      const setEventContent = (el, ev) => {
+        el.querySelector('.event-icon').innerHTML = ev.icon;
+        const body = el.querySelector('.event-body');
+        const meta = body.querySelector('.event-meta');
+        Array.from(body.childNodes).forEach((n) => {
+          if (n !== meta) body.removeChild(n);
+        });
+        body.insertBefore(document.createTextNode(ev.body + ' '), meta);
+        meta.textContent = ev.meta;
+      };
+
+      // Reset the message pile to exactly this phase's events (the build feed may
+      // have swapped a base slot for a clone) and write their content.
+      const applyEvents = (evs) => {
+        let items = Array.from(list.querySelectorAll('.demo-event'));
+        while (items.length > evs.length) items.pop().remove();
+        items = Array.from(list.querySelectorAll('.demo-event'));
+        items.forEach((el) => {
+          el.style.cssText = ''; // clear any inline animation styles
+        });
+        items.forEach((el, n) => evs[n] && setEventContent(el, evs[n]));
+      };
+
+      // Build phase: a customer feature request slides in at the top of the pile,
+      // pushing it down and collapsing the oldest message off the bottom.
+      let frIdx = 0;
+      let feedTimer = null;
+      const insertFeatureRequest = () => {
+        const items = list.querySelectorAll('.demo-event');
+        if (items.length < 2) return;
+        const fr = featureRequests[frIdx++ % featureRequests.length];
+        const node = items[0].cloneNode(true); // clone keeps the scoped-style attrs
+        node.style.cssText = '';
+        setEventContent(node, fr);
+        list.insertBefore(node, list.firstChild);
+        const h = node.offsetHeight; // natural height before collapsing
+        node.style.transition = 'none';
+        node.style.maxHeight = '0px';
+        node.style.opacity = '0';
+        node.style.paddingTop = '0px';
+        node.style.paddingBottom = '0px';
+        void node.offsetHeight; // reflow so the open animates from collapsed
+        node.style.transition = '';
+        node.style.maxHeight = h + 'px';
+        node.style.opacity = '';
+        node.style.paddingTop = '';
+        node.style.paddingBottom = '';
+        window.setTimeout(() => {
+          node.style.maxHeight = '';
+        }, 500);
+
+        // Collapse the oldest message off the bottom.
+        const last = list.querySelector('.demo-event:last-child');
+        if (last && last !== node) {
+          last.style.maxHeight = last.offsetHeight + 'px';
+          void last.offsetHeight;
+          last.style.maxHeight = '0px';
+          last.style.opacity = '0';
+          last.style.marginTop = '0px';
+          last.style.paddingTop = '0px';
+          last.style.paddingBottom = '0px';
+          window.setTimeout(() => last.remove(), 520);
+        }
+      };
+      const scheduleBuildFeed = () => {
+        window.clearTimeout(feedTimer);
+        feedTimer = window.setTimeout(insertFeatureRequest, 1100);
+      };
+      const clearBuildFeed = () => window.clearTimeout(feedTimer);
+
+      const apply = (i) => {
+        const p = phases[i];
+        chipLabel.textContent = p.chip.label;
+        chipIndicator.innerHTML = glyphs[p.chip.indicator];
+        tones.forEach((t) => chip.classList.remove('demo-chip--' + t));
+        chip.classList.add('demo-chip--' + p.chip.tone);
+
+        nodes.forEach((li, n) => {
+          const st = p.stages[n];
+          li.classList.remove('t-done', 't-active');
+          if (st) li.classList.add('t-' + st);
+          const node = li.querySelector('.t-node');
+          if (node) node.innerHTML = st === 'done' ? checkIcon : '';
+        });
+
+        applyEvents(p.events);
+        if (isBuild(i)) scheduleBuildFeed();
+        else clearBuildFeed();
+      };
+
+      // Tick the ASCII build spinner. Runs whenever the build chip is showing
+      // (its .ascii-spin span is only in the DOM during that phase).
+      const frames = ['|', '/', '-', '\\'];
+      let frame = 0;
+      window.setInterval(() => {
+        const spin = card.querySelector('.ascii-spin');
+        if (spin) spin.textContent = frames[frame++ % frames.length];
+      }, 130);
+
+      // Kick off the feed for the server-rendered starting phase (build).
+      if (isBuild(start)) scheduleBuildFeed();
+
+      let idx = start;
+      window.setInterval(() => {
+        // Forward steps slide the comments left → right (progress); leaving the
+        // last phase loops back to the first, so it just fades.
+        const wrap = idx === phases.length - 1;
+        card.classList.add('is-swapping');
+        list.classList.add(wrap ? 'fade-exit' : 'slide-exit');
+        window.setTimeout(() => {
+          idx = (idx + 1) % phases.length;
+          apply(idx);
+          card.classList.remove('is-swapping');
+          if (wrap) {
+            list.classList.remove('fade-exit');
+          } else {
+            list.classList.remove('slide-exit');
+            list.classList.add('slide-enter'); // jump to the left, no transition
+            void list.offsetWidth; // reflow, then slide in from the left
+            list.classList.remove('slide-enter');
+          }
+        }, 320);
+      }, 2300);
+    }
+  </script>
+
+  <script define:vars={{ programs: programExamples, glyphs }}>
+    // Programs run panel: replay each example program's run - queued →
+    // running (log lines stream in) → succeeded (output, webhook, billing) -
+    // cycling through the catalog cards and highlighting the one playing.
+    // Starts when the panel first scrolls into view; reduced-motion visitors
+    // keep the server-rendered completed run.
+    const panel = document.querySelector('[data-program-run]');
+    const noMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (panel && !noMotion.matches) {
+      const cards = document.querySelectorAll('.program-card');
+      const tile = panel.querySelector('.run-tile');
+      const name = panel.querySelector('.run-name');
+      const runId = panel.querySelector('.run-id');
+      const chip = panel.querySelector('.run-chip');
+      const chipLabel = panel.querySelector('.chip-label');
+      const chipIndicator = panel.querySelector('.chip-indicator');
+      const lines = panel.querySelectorAll('.run-line');
+      const tones = ['wait', 'build', 'done'];
+      const CHIP = {
+        queued: ['wait', 'hourglass'],
+        running: ['build', 'spinner'],
+        succeeded: ['done', 'check'],
+      };
+      const setChip = (state) => {
+        tones.forEach((t) => chip.classList.remove('demo-chip--' + t));
+        chip.classList.add('demo-chip--' + CHIP[state][0]);
+        chipIndicator.innerHTML = glyphs[CHIP[state][1]];
+        chipLabel.textContent = state;
+      };
+
+      // Rewrite a server-rendered line node in place (the node and its
+      // children carry Astro's scoped-style attribute, so we keep them and
+      // only swap tone classes + content).
+      const lineTones = ['ok', 'file', 'hook', 'dim'];
+      const setLine = (el, l) => {
+        el.classList.remove('is-on');
+        lineTones.forEach((t) => el.classList.remove('run-line--' + t));
+        if (l.tone) el.classList.add('run-line--' + l.tone);
+        const g = el.querySelector('.run-g');
+        g.textContent = l.g;
+        Array.from(el.childNodes).forEach((n) => {
+          if (n !== g) el.removeChild(n);
+        });
+        el.appendChild(document.createTextNode(l.text));
+      };
+
+      // Tick the ASCII spinner while the running chip shows it.
+      const frames = ['|', '/', '-', '\\'];
+      let frame = 0;
+      window.setInterval(() => {
+        const spin = panel.querySelector('.ascii-spin');
+        if (spin) spin.textContent = frames[frame++ % frames.length];
+      }, 130);
+
+      let pi = 0;
+      let timers = [];
+      const at = (ms, fn) => timers.push(window.setTimeout(fn, ms));
+      const play = () => {
+        timers.forEach(window.clearTimeout);
+        timers = [];
+        const ex = programs[pi];
+        tile.style.background = `linear-gradient(135deg, ${ex.from}, ${ex.to})`;
+        tile.textContent = ex.monogram;
+        name.textContent = ex.title;
+        runId.textContent = ex.run.id;
+        cards.forEach((c, n) => c.classList.toggle('is-running', n === pi));
+        lines.forEach((el, n) => setLine(el, ex.run.lines[n]));
+        setChip('queued');
+        at(900, () => setChip('running'));
+        lines.forEach((el, n) => at(1150 + n * 560, () => el.classList.add('is-on')));
+        const done = 1150 + lines.length * 560;
+        at(done + 200, () => setChip('succeeded'));
+        at(done + 2800, () => lines.forEach((el) => el.classList.remove('is-on')));
+        at(done + 3180, () => {
+          pi = (pi + 1) % programs.length;
+          play();
+        });
+      };
+
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            io.disconnect();
+            play();
+          }
+        },
+        { threshold: 0.35 }
+      );
+      io.observe(panel);
+    }
+  </script>
+</Base>
+
+<style>
+  /* MOTION ------------------------------------------------------- */
+  /* Page-load rise for the hero. */
+  .rise {
+    animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
+  .r1 { animation-delay: 0.05s; }
+  .r2 { animation-delay: 0.12s; }
+  .r3 { animation-delay: 0.2s; }
+  .r4 { animation-delay: 0.28s; }
+  .r5 { animation-delay: 0.36s; }
+  .r6 { animation-delay: 0.44s; }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Scroll reveal (gated on html.js; see Base.astro). */
+  :global(html.js) [data-reveal] {
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 0.65s ease,
+      transform 0.65s cubic-bezier(0.2, 0.7, 0.3, 1);
+    transition-delay: var(--d, 0s);
+  }
+
+  :global(html.js) [data-reveal].is-in {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* HERO --------------------------------------------------------- */
+  .hero {
+    position: relative;
+    padding-top: clamp(3.5rem, 8vw, 6rem);
+    padding-bottom: clamp(3rem, 7vw, 5.5rem);
+  }
+
+  /* Blueprint grid, radially masked so it dissolves into the dark. */
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(132, 144, 181, 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(132, 144, 181, 0.07) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(70rem 36rem at 68% 30%, black 20%, transparent 72%);
+    mask-image: radial-gradient(70rem 36rem at 68% 30%, black 20%, transparent 72%);
+    pointer-events: none;
+  }
+
+  .hero .container {
+    position: relative;
+  }
+
+  .hero-inner {
+    display: grid;
+    gap: 3rem;
+    align-items: center;
+  }
+
+  .hero-eyebrow {
+    display: block;
+    max-width: 40rem;
+  }
+
+  .hero-eyebrow .sep {
+    color: var(--gray-300);
+    margin-inline: 0.35rem;
+  }
+
+  .hero-title {
+    font-size: clamp(2.3rem, 5vw, 3.7rem);
+    max-width: 22ch;
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-lede {
+    font-size: clamp(1.05rem, 2.2vw, 1.22rem);
+    color: var(--text-muted);
+    max-width: 46rem;
+    margin-bottom: 2rem;
+  }
+
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .hero-note {
+    margin-top: 1.5rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }
+
+  /* HERO VISUAL - the project dashboard card */
+  .hero-visual {
+    width: 100%;
+    max-width: 30rem;
+    margin-inline: auto;
+  }
+
+  .demo-card {
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    background:
+      linear-gradient(var(--bg-elevated), var(--bg-elevated)) padding-box,
+      var(--gradient-speed) border-box;
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 18px 44px color-mix(in srgb, var(--speed-from) 8%, transparent),
+      0 12px 32px rgba(9, 11, 17, 0.55);
+  }
+
+  .demo-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .demo-name {
+    font-family: var(--font-brand);
+    font-size: 1.05rem;
+    color: var(--text-strong);
+  }
+
+  .demo-chip {
+    --chip-accent: var(--speed-from);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--chip-accent);
+    background: color-mix(in srgb, var(--chip-accent) 11%, transparent);
+    border: 1px solid color-mix(in srgb, var(--chip-accent) 26%, transparent);
+    padding: 0.28rem 0.6rem;
+    border-radius: 999px;
+    transition:
+      color 0.3s ease,
+      background 0.3s ease,
+      border-color 0.3s ease,
+      opacity 0.3s ease;
+  }
+
+  /* Lifecycle tones: amber while it waits on a person, cyan while the agent
+     works, green once delivered. */
+  .demo-chip--wait {
+    --chip-accent: #fbbf24;
+  }
+  .demo-chip--build {
+    --chip-accent: var(--speed-from);
+  }
+  .demo-chip--done {
+    --chip-accent: #34d399;
+  }
+
+  /* Fixed slot for the per-phase status glyph, so the chip width never jitters
+     as the dot / hourglass / chrono / spinner swap in. */
+  .chip-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 13px;
+    height: 13px;
+    color: var(--chip-accent);
+  }
+
+  /* The chip glyphs themselves (.chip-glyph*, .ascii-spin, wave/hand/check
+     parts) are injected via set:html / innerHTML, so they never carry Astro's
+     scoped-style attribute. Their styles + keyframes therefore live in the
+     is:global block below, or the animations would silently never apply. */
+
+  .demo-timeline {
+    display: flex;
+    list-style: none;
+    margin: 1.6rem 0 0.4rem;
+    padding: 0;
+  }
+
+  .demo-timeline li {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  /* Connector between two nodes: a gray track (::before) with a cyan fill
+     (::after) that grows left → right, so each segment fills progressively as
+     the project advances. */
+  .demo-timeline li:not(:first-child)::before,
+  .demo-timeline li:not(:first-child)::after {
+    content: '';
+    position: absolute;
+    top: 11px;
+    left: calc(-50% + 14px);
+    right: calc(50% + 14px);
+    height: 2px;
+  }
+  .demo-timeline li:not(:first-child)::before {
+    background: var(--gray-100);
+  }
+  .demo-timeline li:not(:first-child)::after {
+    background: color-mix(in srgb, var(--speed-from) 70%, transparent);
+    transform-origin: left center;
+    transform: scaleX(0);
+    transition: transform 0.6s ease;
+  }
+  .demo-timeline li.t-done:not(:first-child)::after,
+  .demo-timeline li.t-active:not(:first-child)::after {
+    transform: scaleX(1);
+  }
+  /* The segment reaching from the active node toward the next stage keeps
+     filling on a loop - work is in progress. */
+  .demo-timeline li.t-active + li:not(:first-child)::after {
+    transform: scaleX(0);
+    animation: line-fill 1.6s ease-in-out infinite;
+  }
+  @keyframes line-fill {
+    0% {
+      transform: scaleX(0);
+      opacity: 0.85;
+    }
+    65% {
+      transform: scaleX(1);
+      opacity: 0.85;
+    }
+    100% {
+      transform: scaleX(1);
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .demo-timeline li.t-active + li:not(:first-child)::after {
+      animation: none;
+    }
+  }
+
+  .t-node {
+    position: relative;
+    z-index: 1;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid var(--gray-200);
+    background: var(--bg-elevated);
+    display: grid;
+    place-items: center;
+    transition:
+      background 0.4s ease,
+      border-color 0.4s ease;
+  }
+
+  .t-node :global(svg) {
+    width: 12px;
+    height: 12px;
+    color: var(--gray-0);
+    stroke-width: 2.4;
+  }
+
+  .t-done .t-node {
+    background: var(--speed-from);
+    border-color: transparent;
+  }
+
+  .t-active .t-node {
+    border: 2px solid transparent;
+    background:
+      linear-gradient(var(--bg-elevated), var(--bg-elevated)) padding-box,
+      var(--gradient-speed) border-box;
+    animation: pulse-ring 2.4s ease-out infinite;
+  }
+
+  .t-active .t-node::after {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--gradient-speed);
+  }
+
+  .t-label {
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    transition: color 0.4s ease;
+  }
+
+  .t-done .t-label,
+  .t-active .t-label {
+    color: var(--text);
+  }
+
+  .t-active .t-label {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  /* Flex column (not grid gap) so a message collapsing off the bottom releases
+     its spacing smoothly as it animates out. */
+  .demo-events {
+    display: flex;
+    flex-direction: column;
+    margin-top: 1.4rem;
+    /* Reserve the tallest phase's height (Estimate, two 2-line messages) so the
+       card height never jumps as phases with fewer lines cycle through. */
+    min-height: 12.5rem;
+    transition:
+      opacity 0.3s ease,
+      transform 0.3s ease;
+  }
+
+  /* Mid-cycle the chip cross-fades while the timeline morphs forward. */
+  .demo-card.is-swapping .demo-chip {
+    opacity: 0;
+  }
+
+  /* Comment pile between phases: a forward step slides the pile left → right so
+     the work reads as progressing; the loop back from the last phase just
+     fades (it is a reset, not progress). */
+  .demo-events.slide-exit {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  .demo-events.slide-enter {
+    opacity: 0;
+    transform: translateX(-30px);
+    transition: none;
+  }
+  .demo-events.fade-exit {
+    opacity: 0;
+  }
+
+  .demo-event {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: rgba(9, 11, 17, 0.45);
+    overflow: hidden;
+    /* Collapsible: the build feed animates max-height / opacity / spacing when a
+       feature request slides in on top and the oldest drops off the bottom. */
+    transition:
+      max-height 0.45s ease,
+      opacity 0.4s ease,
+      margin-top 0.45s ease,
+      padding-top 0.45s ease,
+      padding-bottom 0.45s ease;
+  }
+  .demo-event + .demo-event {
+    margin-top: 0.6rem;
+  }
+
+  .event-icon {
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 0.5rem;
+    color: var(--speed-from);
+    background: color-mix(in srgb, var(--speed-from) 10%, transparent);
+  }
+
+  .event-icon :global(svg) {
+    width: 15px;
+    height: 15px;
+  }
+
+  .event-body {
+    margin: 0;
+    font-size: 0.86rem;
+    color: var(--text);
+  }
+
+  .event-meta {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+
+  .hero-visual-caption {
+    margin: 0.9rem 0 0;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--speed-from) 40%, transparent);
+    }
+    70% {
+      box-shadow: 0 0 0 9px color-mix(in srgb, var(--speed-from) 0%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--speed-from) 0%, transparent);
+    }
+  }
+
+  @media (min-width: 960px) {
+    .hero-inner {
+      grid-template-columns: 1.1fr 0.9fr;
+    }
+  }
+
+  /* SPEC STRIP ---------------------------------------------------- */
+  .spec-strip {
+    border-block: 1px solid var(--border);
+    background: rgba(20, 25, 37, 0.35);
+  }
+
+  .spec-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem 0;
+    padding-block: 0.85rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .spec-item {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .spec-item:not(:last-child)::after {
+    content: '/';
+    margin-inline: 1.4rem;
+    color: var(--gray-200);
+  }
+
+  /* SECTION STRUCTURE --------------------------------------------- */
+  /* Hairline separators between engineering sections. */
+  main > .section + .section {
+    border-top: 1px solid var(--border);
+  }
+
+  .eyebrow-i {
+    color: var(--text-muted);
+  }
+
+  .eyebrow-i::after {
+    content: '';
+    display: inline-block;
+    width: 2rem;
+    height: 1px;
+    background: var(--gray-100);
+    vertical-align: middle;
+    margin-left: 0.9rem;
+  }
+
+  /* Shared section headings */
+  .section-title {
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    max-width: 22ch;
+  }
+
+  .section-intro {
+    color: var(--text-muted);
+    font-size: 1.08rem;
+    max-width: 44rem;
+    margin-bottom: 2.5rem;
+  }
+
+  /* HUD corner registration ticks (defence-tech framing).
+     Layered backgrounds: 8 tick strokes + base surface color. */
+  .way-card,
+  .price-card {
+    --tick: var(--gray-200);
+    --surface: var(--bg-elevated);
+    border-radius: 2px;
+    background:
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 0 / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 0 / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 0 / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 0 / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 100% / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 100% / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 100% / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 100% / 1px 14px,
+      var(--surface);
+  }
+
+  /* TWO WAYS */
+  .ways-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.25rem;
+    align-items: stretch;
+  }
+
+  .way-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    padding: 2rem;
+    transition: border-color 0.25s ease;
+  }
+
+  .way-card:hover {
+    border-color: var(--gray-200);
+  }
+
+  .way-card--primary {
+    --tick: var(--speed-from);
+    border-color: color-mix(in srgb, var(--speed-from) 35%, transparent);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 16px 40px color-mix(in srgb, var(--speed-from) 7%, transparent);
+  }
+
+  .way-card--primary:hover {
+    border-color: color-mix(in srgb, var(--speed-from) 60%, transparent);
+  }
+
+  .way-glyph {
+    position: absolute;
+    top: 1.8rem;
+    right: 1.8rem;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 2px;
+    color: var(--speed-from);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--speed-from) 12%, transparent), color-mix(in srgb, var(--speed-to) 12%, transparent));
+    border: 1px solid color-mix(in srgb, var(--speed-from) 22%, transparent);
+  }
+
+  .way-glyph--muted {
+    color: var(--gray-400);
+    background: transparent;
+    border-color: var(--border);
+  }
+
+  .way-glyph :global(svg) {
+    width: 21px;
+    height: 21px;
+  }
+
+  .way-tag {
+    display: inline-block;
+    align-self: flex-start;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--speed-from);
+    border: 1px solid color-mix(in srgb, var(--speed-from) 35%, transparent);
+    background: color-mix(in srgb, var(--speed-from) 7%, transparent);
+    padding: 0.3rem 0.55rem;
+    border-radius: 2px;
+    margin-bottom: 1rem;
+    max-width: calc(100% - 3.5rem);
+  }
+
+  .way-tag--muted {
+    color: var(--text-muted);
+    background: transparent;
+    border-color: var(--border);
+  }
+
+  .way-title {
+    font-size: 1.5rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .way-lede {
+    color: var(--text);
+    margin-bottom: 1.25rem;
+  }
+
+  .way-list {
+    list-style: none;
+    margin: 0 0 1.5rem;
+    padding: 0;
+    display: grid;
+    gap: 0.7rem;
+  }
+
+  .way-list li {
+    position: relative;
+    padding-left: 1.4rem;
+    color: var(--text-muted);
+    font-size: 0.98rem;
+  }
+
+  .way-list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--speed-from);
+  }
+
+  .way-card:not(.way-card--primary) .way-list li::before {
+    background: var(--gray-300);
+  }
+
+  .way-for {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-top: auto;
+    margin-bottom: 1.5rem;
+  }
+
+  .way-for span {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .way-cta {
+    align-self: flex-start;
+  }
+
+  .ways-note {
+    margin-top: 1.5rem;
+    margin-bottom: 0;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    text-align: center;
+  }
+
+  /* PLATFORM */
+  .platform-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+
+  .platform-card {
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: 1.5rem;
+    background: var(--bg-elevated);
+    transition: border-color 0.25s ease;
+  }
+
+  .platform-card:hover {
+    border-color: var(--gray-200);
+  }
+
+  .platform-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .platform-icon {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 2px;
+    color: var(--speed-from);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--speed-from) 12%, transparent), color-mix(in srgb, var(--speed-to) 12%, transparent));
+    border: 1px solid color-mix(in srgb, var(--speed-from) 22%, transparent);
+  }
+
+  .platform-icon :global(svg) {
+    width: 22px;
+    height: 22px;
+  }
+
+  .platform-i {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    color: var(--gray-300);
+  }
+
+  .platform-title {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  /* The mini product surface: a mono strip rendering the feature as evidence.
+     Its children are injected via set:html, so they need :global(). */
+  .platform-surface {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0.9rem 0 0.75rem;
+    padding: 0.65rem 0.75rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.01em;
+    line-height: 1.6;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .platform-surface :global(.ps-row) {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-width: 0;
+  }
+
+  .platform-surface :global(.ps-ok),
+  .platform-surface :global(.ps-add) {
+    color: #34d399;
+  }
+
+  .platform-surface :global(.ps-run) {
+    color: var(--speed-from);
+  }
+
+  .platform-surface :global(.ps-dim) {
+    color: var(--gray-400);
+  }
+
+  .platform-surface :global(.ps-del) {
+    color: #f87171;
+  }
+
+  .platform-surface :global(.ps-right) {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 0.45rem;
+  }
+
+  .platform-surface :global(.ps-who),
+  .platform-surface :global(.ps-tag) {
+    flex: 0 0 auto;
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gray-400);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.04rem 0.42rem;
+  }
+
+  .platform-surface :global(.ps-who--agent) {
+    color: var(--speed-from);
+    border-color: color-mix(in srgb, var(--speed-from) 30%, transparent);
+  }
+
+  .platform-surface :global(.ps-tag) {
+    margin-left: auto;
+    color: #34d399;
+    border-color: rgba(52, 211, 153, 0.3);
+  }
+
+  .platform-surface :global(.ps-bar) {
+    flex: 1;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--gray-100);
+    overflow: hidden;
+  }
+
+  .platform-surface :global(.ps-bar i) {
+    display: block;
+    height: 100%;
+    width: 85%;
+    border-radius: inherit;
+    background: var(--gradient-speed);
+  }
+
+  .platform-caption {
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    margin: 0;
+  }
+
+  /* STEPS - vertical timeline: spine through numbered nodes */
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    position: relative;
+    max-width: 44rem;
+  }
+
+  .steps::before {
+    content: "";
+    position: absolute;
+    left: 1.25rem;
+    top: 1rem;
+    bottom: 1rem;
+    width: 1px;
+    background: linear-gradient(to bottom, var(--speed-from), var(--speed-to));
+    opacity: 0.45;
+  }
+
+  .step {
+    position: relative;
+    display: flex;
+    gap: 1.4rem;
+    align-items: flex-start;
+    padding-bottom: 1.9rem;
+  }
+
+  .step:last-child {
+    padding-bottom: 0;
+  }
+
+  .step-n {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 2.5rem;
+    height: 2.5rem;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    color: var(--speed-from);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+  }
+
+  .step-content {
+    padding-top: 0.45rem;
+  }
+
+  .step-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    font-size: 1.1rem;
+    margin: 0;
+  }
+
+  .step-who {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
+    padding: 0.15rem 0.55rem;
+  }
+
+  .step-body {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin: 0.3rem 0 0;
+  }
+
+  /* PROGRAMS - example cards echo the app's store catalog (product surface,
+     like the hero dashboard card): duotone monogram tile, mode eyebrow, and a
+     mono meta line carrying the schedule/delivery facts. */
+  .program-examples {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+
+  .program-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: rgba(9, 11, 17, 0.45);
+    padding: 1.25rem;
+    transition: border-color 0.25s ease;
+  }
+
+  .program-card:hover {
+    border-color: color-mix(in srgb, var(--speed-from) 40%, transparent);
+  }
+
+  .program-head {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+
+  .program-tile {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 46px;
+    height: 46px;
+    border-radius: 24%;
+    color: #fff;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.95rem;
+    letter-spacing: -0.02em;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -8px 14px rgba(0, 0, 0, 0.18),
+      0 1px 2px rgba(9, 11, 17, 0.4);
+    user-select: none;
+  }
+
+  .program-titles h3 {
+    font-size: 1.02rem;
+    margin: 0;
+  }
+
+  .program-mode {
+    display: block;
+    margin-top: 0.2rem;
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .program-body {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin: 0.9rem 0 0.8rem;
+  }
+
+  .program-meta {
+    margin-top: auto;
+    margin-bottom: 0;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--speed-from);
+  }
+
+  /* The run panel: one program's run replayed the way the app streams it -
+     the JS below cycles it through the three example programs, highlighting
+     the catalog card whose run is playing. */
+  .program-run {
+    margin: 1.25rem 0 2.25rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    background: var(--bg-elevated);
+    overflow: hidden;
+  }
+
+  .run-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.75rem;
+    padding: 0.7rem 0.95rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .run-tile {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    border-radius: 24%;
+    color: #fff;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.58rem;
+    letter-spacing: -0.02em;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.35),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.18);
+    user-select: none;
+    transition: background 0.3s ease;
+  }
+
+  .run-name {
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--text-strong);
+  }
+
+  .run-id {
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gray-400);
+  }
+
+  .run-chip {
+    margin-left: auto;
+  }
+
+  .run-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    padding: 0.9rem 1rem;
+    background: var(--bg);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    line-height: 1.5;
+    /* 8 lines + gaps, so the panel never resizes while lines stream in. */
+    min-height: 11.2rem;
+  }
+
+  .run-line {
+    display: flex;
+    gap: 0.6rem;
+    margin: 0;
+    color: var(--gray-600);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    transform: translateY(4px);
+    transition:
+      opacity 0.3s ease,
+      transform 0.3s ease;
+  }
+
+  .run-line.is-on {
+    opacity: 1;
+    transform: none;
+  }
+
+  .run-g {
+    flex: 0 0 auto;
+    color: var(--speed-from);
+  }
+
+  .run-line--ok .run-g {
+    color: #34d399;
+  }
+
+  .run-line--file .run-g {
+    color: var(--speed-to);
+  }
+
+  .run-line--file,
+  .run-line--hook {
+    color: var(--gray-700);
+  }
+
+  .run-line--dim,
+  .run-line--dim .run-g {
+    color: var(--gray-400);
+  }
+
+  /* Catalog card whose run is currently replaying in the panel. */
+  .program-card.is-running {
+    border-color: color-mix(in srgb, var(--speed-from) 45%, transparent);
+  }
+
+  @media (max-width: 520px) {
+    .run-id {
+      display: none;
+    }
+  }
+
+  .programs-cta {
+    margin-top: 2rem;
+  }
+
+  /* PRICING */
+  .price-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.25rem;
+  }
+
+  .price-card {
+    border: 1px solid var(--border);
+    padding: 1.75rem;
+    transition: border-color 0.25s ease;
+  }
+
+  .price-card:hover {
+    border-color: var(--gray-200);
+  }
+
+  .price-card--accent {
+    --tick: var(--speed-from);
+    border-color: color-mix(in srgb, var(--speed-from) 35%, transparent);
+  }
+
+  .price-card--accent:hover {
+    border-color: color-mix(in srgb, var(--speed-from) 60%, transparent);
+  }
+
+  .price-tag {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--speed-from);
+    margin-bottom: 0.75rem;
+  }
+
+  .price-tag--muted {
+    color: var(--text-muted);
+  }
+
+  .price-title {
+    font-size: 1.35rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .price-card p {
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .pricing-cta {
+    margin-top: 2rem;
+  }
+
+  /* SOVEREIGN */
+  .sovereign-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    align-items: start;
+  }
+
+  .sovereign .section-intro {
+    margin-bottom: 0;
+  }
+
+  .trust-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  .trust-list li {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 0.9rem;
+    color: var(--text-muted);
+  }
+
+  .trust-icon {
+    color: var(--speed-from);
+    margin-top: 0.15rem;
+  }
+
+  .trust-icon :global(svg) {
+    width: 21px;
+    height: 21px;
+  }
+
+  .trust-list strong {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  /* FINAL CTA */
+  .final-cta-inner {
+    --tick: var(--speed-from);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    padding: clamp(2.5rem, 6vw, 4.5rem);
+    text-align: center;
+    background:
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 0 / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 0 / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 0 / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 0 / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 100% / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 0 100% / 1px 14px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 100% / 14px 1px,
+      linear-gradient(var(--tick), var(--tick)) no-repeat 100% 100% / 1px 14px,
+      radial-gradient(40rem 20rem at 50% 0%, color-mix(in srgb, var(--speed-to) 16%, transparent), transparent 70%),
+      var(--bg-elevated);
+  }
+
+  .final-title {
+    font-size: clamp(1.9rem, 4.5vw, 3rem);
+    max-width: 20ch;
+    margin-inline: auto;
+  }
+
+  .final-lede {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    max-width: 40rem;
+    margin: 1rem auto 2rem;
+  }
+
+  .final-cta .hero-cta {
+    justify-content: center;
+  }
+
+  @media (max-width: 960px) {
+    .platform-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 960px) {
+    .program-examples {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .ways-grid {
+      grid-template-columns: 1fr;
+    }
+    .platform-grid {
+      grid-template-columns: 1fr;
+    }
+    .price-grid {
+      grid-template-columns: 1fr;
+    }
+    .sovereign-inner {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+    }
+    .step {
+      gap: 1rem;
+      padding-bottom: 1.5rem;
+    }
+    .spec-item:not(:last-child)::after {
+      margin-inline: 0.9rem;
+    }
+  }
+</style>
+
+<!-- Chip status glyphs. These live in an is:global block because the SVGs are
+     injected via set:html / innerHTML and never receive Astro's scoped-style
+     attribute - a scoped rule would not match them and the animations would
+     silently never run. Namespaced under .chip-indicator so nothing leaks. -->
+<style is:global>
+  .chip-indicator .chip-glyph {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  /* Hourglass (In review): the whole glyph flips over. The rotation swings
+     through horizontal, so the motion reads clearly even at chip size (a subtle
+     sand-drain was invisible this small). */
+  .chip-indicator .chip-glyph--hourglass {
+    transform-origin: 50% 50%;
+    animation: hg-flip 2.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  @keyframes hg-flip {
+    0%,
+    16% {
+      transform: rotate(0deg);
+    }
+    50%,
+    66% {
+      transform: rotate(180deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Chrono (Estimating): a stopwatch hand sweeps the dial continuously. */
+  .chip-indicator .chrono-hand {
+    transform-box: view-box;
+    transform-origin: 12px 13.5px;
+    animation: chrono-sweep 1.4s linear infinite;
+  }
+  @keyframes chrono-sweep {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* ASCII spinner (In build): the classic | / - \ CLI spinner. Pure ASCII so it
+     renders in any monospace font; the client script ticks the character via
+     textContent. No-JS / reduced-motion visitors keep the static baked frame. */
+  .chip-indicator .ascii-spin {
+    display: inline-block;
+    width: 0.62rem;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+  }
+
+  /* Broadcast (Live demo): signal waves pulse outward, staggered so they ripple. */
+  .chip-indicator .live-w1,
+  .chip-indicator .live-w2 {
+    opacity: 0.2;
+    animation: live-wave 1.8s ease-out infinite;
+  }
+  .chip-indicator .live-w2 {
+    animation-delay: 0.45s;
+  }
+  @keyframes live-wave {
+    0% {
+      opacity: 0.15;
+    }
+    35% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.15;
+    }
+  }
+
+  /* Check (Delivered): the tick draws itself, then gives a small pop. */
+  .chip-indicator .chip-glyph--check {
+    transform-origin: 50% 50%;
+    animation: check-pop 3s ease-in-out infinite;
+  }
+  .chip-indicator .done-check {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    animation: check-draw 3s ease-in-out infinite;
+  }
+  @keyframes check-draw {
+    0% {
+      stroke-dashoffset: 24;
+    }
+    22%,
+    100% {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes check-pop {
+    0%,
+    22%,
+    100% {
+      transform: scale(1);
+    }
+    32% {
+      transform: scale(1.22);
+    }
+    44% {
+      transform: scale(1);
+    }
+  }
+
+  /* Projects card surfaces: the in-progress "Build" dot breathes. */
+  .platform-surface .ps-pulse {
+    display: inline-block;
+    animation: ps-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes ps-pulse {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* Motion-sensitive visitors: freeze every glyph on a resolved frame. */
+  @media (prefers-reduced-motion: reduce) {
+    .chip-indicator .chip-glyph--hourglass,
+    .chip-indicator .chrono-hand,
+    .chip-indicator .live-w1,
+    .chip-indicator .live-w2,
+    .chip-indicator .chip-glyph--check,
+    .chip-indicator .done-check,
+    .platform-surface .ps-pulse {
+      animation: none;
+    }
+    .chip-indicator .live-w1,
+    .chip-indicator .live-w2 {
+      opacity: 0.7;
+    }
+    .chip-indicator .done-check {
+      stroke-dashoffset: 0;
+    }
+  }
+</style>

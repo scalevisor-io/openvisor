@@ -1,0 +1,52 @@
+/* Clarifying-question option panel. Uses design tokens both apps define, with
+   literal fallbacks (RequestList.css parity). */
+.qp { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.5rem; }
+.qp-options { display: flex; flex-direction: column; gap: 0.35rem; }
+.qp-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius, 8px);
+  padding: 0.5rem 0.65rem;
+  background: var(--surface, #fff);
+}
+.qp-option:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 40%, var(--border, #e5e7eb));
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 4%, var(--surface, #fff));
+}
+.qp-option:disabled { cursor: default; }
+.qp-done .qp-option:not(.qp-picked) { opacity: 0.55; }
+.qp-picked {
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 55%, var(--border, #e5e7eb));
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 8%, var(--surface, #fff));
+}
+.qp-num {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.05rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--text-dim, #6b7280);
+  background: var(--surface-2, #f6f7fa);
+}
+.qp-picked .qp-num {
+  color: var(--speed-text, #4338ca);
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 40%, transparent);
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 10%, transparent);
+}
+.qp-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.qp-label { font-size: 0.88rem; word-break: break-word; }
+.qp-desc { font-size: 0.76rem; color: var(--text-dim, #6b7280); word-break: break-word; }
+.qp-hint { font-size: 0.74rem; color: var(--text-faint, #9ca3af); }

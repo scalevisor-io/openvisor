@@ -1,0 +1,19 @@
+{
+  "id": "data-markdown-search",
+  "speciality": "data-ai",
+  "description": "A small document search over a folder of markdown files: keyword search with snippet highlighting and a result count. Index rebuilt on startup.",
+  "onboarding_answers": [
+    {
+      "q": "Corpus size?",
+      "a": "A few hundred files"
+    },
+    {
+      "q": "Ranking?",
+      "a": "Keyword relevance is fine"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

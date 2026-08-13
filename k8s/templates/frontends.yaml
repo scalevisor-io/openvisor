@@ -1,0 +1,99 @@
+# SPA (nginx, baked build; its /api-/ws proxy fallback resolves the `api` Service
+# by the same DNS name as under compose) and the Astro landing (static nginx;
+# APP_URL/SITE_URL and the brand identity are baked at image build - see
+# scripts/deploy-helm.sh build-push).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      app: app
+  template:
+    metadata:
+      labels:
+        app: app
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: app
+          image: {{ include "openvisor.image" (dict "root" . "name" "app") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.landing.replicas }}
+  selector:
+    matchLabels:
+      app: landing
+  template:
+    metadata:
+      labels:
+        app: landing
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: landing
+          image: {{ include "openvisor.image" (dict "root" . "name" "landing") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.landing.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landing
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: landing
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

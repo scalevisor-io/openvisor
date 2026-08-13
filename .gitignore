@@ -1,0 +1,35 @@
+# Secrets - never commit
+.env
+.env.deploy
+.env.k8s
+traefik/certs/*.pem
+
+# Local knowledge base - machine-local RAG source, bind-mounted read-only at /knowledge
+/knowledge/
+
+# Generated Helm values (scripts/deploy-helm.sh)
+k8s/values.generated.yaml
+k8s/values.local.yaml
+
+# Live static_data (materialized from *.example.json by backend/entrypoint.sh)
+backend/app/static_data/*.json
+!backend/app/static_data/*.example.json
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# White-label landing content override (committed default is site.example.yml)
+landing/src/data/site.yml
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS cruft
+.DS_Store
+
+# Internal product spec - maintained locally, never published
+PROMPT.md

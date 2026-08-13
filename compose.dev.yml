@@ -1,0 +1,110 @@
+name: openvisor
+
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${COMPOSE_PROJECT_NAME:-openvisor}_edge
+      # Scope discovery to this compose project so several instances can share
+      # the host docker socket without stealing each other's routers.
+      - --providers.docker.constraints=Label(`com.docker.compose.project`, `${COMPOSE_PROJECT_NAME:-openvisor}`)
+      - --providers.file.directory=/dynamic
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --log.level=INFO
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_DASHBOARD_PORT:-8081}:8080"
+
+  api:
+    command: ["/app/entrypoint.sh", "api-dev"]
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      # Read-only so the backend test suite can pin the MCP sidecar's timeout
+      # policy (mcp/main.py) - the sidecar ships as a separate image with no test
+      # harness of its own. Dev/test only; the built api image never carries it.
+      - ./mcp:/app/mcp_src:ro
+      # Same rationale for the dev runner's pre-publish leak scan (runner/leak_scan.py):
+      # a separate image, so mount its source read-only for the leak-scan test.
+      - ./runner:/app/runner_src:ro
+      - workspaces:/workspaces
+
+  worker:
+    volumes:
+      - ./backend/app:/app/app
+      - workspaces:/workspaces
+
+  beat:
+    volumes:
+      - ./backend/app:/app/app
+
+  landing:
+    # Dev: run the Astro dev server (hot-reload) instead of the baked nginx image
+    image: node:20-alpine
+    build: !reset null
+    working_dir: /app
+    environment:
+      # APP_BASE_URL carries the instance's Traefik port (e.g. :8090); fall
+      # back to the bare domain for instances serving on port 80.
+      APP_URL: ${APP_BASE_URL:-http://app.${DEPLOY_DOMAIN:-openvisor.local}}
+      # astro.config.mjs allowlists this vhost for the Vite dev server
+      DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:-openvisor.local}
+      # White-label identity (baked into the landing). SITE_URL defaults to the
+      # production example domain so dev canonical/OG URLs stay stable; the rest
+      # fall back to the Openvisor brand.
+      SITE_URL: ${SITE_URL:-https://openvisor.example.com}
+      BRAND_NAME: ${BRAND_NAME:-Openvisor}
+      CONSULTANT_NAME: ${CONSULTANT_NAME:-Consultant}
+      BRAND_COLOR_PRIMARY: "${BRAND_COLOR_PRIMARY:-#22d3ee}"
+      BRAND_COLOR_SECONDARY: "${BRAND_COLOR_SECONDARY:-#7c3aed}"
+    command: sh -c "npm install --no-audit --no-fund --no-package-lock && exec npx astro dev --host 0.0.0.0 --port 80"
+    volumes:
+      - ./landing:/app
+      - landing-node-modules:/app/node_modules
+    ports:
+      - "127.0.0.1:${LANDING_DEV_PORT:-5181}:80"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    networks: [internal, edge]
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-mailpit.rule=Host(`mail.${DEPLOY_DOMAIN:-openvisor.local}`)
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-mailpit.loadbalancer.server.port=8025
+
+  # Relays Stripe sandbox webhooks to the api so credit top-ups land without a
+  # host-side `stripe listen` (Stripe can't reach a local machine directly).
+  # The listen session's signing secret is deterministic per API key, so it
+  # matches the STRIPE_WEBHOOK_SECRET already in .env; the wrapper still warns
+  # loudly on mismatch. Exits 0 (and stays down: on-failure) on placeholder keys.
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    networks: [internal]
+    restart: on-failure
+    depends_on: [api]
+    environment:
+      STRIPE_API_KEY: ${STRIPE_SECRET_KEY:-}
+      EXPECTED_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        case "$$STRIPE_API_KEY" in
+          sk_*placeholder*|"") echo "STRIPE_SECRET_KEY not configured; webhook relay disabled."; exit 0;;
+          sk_*) ;;
+          *) echo "STRIPE_SECRET_KEY not configured; webhook relay disabled."; exit 0;;
+        esac
+        secret="$$(stripe listen --print-secret)" || exit 1
+        if [ "$$secret" != "$$EXPECTED_WEBHOOK_SECRET" ]; then
+          echo "WARNING: STRIPE_WEBHOOK_SECRET in .env does not match this listen session ($$secret)."
+          echo "WARNING: the api will reject every relayed webhook (400) until .env is updated."
+        fi
+        exec stripe listen --forward-to http://api:8000/api/billing/stripe/webhook
+
+volumes:
+  landing-node-modules:

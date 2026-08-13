@@ -1,0 +1,27 @@
+{
+  "name": "openvisor-app",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "altcha": "^1.4.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "react-router-dom": "^6.26.2",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}

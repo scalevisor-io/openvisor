@@ -1,0 +1,94 @@
+name: openvisor
+
+# Production image names, registry-qualified so `make prod-build` tags the exact
+# images the Kubernetes chart pulls (k8s/ imageRegistry/imageTag). Build once with
+# compose (make prod-build), test with compose (make prod), push (make prod-push),
+# then deploy to K8s - the running artifact is identical, modulo env/helm specifics.
+# IMAGE_REGISTRY / IMAGE_TAG default to the chart's defaults; override to retarget.
+x-backend-image: &backend-image ${IMAGE_REGISTRY:-registry.example.com/openvisor}/backend:${IMAGE_TAG:-latest}
+
+services:
+  traefik:
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=${COMPOSE_PROJECT_NAME:-openvisor}_edge
+      # Scope discovery to this compose project so several instances can share
+      # the host docker socket without stealing each other's routers.
+      - --providers.docker.constraints=Label(`com.docker.compose.project`, `${COMPOSE_PROJECT_NAME:-openvisor}`)
+      - --providers.file.directory=/dynamic
+      - --providers.file.filename=/etc/traefik/tls.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --log.level=WARN
+    ports:
+      - "80:80"
+      - "443:443"
+
+  api:
+    image: *backend-image
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-api.rule=Host(`app.${DEPLOY_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/ws`))
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-api.priority=100
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-api.tls=true
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-api.loadbalancer.server.port=8000
+
+  worker:
+    image: *backend-image
+
+  beat:
+    image: *backend-image
+
+  mcp:
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/mcp:${IMAGE_TAG:-latest}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-mcp.rule=Host(`mcp.${DEPLOY_DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-mcp.tls=true
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-mcp.loadbalancer.server.port=8100
+
+  websearch-mcp:
+    # same pushed image as mcp (websearch.py ships inside it); command stays the
+    # compose.base override
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/mcp:${IMAGE_TAG:-latest}
+
+  deployer:
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/deployer:${IMAGE_TAG:-latest}
+    environment:
+      # match the runner image name to the pushed one (K8s uses the same)
+      RUNNER_IMAGE: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/runner:${IMAGE_TAG:-latest}
+
+  landing:
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/landing:${IMAGE_TAG:-latest}
+    build:
+      context: ./landing
+      args:
+        # Baked into the static site (rebuild to change); unset each falls back
+        # to the Openvisor default. K8s deploy passes the cluster's app URL.
+        APP_URL: ${APP_URL:-https://app.${DEPLOY_DOMAIN:-openvisor.example.com}}
+        SITE_URL: ${SITE_URL:-https://${DEPLOY_DOMAIN:-openvisor.example.com}}
+        BRAND_NAME: ${BRAND_NAME:-Openvisor}
+        CONSULTANT_NAME: ${CONSULTANT_NAME:-Consultant}
+        BRAND_COLOR_PRIMARY: "${BRAND_COLOR_PRIMARY:-#22d3ee}"
+        BRAND_COLOR_SECONDARY: "${BRAND_COLOR_SECONDARY:-#7c3aed}"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-landing.rule=Host(`${DEPLOY_DOMAIN}`) || Host(`www.${DEPLOY_DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-landing.tls=true
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-landing.loadbalancer.server.port=80
+
+  app:
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/app:${IMAGE_TAG:-latest}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-app.rule=Host(`app.${DEPLOY_DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-app.priority=10
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-openvisor}-app.tls=true
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-openvisor}-app.loadbalancer.server.port=80
+
+  runner:
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/runner:${IMAGE_TAG:-latest}

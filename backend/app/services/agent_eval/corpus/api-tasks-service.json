@@ -1,0 +1,19 @@
+{
+  "id": "api-tasks-service",
+  "speciality": "api-backend",
+  "description": "A REST API for a todo service: CRUD tasks, list with filtering by status and due date, and served OpenAPI docs. No UI.",
+  "onboarding_answers": [
+    {
+      "q": "Persistence?",
+      "a": "Postgres"
+    },
+    {
+      "q": "Auth?",
+      "a": "A static API key header"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

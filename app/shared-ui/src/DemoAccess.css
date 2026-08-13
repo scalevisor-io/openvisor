@@ -1,0 +1,97 @@
+/* Shared demo-access block. Uses design tokens both the spoke and hub define
+   (--gray-0, --border, --radius-sm, --text-dim, --speed-from, --ok*), with
+   literal fallbacks so it degrades gracefully if a token is missing. */
+.demo-access {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.demo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.demo-label {
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim, #6b7280);
+}
+.demo-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.demo-url {
+  word-break: break-all;
+  color: var(--accent-light, #2563eb);
+}
+.demo-auth {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 560px) {
+  .demo-auth {
+    grid-template-columns: 1fr;
+  }
+}
+/* Mirror the spoke's .copy-field so the shared block matches its old look. */
+.demo-copy {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--gray-0, #fff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0.35rem 0.35rem 0.35rem 0.7rem;
+  min-width: 0;
+}
+.demo-value {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 0.85rem;
+}
+.demo-btn {
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-dim, #6b7280);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.demo-btn:hover {
+  background: color-mix(in srgb, var(--speed-from, #4f46e5) 12%, transparent);
+  color: var(--text, inherit);
+}
+.demo-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  letter-spacing: 0.02em;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--text-dim, #6b7280);
+}
+.demo-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+.demo-state-running {
+  color: var(--ok-text, #15803d);
+  border-color: color-mix(in srgb, var(--ok, #22c55e) 40%, transparent);
+  background: color-mix(in srgb, var(--ok, #22c55e) 10%, transparent);
+}

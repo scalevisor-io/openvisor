@@ -1,0 +1,19 @@
+{
+  "id": "devsecops-hardened-api",
+  "speciality": "devsecops-hardened",
+  "description": "A minimal REST API shipped in a hardened container: non-root user, a pinned base image, a generated SBOM, and a trivy scan that passes with no critical CVEs.",
+  "onboarding_answers": [
+    {
+      "q": "Base image?",
+      "a": "distroless or slim, pinned by digest"
+    },
+    {
+      "q": "Scan gate?",
+      "a": "Fail on critical"
+    }
+  ],
+  "from_scratch": true,
+  "sovereign": false,
+  "deliverable_type": "deployed_demo",
+  "notes": ""
+}

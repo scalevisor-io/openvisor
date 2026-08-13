@@ -1,0 +1,392 @@
+# ------------------------------------------------------------------ #
+# White-label landing content (neutral Openvisor defaults).
+#
+# This committed file holds ALL activity-specific copy for the landing.
+# To white-label the site, copy it to `site.yml` (gitignored) in this
+# directory and edit freely - when present, site.yml REPLACES this file
+# wholesale (no merge). Brand name, consultant name, colours and site URL
+# arrive separately from build-time env (see .env `# Brand` block); the
+# {{BRAND_NAME}} and {{CONSULTANT_NAME}} placeholders below are filled from
+# BRAND_NAME / CONSULTANT_NAME at build time. Icons are referenced by id;
+# the SVG set itself lives in src/pages/index.astro.
+# ------------------------------------------------------------------ #
+
+seo:
+  title: "{{BRAND_NAME}} - senior consulting you can follow live"
+  description: "{{BRAND_NAME}} runs your whole engagement on one secure platform: live project status, one thread with consultant and agent, demo and code in view. Two ways to deliver the same senior standard: an AI build curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote."
+  themeColor: "#090b11"
+  ogSiteName: "{{BRAND_NAME}}"
+  orgName: "{{BRAND_NAME}}"
+  orgDescription: "Senior software consultancy on one transparent platform: live project status, secure chat with consultant and build agent, demos and code in view. Two delivery modes with the same standard: an AI build curated by {{CONSULTANT_NAME}}, or a bespoke engagement built by hand on a direct quote."
+  sameAs: []
+  serviceType: "AI-assisted software MVP development and consulting"
+  serviceDescription: "Two delivery modes, one senior standard, full visibility: a Curated AI MVP built by agents under {{CONSULTANT_NAME}}'s supervision (live status, demo on a subdomain, code as pull requests, prepaid credits metered in real time), or a bespoke engagement hand-built by the consultant for constrained environments, infrastructure migration, and regulated programmes."
+  serviceAreaServed: "EU"
+  offers:
+    - name: "Curated AI MVP"
+      priceCurrency: "EUR"
+      description: "Prepaid credits, 1 credit = €1. Pay for what the AI consumes."
+    - name: "Direct quote"
+      priceCurrency: "EUR"
+      description: "Custom quote from {{CONSULTANT_NAME}} after review. No upfront charge to submit a request."
+
+legal:
+  entity: "Your Company"
+  consultant: "{{CONSULTANT_NAME}}"
+  contactEmail: "contact@openvisor.example.com"
+  privacyUpdated: "7 July 2026"
+  termsUpdated: "7 July 2026"
+
+footer:
+  tagline: "Senior consulting on one transparent platform: AI builds curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote."
+
+hero:
+  eyebrow:
+    - "Senior consultancy"
+    - "Human-led, AI-accelerated"
+    - "Alpha"
+  titleLead: "Collaborating"
+  titleAccent: "at the AI age"
+  lede: "Senior engineering knowledge and experience shaping the code pushed to your repo. Chat directly with the consultant's agent team."
+  ctaPrimary: "Deposit your project"
+  ctaSecondary: "Compare the two ways"
+  note: "Every project is personally reviewed and prompt improved before we start."
+  visualName: "CRM pilot"
+  visualCaption: "Your project dashboard - from first brief to delivery."
+
+specs:
+  - "Self-hostable"
+  - "Sandboxed builds"
+  - "Paid knowledge access"
+  - "MCP"
+  - "CVE-aware from day one"
+
+stageLabels:
+  - "Review"
+  - "Estimate"
+  - "Build"
+  - "Demo"
+  - "Delivery"
+
+# The hero project card, cycled through the §8 lifecycle. Icons/glyphs are
+# referenced by id (see the icon + glyph sets in index.astro).
+phases:
+  - chip: { label: "In review", tone: "wait", indicator: "hourglass" }
+    stages: ["active", "", "", "", ""]
+    events:
+      - icon: "message"
+        body: "Thanks - reviewing the CRM pilot brief for scope and feasibility now."
+        meta: "{{CONSULTANT_NAME}} · just now"
+      - icon: "shieldNode"
+        body: "Screened against OCPA rules and the threat model"
+        meta: "Automated pre-flight"
+  - chip: { label: "Estimating", tone: "wait", indicator: "chrono" }
+    stages: ["done", "active", "", "", ""]
+    events:
+      - icon: "meter"
+        body: "Estimate ready: about 1,500 credits for the MVP scope."
+        meta: "{{CONSULTANT_NAME}} · just now"
+      - icon: "message"
+        body: "Approve the estimate and the agent starts building."
+        meta: "Awaiting your go-ahead"
+  - chip: { label: "In build", tone: "build", indicator: "spinner" }
+    stages: ["done", "done", "active", "", ""]
+    events:
+      - icon: "message"
+        body: "“Estimate approved - the agent just started. Watch it here.”"
+        meta: "{{CONSULTANT_NAME}} · 2 min ago"
+      - icon: "zap"
+        body: "1,284 of ~1,500 estimated credits"
+        meta: "Metered live during the build"
+  - chip: { label: "Live demo", tone: "build", indicator: "broadcast" }
+    stages: ["done", "done", "done", "active", ""]
+    events:
+      - icon: "terminal"
+        body: "Your CRM pilot is live on its own subdomain - password-protected."
+        meta: "Ready to explore"
+      - icon: "pr"
+        body: "Pull request #4 opened - read it line by line."
+        meta: "Merge when you are satisfied"
+  - chip: { label: "Delivered", tone: "done", indicator: "check" }
+    stages: ["done", "done", "done", "done", "done"]
+    events:
+      - icon: "check"
+        body: "Delivery approved - the CRM pilot MVP is yours."
+        meta: "You · just now"
+      - icon: "badge"
+        body: "1,472 credits used - under the ~1,500 estimate."
+        meta: "Final metering"
+
+# Feature requests that stream into the build feed while the card is "In build".
+featureRequests:
+  - icon: "message"
+    body: "Can we add CSV export to the contacts list?"
+    meta: "You · just now"
+  - icon: "message"
+    body: "Make the pipeline stages drag-and-drop, please."
+    meta: "You · just now"
+  - icon: "message"
+    body: "Add a dark-mode toggle to the dashboard."
+    meta: "You · just now"
+
+twoWays:
+  eyebrow: "The choice"
+  title: "Two ways to deliver. One standard."
+  intro: "AI-curated is neither cheap nor unattended. Either way, {{CONSULTANT_NAME}} scopes your request and stays accountable for what ships. The only question: should agents under the consultant's direction write the code, or should the consultant?"
+  primary:
+    tag: "Curated AI · supervised by {{CONSULTANT_NAME}}"
+    title: "Curated AI MVP"
+    lede: "{{CONSULTANT_NAME}} scopes the project, sets the guardrails, and directs AI agents that build your MVP - with everything they do visible to you and reviewable by the consultant."
+    list:
+      - "Reviewed and estimated by {{CONSULTANT_NAME}} before a single line is written - never on autopilot."
+      - "The agent works inside the consultant's knowledge base and senior project structures (OCPA), with CVE and threat-model awareness from the first commit."
+      - "You watch the build live, read the code, and approve the result yourself."
+      - "Faster and more affordable because of how it is made - not because less care goes in."
+    forLabel: "Best for"
+    forText: "putting a serious MVP in front of users in days, with senior oversight built in."
+    cta: "Start an AI-curated build"
+  secondary:
+    tag: "Hand-built · quoted by {{CONSULTANT_NAME}}"
+    title: "Direct quote"
+    lede: "Some work should be done by hand. Describe it, {{CONSULTANT_NAME}} reviews it personally and returns a bespoke quote - classic senior consulting, tracked on the same platform."
+    list:
+      - "Infrastructure refactoring, migration, and deep architecture work."
+      - "Regulated programmes and sensitive environments."
+      - "Same visibility as the AI path: live status, one secure thread, full history - no email black hole."
+    forLabel: "Best for"
+    forText: "heavier or more sensitive work that calls for a senior human's hands rather than an agent's."
+    cta: "Request a direct quote"
+  note: "Not sure which fits? Submit it as a direct quote - it costs nothing, and {{CONSULTANT_NAME}} will tell you honestly if the AI-curated path would serve you better."
+
+projects:
+  eyebrow: "Projects"
+  title: 'No black box. No "any update?" emails.'
+  intro: "A project is your idea becoming software - one secure workspace where you always know where it stands."
+  points:
+    - icon: "pulse"
+      title: "Live status, end to end"
+      surface: '<span class="ps-row"><span class="ps-ok">✓ Review</span><span class="ps-ok">✓ Estimate</span><span class="ps-run"><span class="ps-pulse">●</span> Build</span></span>'
+      caption: "Every move lands on your dashboard and in your inbox."
+    - icon: "thread"
+      title: "One secure thread"
+      surface: '<span class="ps-row"><span class="ps-who">you</span>can we add CSV export?</span><span class="ps-row"><span class="ps-who ps-who--agent">agent</span>on it - building now</span>'
+      caption: "You, {{CONSULTANT_NAME}}, and the agent - one immutable history."
+    - icon: "terminal"
+      title: "Watch the build itself"
+      surface: '<span class="ps-row"><span class="ps-run">▸</span>writing api/export.py</span><span class="ps-row"><span class="ps-ok">✓</span>demo live - password-protected</span>'
+      caption: "Live logs, then a demo on its own subdomain."
+    - icon: "pr"
+      title: "The code, in front of you"
+      surface: '<span class="ps-row"><span class="ps-dim">#4</span>Contact CSV export<span class="ps-right"><span class="ps-add">+412</span><span class="ps-del">−18</span></span></span>'
+      caption: "Pull requests on your GitHub. You merge, you approve."
+    - icon: "meter"
+      title: "Costs you can see moving"
+      surface: '<span class="ps-row"><span class="ps-bar"><i></i></span></span><span class="ps-row">1,284 / ~1,500 credits</span>'
+      caption: "Estimate first, metered live, prepaid credits."
+    - icon: "key"
+      title: "Secrets handled like secrets"
+      surface: '<span class="ps-row"><span class="ps-dim">STRIPE_KEY</span>••••••••<span class="ps-tag">encrypted</span></span>'
+      caption: "Sandbox-only - never demos, never logs."
+
+programs:
+  eyebrow: "Programs"
+  title: "Automations you add, not projects you brief."
+  intro: "Programs are small automations {{CONSULTANT_NAME}} builds and operates: pick one from the catalog, fill in its inputs, and run it on demand or on a schedule."
+  cta: "Browse the programs catalog"
+  examples:
+    - monogram: "CN"
+      from: "#0d9488"
+      to: "#22c55e"
+      title: "Curated cybersecurity news"
+      mode: "Runs on a schedule"
+      body: "News filtered through the consultant's own conditions and knowledge, ingested straight into your database."
+      meta: "every morning · webhook to your API"
+      run:
+        id: "run #218 · schedule"
+        lines:
+          - { g: "▸", text: "schedule fired - daily 07:00" }
+          - { g: "▸", text: "sandbox built - nothing on your side" }
+          - { g: "▸", text: "reading 6 sources" }
+          - { g: "▸", text: "applying the consultant's filters" }
+          - { g: "✓", text: "9 stories kept, 131 dropped", tone: "ok" }
+          - { g: "⇣", text: "output/news.json · 12.4 KB", tone: "file" }
+          - { g: "⇡", text: "POST yourco.api/hooks/news → 200 OK", tone: "hook" }
+          - { g: "◇", text: "billed 8 credits", tone: "dim" }
+    - monogram: "WC"
+      from: "#7c3aed"
+      to: "#db2777"
+      title: "Weekly CVE digest"
+      mode: "Runs on a schedule"
+      body: "The week's CVEs relevant to your stack, summarized and delivered where you want them."
+      meta: "mondays 07:00 · webhook"
+      run:
+        id: "run #74 · schedule"
+        lines:
+          - { g: "▸", text: "schedule fired - monday 07:00" }
+          - { g: "▸", text: "sandbox built - nothing on your side" }
+          - { g: "▸", text: "412 new CVEs this week" }
+          - { g: "▸", text: "matching against your stack" }
+          - { g: "✓", text: "14 relevant - digest written", tone: "ok" }
+          - { g: "⇣", text: "output/digest.md · 6.1 KB", tone: "file" }
+          - { g: "⇡", text: "POST yourco.api/hooks/cve → 200 OK", tone: "hook" }
+          - { g: "◇", text: "billed 12 credits", tone: "dim" }
+    - monogram: "RH"
+      from: "#2563eb"
+      to: "#22d3ee"
+      title: "Repo health report"
+      mode: "Runs on demand"
+      body: "Connects to your repository with its own SSH key and produces a maintainability report."
+      meta: "on demand · ssh deploy key"
+      run:
+        id: "run #31 · manual"
+        lines:
+          - { g: "▸", text: "run requested - manual" }
+          - { g: "▸", text: "cloning repo over its ssh deploy key" }
+          - { g: "▸", text: "analyzing 1,204 files" }
+          - { g: "▸", text: "scoring maintainability" }
+          - { g: "✓", text: "report ready - 3 hotspots flagged", tone: "ok" }
+          - { g: "⇣", text: "output/report.html · 88 KB", tone: "file" }
+          - { g: "⇡", text: "POST yourco.api/hooks/repo → 200 OK", tone: "hook" }
+          - { g: "◇", text: "billed 21 credits", tone: "dim" }
+
+how:
+  eyebrow: "How the Curated AI MVP works"
+  title: "From an idea to a live demo, in full view."
+  intro: 'This is the Curated AI path. A human decides what gets built; the agent does the building; you see everything in between. (Prefer a bespoke quote? <a href="#two-ways">See the direct-quote option.</a>)'
+  steps:
+    - n: "01"
+      title: "Describe your project"
+      who: "You"
+      body: "Plain language, short guided intake - no spec document."
+    - n: "02"
+      title: "Curated review"
+      who: "{{CONSULTANT_NAME}}"
+      body: "Feasibility, scope, honest estimate - before any code."
+    - n: "03"
+      title: "The agent builds, you watch"
+      who: "The agent"
+      body: "Sandboxed build, senior structures (OCPA), progress streamed live."
+    - n: "04"
+      title: "Live demo on a subdomain"
+      who: "You"
+      body: "Read the code, request changes, chat - one project page."
+    - n: "05"
+      title: "Production, when you are ready"
+      who: "{{CONSULTANT_NAME}}"
+      body: "Manual production review and deployment - quoted separately."
+
+pricing:
+  eyebrow: "Pricing"
+  title: "Transparent on both paths."
+  intro: "No subscriptions, no surprise invoices, no meter you cannot see. The Curated AI MVP runs on prepaid credits metered in real time; a Direct quote is priced by {{CONSULTANT_NAME}} after reviewing your request - with no upfront charge to submit it."
+  cta: "Create an account"
+  primary:
+    tag: "1 credit = €1 · prepaid"
+    title: "Curated AI MVP"
+    body: "Credits are spent as the agent works - model usage, builds, and demo hosting. You see the estimate before anything starts and the consumption live as it runs. You pay for the work actually done, not a padded day rate."
+  secondary:
+    tag: "Custom quote · no upfront charge"
+    title: "Direct quote"
+    body: "Bespoke engagements - infrastructure work, regulated programmes, or a production deployment - are scoped and quoted by {{CONSULTANT_NAME}} after review, with classic senior-consulting rigour. Submitting a request is free."
+
+sovereign:
+  eyebrow: "Security & trust"
+  title: "Your project, under your control."
+  intro: "{{BRAND_NAME}} is built for teams that care where their code and data live. The same discipline shapes how the agent builds and how your data is handled."
+  trustPoints:
+    - icon: "globe"
+      strong: "Hosting under your control."
+      text: "The platform self-hosts on the infrastructure you choose, keeping your project and its data in the jurisdiction you answer to."
+    - icon: "badge"
+      strong: "Compliance-aware."
+      text: "Practices designed with sensitive workloads and regulated sectors in mind: encrypted secrets, auditable history, least-privilege access."
+    - icon: "box"
+      strong: "Sandboxed by design."
+      text: "Generated code runs in an isolated, hardened sandbox. Secrets are never exposed to the demo environment."
+    - icon: "layers"
+      strong: "Senior structures & CVE awareness."
+      text: "OCPA project structure, threat-model defaults, and dependency vetting are applied from the first commit - not bolted on later."
+
+finalCta:
+  titleLead: "Start a project"
+  titleAccent: "you can actually follow."
+  lede: "Describe what you want to build. {{CONSULTANT_NAME}} reviews it personally, and from that moment you will always know what happens next - whether curated agents build it, or the consultant does. One account covers both paths."
+  ctaPrimary: "Get started"
+  ctaSecondaryLabel: "Security & state of the art"
+  ctaSecondaryHref: "/sota"
+
+# The /llms.txt document, regenerated by src/pages/llms.txt.ts. Brand +
+# consultant come from {{BRAND_NAME}}/{{CONSULTANT_NAME}}; the {{SITE_URL}} /
+# {{APP_URL}} markers are filled from env by the endpoint.
+llms: |
+  # {{BRAND_NAME}}
+
+  > Senior software consultancy delivered through one transparent platform. The customer always knows where their project stands: live status at every stage, a single secure thread with the consultant and the build agent, the demo and the code in view. Two delivery modes with the same senior standard: a Curated AI MVP built by agents under {{CONSULTANT_NAME}}'s supervision, or a bespoke engagement hand-built and quoted by the consultant (Direct quote).
+
+  Status: alpha.
+
+  ## The platform (applies to both delivery modes)
+
+  - Live project status, end to end: every project moves through explicit stages (review, estimate, build, demo, delivery); each change is visible in real time on the dashboard and notified by email.
+  - One secure communication thread per project: customer, consultant, and the build agent in the same place; message history is immutable; a human can be pulled in at any moment with one click.
+  - The build itself is observable: agent progress streams to a build panel; the result runs as a password-protected live demo on its own subdomain.
+  - Code is delivered as pull requests the customer can read line by line (to the customer's own GitHub repository when they have one); the customer merges and approves the delivery.
+  - Costs are visible: an estimate before work starts, consumption metered live during AI builds, prepaid credits; no surprise invoice.
+  - Secrets shared by the customer are encrypted at rest and only reach the isolated build sandbox; never demo containers or logs.
+
+  ## Two ways to work with {{BRAND_NAME}} (same standard, different hands)
+
+  AI-curated does not mean cheap or unattended: on both paths {{CONSULTANT_NAME}} personally reviews, scopes, and stays accountable for the work. The choice is about who writes the code.
+
+  1. Curated AI MVP ("Curated AI") - AI agents build the MVP under the consultant's direction and supervision.
+     - Reviewed and estimated by {{CONSULTANT_NAME}} before any code is written; never on autopilot.
+     - The agent works inside the consultant's curated knowledge base and follows senior project structures (OCPA) with CVE and threat-model awareness from the first commit.
+     - The customer watches the build live, reads the code, and approves the result; the MVP runs as a live demo on its own subdomain.
+     - Priced with prepaid, pay-as-you-go credits metered in real time.
+     - Best for putting a serious MVP in front of users in days, with senior oversight built in - faster and more affordable because of how it is made, not because less care goes in.
+
+  2. Direct quote - a custom-made engagement hand-built by the consultant.
+     - For heavier or more sensitive work: infrastructure refactoring and migration, regulated programmes, deep architecture work.
+     - Reviewed personally by {{CONSULTANT_NAME}}, who returns a bespoke quote; no charge to submit a request.
+     - Tracked on the same platform with the same visibility: live status, one secure thread, full history.
+     - Best for work that calls for a senior human's hands rather than an agent's.
+
+  ## How the Curated AI MVP works
+
+  1. Describe the project through a short guided intake (plain language, no spec document required).
+  2. Curated review: {{CONSULTANT_NAME}} reviews feasibility and scope, then gives an honest estimate before any code is written.
+  3. A sandboxed agent builds the MVP following senior structures and secure defaults; progress streams live to the customer's dashboard.
+  4. The MVP runs as a live demo on a subdomain; the customer tracks status, reads code, requests changes, and chats with the agent and with the consultant.
+  5. Optional manual production engagement, quoted separately.
+
+  ## Programs (ready-made automations)
+
+  Beyond projects, the platform offers Programs: small automations {{CONSULTANT_NAME}} builds and operates. A customer adds a program from the catalog, fills in the inputs it declares (the form is generated and validated from the program's own definition), and runs it on demand or on a schedule.
+
+  - Each run executes in an isolated sandbox; its log streams live, and the output (text plus downloadable files) stays in the run history.
+  - Every run ends with a webhook call to the customer's endpoint carrying the output - or the error, stated plainly.
+  - Each program instance has a dedicated SSH key the customer can authorize on their own systems, so a program can reach a database or repository.
+  - Billing is per run, metered from the same prepaid credits at the rate shown on each program.
+  - Example programs: curated cybersecurity news ingested into a customer database, a weekly CVE digest, a repository health report.
+
+  ## Pricing
+
+  - Curated AI MVP: prepaid credits, 1 credit = 1 EUR. Builds draw down credits based on what the AI actually consumes; the estimate is shown before the build starts and consumption is metered live as it runs.
+  - Direct quote: a custom quote from {{CONSULTANT_NAME}} after reviewing the request. No upfront charge to submit a request.
+  - Production-level engagements (review, hardening, deployment) are scoped and quoted separately.
+  - Programs: billed per run from the same prepaid credits (model usage metered, rate shown on each program).
+
+  ## Security and trust
+
+  - Self-hostable on the infrastructure of your choice; your project and its data stay in the jurisdiction you answer to.
+  - Practices designed with sensitive and regulated workloads in mind.
+  - Generated code runs in an isolated, hardened sandbox; secrets are never exposed to demo environments.
+
+  ## Links
+
+  - Marketing site: {{SITE_URL}}
+  - Application (sign up / sign in): {{APP_URL}}
+
+  ## Contact
+
+  Consultant: {{CONSULTANT_NAME}}.

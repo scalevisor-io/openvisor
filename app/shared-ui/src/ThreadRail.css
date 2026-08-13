@@ -1,0 +1,59 @@
+/* Shared thread rail. Same token conventions as RequestList.css: design tokens
+   both apps define, with literal fallbacks; dot hues key off the semantic
+   status kinds (ok|info|warn|err|muted). */
+.tr-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+.tr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 240px;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.65rem;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 999px;
+  background: var(--surface-2, #f6f7fa);
+  color: var(--text, inherit);
+  cursor: pointer;
+}
+.tr-chip:hover {
+  border-color: color-mix(in srgb, var(--speed-from, #4f46e5) 40%, var(--border, #e5e7eb));
+}
+.tr-chip:disabled { cursor: default; opacity: 0.7; }
+.tr-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint, #9ca3af);
+}
+.tr-ok { background: var(--ok, #22c55e); }
+.tr-info { background: var(--speed-from, #4f46e5); }
+.tr-warn { background: var(--warn, #f59e0b); }
+.tr-err { background: var(--danger, #ef4444); }
+.tr-building .tr-dot {
+  animation: tr-pulse 1.2s ease-in-out infinite;
+}
+.tr-live {
+  flex: none;
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--speed-text, #4338ca);
+}
+.tr-live-merge { color: var(--warn, #f59e0b); }
+.tr-more { color: var(--text-dim, #6b7280); }
+@keyframes tr-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}

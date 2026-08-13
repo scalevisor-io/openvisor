@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "meta": {
+    "purpose": "Catalog of project specialities the customer picks in onboarding step 2. Each speciality maps to an OpenHands harness + a knowledge subset (workspace files + pgvector RAG tags), pre-sets the sovereign toggle (step 6), and seeds the cost-estimation prompt (#3).",
+    "default_speciality": "general-webapp",
+    "grounded_in": "{{CONSULTANT_NAME}} core capabilities + broadened general software/infra tracks for lower-budget clients.",
+    "owner_todo": [
+      "Confirm/adjust harness ids to match the actual OpenHands configs.",
+      "Confirm knowledge_tags map to real corpora/paths inside the local /knowledge KB (workspace file sets) and pgvector RAG collections.",
+      "Set estimation numbers per complexity_baseline (credit anchors) once the token price table + markup are fixed.",
+      "Decide which 'coming_soon' specialities to enable for the alpha."
+    ],
+    "field_reference": {
+      "sovereign_default": "Pre-sets the onboarding sovereign/non-sovereign toggle; customer can still override.",
+      "requires_existing_repo": "If true, this speciality acts on customer-provided repo(s) rather than scaffolding from scratch.",
+      "deliverable_type": "deployed_demo = builds + deploys a live demo on a subdomain; audit_report / architecture_docs = produces documents (no running demo).",
+      "harness": "OpenHands configuration/agent profile id used for this track.",
+      "knowledge_tags": "Selects which workspace file sets + pgvector RAG collections to load into the agent context. 'ocpa' and 'cve' are implied for all build tracks.",
+      "complexity_baseline": "Rough anchor for the pre-project cost estimate (low|medium|high).",
+      "base_fee_credits": "One-time engagement fee for this track, configured per instance. It rides the evaluation estimate so it is charged with the funding; per-token usage is metered on top. 0 disables it."
+    }
+  },
+  "specialities": [
+    {
+      "id": "general-webapp",
+      "label": "Web / SaaS / Platform MVP - Cloud-agnostic",
+      "short_label": "Web / SaaS / Platform MVP",
+      "description": "Fast, lower-cost MVP for a web app, SaaS product, or internal tool. Cloud-agnostic Docker Compose (OCPA), deployable anywhere later. The default track for quick delivery on a budget.",
+      "icon": "rocket",
+      "enabled": true,
+      "sovereign_default": false,
+      "requires_existing_repo": false,
+      "deliverable_type": "deployed_demo",
+      "harness": "software-infra-generic",
+      "knowledge_tags": ["ocpa", "cve", "webapp-templates", "postgres", "docker-compose", "sli-slo"],
+      "target_platforms": ["cloud-agnostic", "any-docker-host"],
+      "default_stack": ["docker", "docker-compose", "postgres", "react", "fastapi-or-node"],
+      "capabilities": [
+        "Full-stack web/SaaS scaffolding following OCPA",
+        "Auth, database, and CRUD foundations",
+        "Reproducible Docker Compose deployment",
+        "Basic CI and health checks"
+      ],
+      "example_deliverables": ["Landing + dashboard SaaS MVP", "Internal admin tool", "Booking / marketplace prototype"],
+      "complexity_baseline": "low",
+      "base_fee_credits": 0.0
+    },
+    {
+      "id": "sovereign-eu",
+      "label": "Software & Infrastructure - Sovereign EU",
+      "short_label": "Sovereign EU",
+      "description": "Software and infrastructure targeting sovereign, government-certified EU platforms with data residency and compliance in mind.",
+      "icon": "shield-check",
+      "enabled": true,
+      "sovereign_default": true,
+      "requires_existing_repo": false,
+      "deliverable_type": "deployed_demo",
+      "harness": "software-infra-sovereign",
+      "knowledge_tags": ["ocpa", "cve", "eucs", "data-sovereignty", "kubernetes-restricted", "terraform"],
+      "target_platforms": ["sovereign-cloud", "on-prem"],
+      "default_stack": ["docker", "kubernetes", "terraform", "postgres"],
+      "capabilities": [
+        "Sovereign cloud migration (EU certification schemes)",
+        "Data sovereignty and residency compliance",
+        "Hybrid security-level architecture design",
+        "Kubernetes in restricted network environments"
+      ],
+      "example_deliverables": ["Certification-ready sovereign service", "Sovereign data platform", "Compliance-aware API"],
+      "complexity_baseline": "high",
+      "base_fee_credits": 0.0
+    },
+    {
+      "id": "sovereign-ca",
+      "label": "Software & Infrastructure - Sovereign CA",
+      "short_label": "Sovereign CA",
+      "description": "Software and infrastructure targeting sovereign, government-certified CA platforms (PIPEDA, Protected B, Loi 25) with data residency and compliance in mind.",
+      "icon": "shield-check",
+      "enabled": true,
+      "sovereign_default": true,
+      "requires_existing_repo": false,
+      "deliverable_type": "deployed_demo",
+      "harness": "software-infra-sovereign",
+      "knowledge_tags": ["ocpa", "cve", "pipeda", "data-sovereignty", "kubernetes-restricted", "terraform"],
+      "target_platforms": ["sovereign-cloud", "on-prem"],
+      "default_stack": ["docker", "kubernetes", "terraform", "postgres"],
+      "capabilities": [
+        "Sovereign cloud migration (pipeda, loi 25)",
+        "Data sovereignty and residency compliance",
+        "Hybrid security-level architecture design",
+        "Kubernetes in restricted network environments"
+      ],
+      "example_deliverables": ["PIPEDA-ready service", "Sovereign data platform", "Compliance-aware API"],
+      "complexity_baseline": "high",
+      "base_fee_credits": 0.0
+    },
+    {
+      "id": "devsecops-hardened",
+      "label": "Secure Infrastructure & DevSecOps",
+      "short_label": "DevSecOps",
+      "description": "Build hardened, compliant systems with rigorous security practices and certified pipelines. Overlays any target platform with security-first delivery.",
+      "icon": "lock",
+      "enabled": true,
+      "sovereign_default": true,
+      "requires_existing_repo": false,
+      "deliverable_type": "deployed_demo",
+      "harness": "secure-infra-devsecops",
+      "knowledge_tags": ["ocpa", "cve", "devsecops", "sbom", "sast-dast", "iac", "incident-response"],
+      "target_platforms": ["cloud-agnostic", "on-prem"],
+      "default_stack": ["docker", "terraform", "gitlab-ci", "trivy-or-grype"],
+      "capabilities": [
+        "Secure software development lifecycle (threat modelling, SAST/DAST, SBOM)",
+        "Security accreditation support (national and international standards)",
+        "SLI/SLO monitoring for high-availability systems",
+        "Infrastructure as Code for reproducible deployments",
+        "Incident response and continuity planning"
+      ],
+      "example_deliverables": ["Hardened CI/CD with SBOM + scanning", "Accreditation-ready service", "IaC baseline with monitoring"],
+      "complexity_baseline": "high",
+      "base_fee_credits": 0.0
+    },
+    {
+      "id": "gafam",
+      "label": "Software, Operations and Maintenance - Azure / GCP / AWS",
+      "short_label": "GAFAM",
+      "description": "Software and infrastructure for GCP/AWS/Azure with Infrastructure as Code.",
+      "icon": "cloud",
+      "enabled": true,
+      "sovereign_default": false,
+      "requires_existing_repo": false,
+      "deliverable_type": "deployed_demo",
+      "harness": "software-infra-gafam",
+      "knowledge_tags": ["ocpa", "cve", "gcp", "aws", "azure", "landing-zone", "terraform", "docker-compose"],
+      "target_platforms": ["gcp", "aws", "azure"],
+      "default_stack": ["docker", "terraform", "gcp", "azure", "aws", "postgres"],
+      "capabilities": ["GCP scaffolding", "AWS scaffolding", "Azure scaffolding", "Infrastructure as Code (Terraform)", "Containerized services and CI"],
+      "example_deliverables": ["Cloud Run service", "GKE workload with Terraform", "Azure Container Apps service", "AKS workload with Terraform"],
+      "complexity_baseline": "medium",
+      "base_fee_credits": 0.0
+    }
+  ]
+}

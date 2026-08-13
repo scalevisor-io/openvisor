@@ -1,0 +1,164 @@
+# The deployer keeps its compose-era HTTP contract but runs with ORCHESTRATOR=kubernetes:
+# demos become DinD pods (+ Service + HTTPRoute + basicAuth Middleware) and dev runs
+# become Jobs pinned to this pod's node (shared RWO workspaces volume).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    # the python client's websocket exec handshake is a GET; kubectl uses create
+    verbs: [create, get]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [services, secrets, persistentvolumeclaims]
+    verbs: [get, list, create, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, create, delete]
+  - apiGroups: [traefik.io]
+    resources: [middlewares]
+    verbs: [get, list, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployer
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: deployer
+  template:
+    metadata:
+      labels:
+        app: deployer
+        {{- include "openvisor.workspacesConsumerLabel" . | nindent 8 }}
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: deployer
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      {{- include "openvisor.workspacesAffinity" . | nindent 6 }}
+      containers:
+        - name: deployer
+          image: {{ include "openvisor.image" (dict "root" . "name" "deployer") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          env:
+            - name: ORCHESTRATOR
+              value: kubernetes
+            - name: DEPLOY_ENV
+              value: {{ .Values.deployEnv | quote }}
+            - name: DEPLOY_DOMAIN
+              value: {{ .Values.domain | quote }}
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: WORKSPACES_PVC
+              value: workspaces
+            - name: RUNNER_IMAGE
+              value: {{ include "openvisor.image" (dict "root" . "name" "runner") | quote }}
+            # §egress: the filtering proxy runs the mcp image (mcp/egress_proxy.py)
+            - name: EGRESS_PROXY_IMAGE
+              value: {{ include "openvisor.image" (dict "root" . "name" "mcp") | quote }}
+            - name: RUNNER_PULL_SECRETS
+              value: {{ join "," .Values.imagePullSecrets | quote }}
+            - name: GATEWAY_NAME
+              value: {{ .Values.gateway.name | quote }}
+            - name: GATEWAY_SECTION
+              value: {{ include "openvisor.routeSection" . | quote }}
+            - name: DEMO_DIND_IMAGE
+              value: {{ .Values.demo.dindImage | quote }}
+            - name: DEMO_CPU_LIMIT
+              value: {{ .Values.demo.cpuLimit | quote }}
+            - name: DEMO_MEM_LIMIT
+              value: {{ .Values.demo.memLimit | quote }}
+            - name: DEMO_RUNTIME
+              value: {{ .Values.demo.runtimeClassName | quote }}
+            - name: DEMO_HEALTHCHECK_TIMEOUT
+              value: {{ .Values.demo.healthcheckTimeout | default "60" | quote }}
+            - name: DEMO_VOLUME_SIZE
+              value: {{ .Values.demo.volumeSize | quote }}
+            - name: DEMO_STORAGE_CLASS
+              value: {{ .Values.demo.storageClassName | quote }}
+            - name: RUNNER_CPU_LIMIT
+              value: {{ .Values.runner.cpuLimit | quote }}
+            - name: RUNNER_MEM_LIMIT
+              value: {{ .Values.runner.memLimit | quote }}
+            # §dev-docker: the SAME .env flag the worker reads (task copy) also
+            # makes the deployer grant the sandbox its runtime - one knob, no
+            # drift; optional so pre-flag env Secrets keep deploying.
+            - name: DEV_SANDBOX_DOCKER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: DEV_SANDBOX_DOCKER
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 8500
+          volumeMounts:
+            - name: workspaces
+              mountPath: /workspaces
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.deployer.resources | nindent 12 }}
+      volumes:
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deployer
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: deployer
+  ports:
+    - name: http
+      port: 8500
+      targetPort: http

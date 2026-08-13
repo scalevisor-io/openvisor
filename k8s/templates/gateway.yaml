@@ -1,0 +1,55 @@
+{{- if .Values.gateway.createGatewayClass }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gateway.gatewayClassName }}
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+spec:
+  controllerName: traefik.io/gateway-controller
+{{- end }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.gateway.gatewayClassName }}
+  listeners:
+    - name: web
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: {{ .Values.gateway.crossNamespaceRoutes | default false | ternary "All" "Same" }}
+    {{- if .Values.gateway.tls.enabled }}
+    - name: websecure
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: {{ .Values.gateway.tls.secretName }}
+      allowedRoutes:
+        namespaces:
+          from: {{ .Values.gateway.crossNamespaceRoutes | default false | ternary "All" "Same" }}
+    {{- end }}
+    {{- range .Values.gateway.extraListeners }}
+    - name: {{ .name }}
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .hostname | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: {{ .secretName }}
+          {{- if .secretNamespace }}
+            namespace: {{ .secretNamespace }}
+          {{- end }}
+      allowedRoutes:
+        namespaces:
+          from: {{ .crossNamespace | default false | ternary "All" "Same" }}
+    {{- end }}

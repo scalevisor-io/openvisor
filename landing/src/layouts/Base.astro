@@ -1,0 +1,141 @@
+---
+import '../styles/global.css';
+import content from '../lib/content';
+import {
+  appUrl,
+  brandColorPrimary,
+  brandColorSecondary,
+  defaultColorPrimary,
+  defaultColorSecondary,
+} from '../lib/site';
+
+export interface Props {
+  title?: string;
+  description?: string;
+  path?: string;
+}
+
+const { seo, legal } = content;
+
+const {
+  title = seo.title,
+  description = seo.description,
+  path = '/',
+} = Astro.props;
+
+// Canonical site origin comes from Astro.site (SITE_URL at build). Strip the
+// trailing slash so absolute URLs and JSON-LD read like the hand-written ones.
+const site = (Astro.site?.href ?? 'https://openvisor.example.com').replace(/\/$/, '');
+const canonical = new URL(path, site).href;
+const ogImage = new URL('/og.png', site).href;
+
+// The runtime link-repoint script (below) needs the canonical site + app hosts.
+const siteHost = Astro.site?.hostname ?? 'openvisor.example.com';
+const appHost = new URL(appUrl).hostname;
+
+const orgJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: seo.orgName,
+  url: site,
+  logo: new URL('/favicon.svg', site).href,
+  description: seo.orgDescription,
+  founder: {
+    '@type': 'Person',
+    name: legal.consultant,
+  },
+  sameAs: seo.sameAs,
+};
+
+const serviceJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Service',
+  serviceType: seo.serviceType,
+  provider: {
+    '@type': 'Organization',
+    name: seo.orgName,
+    url: site,
+  },
+  areaServed: seo.serviceAreaServed,
+  description: seo.serviceDescription,
+  offers: seo.offers.map((offer) => ({
+    '@type': 'Offer',
+    name: offer.name,
+    priceCurrency: offer.priceCurrency,
+    description: offer.description,
+  })),
+};
+
+// Only override the gradient tokens when the build actually changes a colour;
+// an unconfigured build emits nothing and inherits global.css's default hexes.
+const colorOverride =
+  brandColorPrimary !== defaultColorPrimary || brandColorSecondary !== defaultColorSecondary
+    ? `:root{--speed-from:${brandColorPrimary};--speed-to:${brandColorSecondary};--gradient-speed:linear-gradient(135deg, ${brandColorPrimary}, ${brandColorSecondary});}`
+    : '';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="canonical" href={canonical} />
+    <meta name="generator" content={Astro.generator} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content={seo.themeColor} />
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={seo.ogSiteName} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:locale" content="en" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    <script type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
+    <script type="application/ld+json" set:html={JSON.stringify(serviceJsonLd)} />
+    {colorOverride && <style is:inline set:html={colorOverride} />}
+  </head>
+  <body>
+    <script is:inline>
+      // Marks JS availability early so scroll-reveal styles (html.js [data-reveal])
+      // never hide content for no-JS visitors or crawlers.
+      document.documentElement.classList.add('js');
+    </script>
+    <slot />
+    <script define:vars={{ siteHost, appHost }}>
+      // Repoint the canonical app links at the domain this page is actually
+      // served from (app.openvisor.local in dev, app.<domain> wherever it's
+      // deployed). Hardcoded hrefs stay as the no-JS/SEO fallback.
+      (() => {
+        const apex = location.hostname.replace(/^www\./, '');
+        if (apex === siteHost || apex === 'localhost' || !apex.includes('.') || /^[\d.]+$/.test(apex)) return;
+        document.querySelectorAll('a[href]').forEach((a) => {
+          try {
+            const url = new URL(a.href);
+            if (url.hostname === appHost) {
+              url.protocol = location.protocol;
+              url.hostname = 'app.' + apex;
+              url.port = location.port;
+              a.href = url.toString();
+            }
+          } catch {
+            /* leave non-URL hrefs untouched */
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

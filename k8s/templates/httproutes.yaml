@@ -1,0 +1,115 @@
+# Platform routes (compose Traefik-label parity). Gateway API path-specificity
+# ordering sends app.<domain>/api and /ws to the api Service ahead of the SPA
+# catch-all - no explicit priorities needed. Demo routes (<uuid>-<slug>.<domain>)
+# are created at runtime by the deployer.
+{{- $section := include "openvisor.routeSection" . }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: landing
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: {{ $section }}
+  hostnames:
+    - {{ .Values.domain | quote }}
+    - {{ printf "www.%s" .Values.domain | quote }}
+  rules:
+    - backendRefs:
+        - name: landing
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: {{ $section }}
+  hostnames:
+    - {{ printf "app.%s" .Values.domain | quote }}
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+        - path: { type: PathPrefix, value: /ws }
+      backendRefs:
+        - name: api
+          port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: {{ $section }}
+  hostnames:
+    - {{ printf "app.%s" .Values.domain | quote }}
+  rules:
+    - backendRefs:
+        - name: app
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: {{ $section }}
+  hostnames:
+    - {{ printf "mcp.%s" .Values.domain | quote }}
+  rules:
+    - backendRefs:
+        - name: mcp
+          port: 8100
+{{- if .Values.mailpit.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mailpit
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: {{ $section }}
+  hostnames:
+    - {{ printf "mail.%s" .Values.domain | quote }}
+  rules:
+    - backendRefs:
+        - name: mailpit
+          port: 8025
+{{- end }}
+{{- if .Values.gateway.tls.enabled }}
+---
+# HTTP -> HTTPS redirect for every hostname when TLS terminates on the gateway
+# (compose.prod parity: web entrypoint redirects to websecure).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: web
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+{{- end }}

@@ -1,0 +1,44 @@
+# OCPA Helm values template - rendered by scripts/deploy-helm.sh with envsubst into
+# the gitignored k8s/values.generated.yaml and passed to helm with -f.
+# ${VAR} placeholders are substituted from the environment (the script sources .env
+# first and applies the defaults documented in scripts/deploy-helm.sh).
+
+# String values are quoted so YAML-special substitutions (a password with ':' or
+# '#', an empty storageClassName, etc.) can't break or silently mutate the parse.
+# Booleans (tls.enabled, mailpit.enabled) stay unquoted so Helm sees real bools.
+domain: "${DEPLOY_DOMAIN}"
+scheme: "${HTTP_SCHEME}"
+deployEnv: "${DEPLOY_ENV}"
+
+imageRegistry: "${IMAGE_REGISTRY}"
+imageTag: "${IMAGE_TAG}"
+
+gateway:
+  tls:
+    enabled: ${GATEWAY_TLS_ENABLED}
+    secretName: "${GATEWAY_TLS_SECRET}"
+
+postgres:
+  user: "${POSTGRES_USER}"
+  password: "${POSTGRES_PASSWORD}"
+  db: "${POSTGRES_DB}"
+  storageClassName: "${STORAGE_CLASS}"
+
+meilisearch:
+  storageClassName: "${STORAGE_CLASS}"
+
+workspaces:
+  storageClassName: "${STORAGE_CLASS}"
+
+mailpit:
+  enabled: ${MAILPIT_ENABLED}
+
+stripe:
+  relayEnabled: ${STRIPE_RELAY_ENABLED}
+
+demo:
+  cpuLimit: "${DEMO_CPU_LIMIT}"
+  memLimit: "${DEMO_MEM_LIMIT_K8S}"
+  runtimeClassName: "${DEMO_RUNTIME}"
+  healthcheckTimeout: "${DEMO_HEALTHCHECK_TIMEOUT}"
+  storageClassName: "${STORAGE_CLASS}"

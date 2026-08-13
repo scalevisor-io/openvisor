@@ -1,0 +1,34 @@
+// /favicon.svg, generated so the mark follows the build's brand identity: the
+// Openvisor mark (open ring + one tapered spoke, see public/brand/) inset ~20%
+// on a rounded dark tile, gradient stops from the brand colors.
+import type { APIRoute } from 'astro';
+import { brandName, brandColorPrimary, brandColorSecondary } from '../lib/site';
+
+export const prerender = true;
+
+const xml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+export const GET: APIRoute = () => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="${xml(brandName)}">
+  <defs>
+    <linearGradient id="mark" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="${brandColorSecondary}"/>
+      <stop offset="1" stop-color="${brandColorPrimary}"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#090b11"/>
+  <g transform="translate(6.4,6.4) scale(1.6)">
+    <path d="M 23.6693 15.3566 A 8.6 8.6 0 1 1 14.0031 8.3337" fill="none" stroke="url(#mark)" stroke-width="3.2" stroke-linecap="round"/>
+    <path d="M 19.7489 4.3521 A 13.3 13.3 0 0 1 27.6979 12.3011 A 1.2 1.2 0 0 1 25.4426 13.122 A 9.2263 9.2263 0 0 0 18.0388 9.0506 A 2.5 2.5 0 0 1 19.7489 4.3521 Z" fill="url(#mark)"/>
+  </g>
+</svg>
+`;
+  return new Response(svg, {
+    headers: { 'Content-Type': 'image/svg+xml' },
+  });
+};

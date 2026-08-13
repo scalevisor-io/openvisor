@@ -1,0 +1,19 @@
+{
+  "id": "architecture-review-service",
+  "speciality": "architecture-review",
+  "from_scratch": false,
+  "deliverable_type": "architecture_docs",
+  "description": "Review the architecture of an existing service and produce an architecture assessment document covering coupling, failure modes, and scaling risks.",
+  "onboarding_answers": [
+    {
+      "q": "Depth?",
+      "a": "Assessment doc with diagrams"
+    },
+    {
+      "q": "Output?",
+      "a": "Documents, not a deployed app"
+    }
+  ],
+  "notes": "Report deliverable: another boot-gate-inapplicable track.",
+  "sovereign": false
+}

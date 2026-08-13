@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "meta": {
+    "purpose": "MCQ shown in onboarding step 5. Scopes the MVP so the estimation prompt (#3) and the development/OpenHands prompt (#6) have structured context. Answers are stored in onboarding_answer and injected into those prompts.",
+    "owner_todo": [
+      "Reword to your voice; add/remove questions (keep <= ~10 to avoid friction).",
+      "Tune options per speciality if needed via show_if.",
+      "Decide which are required for feasibility/estimation vs optional."
+    ],
+    "field_reference": {
+      "type": "single = pick one; multi = pick many.",
+      "required": "If true, the customer must answer before continuing.",
+      "allow_comment": "If true, a free-text note field is shown under the options for extra context.",
+      "show_if": "Optional branching predicate. Supported forms: {\"speciality\": \"<id>\"} to match the chosen speciality, or {\"answer\": {\"question\": \"<question_id>\", \"any_of\": [\"<option_id>\", ...]}} to depend on a previous answer. null = always shown."
+    }
+  },
+  "questions": [
+    {
+      "id": "project_type",
+      "prompt": "What are you building?",
+      "type": "single",
+      "required": true,
+      "allow_comment": false,
+      "show_if": null,
+      "options": [
+        { "id": "web_app", "label": "A web app or SaaS (UI + backend)" },
+        { "id": "api_backend", "label": "An API / backend service (headless)" },
+        { "id": "data_ai", "label": "A data or AI/LLM application" },
+        { "id": "infra_devops", "label": "Infrastructure / DevOps / CI-CD" },
+        { "id": "automation_tool", "label": "An automation or internal tool" },
+        { "id": "not_sure", "label": "Not sure yet" }
+      ]
+    },
+    {
+      "id": "audience",
+      "prompt": "Who will primarily use it?",
+      "type": "single",
+      "required": true,
+      "allow_comment": false,
+      "show_if": null,
+      "options": [
+        { "id": "internal_team", "label": "My internal team" },
+        { "id": "external_public", "label": "The general public" },
+        { "id": "b2b_clients", "label": "My business clients (B2B)" },
+        { "id": "gov_defence", "label": "Government / defence users" },
+        { "id": "mixed", "label": "A mix of the above" }
+      ]
+    },
+    {
+      "id": "data_sensitivity",
+      "prompt": "How sensitive is the data involved?",
+      "type": "single",
+      "required": true,
+      "allow_comment": true,
+      "show_if": null,
+      "options": [
+        { "id": "public_non_sensitive", "label": "Public / non-sensitive" },
+        { "id": "personal_gdpr", "label": "Personal data (GDPR applies)" },
+        { "id": "sensitive_regulated", "label": "Sensitive / regulated (health, finance, etc.)" },
+        { "id": "classified_defence", "label": "Classified / defence-restricted" },
+        { "id": "not_sure", "label": "Not sure" }
+      ]
+    },
+    {
+      "id": "hosting_target",
+      "prompt": "Do you have a preferred hosting / target environment?",
+      "type": "single",
+      "required": true,
+      "allow_comment": true,
+      "show_if": null,
+      "options": [
+        { "id": "sovereign_eu", "label": "Sovereign EU" },
+        { "id": "aws", "label": "AWS" },
+        { "id": "gcp_azure", "label": "GCP or Azure" },
+        { "id": "on_prem_airgapped", "label": "On-premise / air-gapped" },
+        { "id": "no_preference", "label": "No preference - recommend for me" }
+      ]
+    },
+    {
+      "id": "auth_needs",
+      "prompt": "What kind of user authentication do you need?",
+      "type": "single",
+      "required": true,
+      "allow_comment": false,
+      "show_if": null,
+      "options": [
+        { "id": "none", "label": "None - no login required" },
+        { "id": "email_password", "label": "Email + password" },
+        { "id": "social_sso", "label": "Social login / SSO (Google, Microsoft, etc.)" },
+        { "id": "org_multitenant", "label": "Organizations / multi-tenant with teams" },
+        { "id": "not_sure", "label": "Not sure" }
+      ]
+    },
+    {
+      "id": "user_roles",
+      "prompt": "Will there be different permission levels?",
+      "type": "single",
+      "required": false,
+      "allow_comment": false,
+      "show_if": { "answer": { "question": "auth_needs", "any_of": ["email_password", "social_sso", "org_multitenant", "not_sure"] } },
+      "options": [
+        { "id": "single_role", "label": "No - everyone has the same access" },
+        { "id": "admin_user", "label": "Yes - admins and regular users" },
+        { "id": "multiple_custom_roles", "label": "Yes - several custom roles" },
+        { "id": "not_sure", "label": "Not sure" }
+      ]
+    },
+    {
+      "id": "integrations",
+      "prompt": "Which integrations will it need? (select all that apply)",
+      "type": "multi",
+      "required": false,
+      "allow_comment": true,
+      "show_if": null,
+      "options": [
+        { "id": "payments_stripe", "label": "Payments (Stripe)" },
+        { "id": "email_smtp", "label": "Email / notifications" },
+        { "id": "third_party_apis", "label": "Third-party APIs" },
+        { "id": "existing_database", "label": "An existing database" },
+        { "id": "llm_ai", "label": "AI / LLM services" },
+        { "id": "file_storage", "label": "File / object storage" },
+        { "id": "none", "label": "None for now" }
+      ]
+    },
+    {
+      "id": "expected_scale",
+      "prompt": "What scale should the MVP target?",
+      "type": "single",
+      "required": true,
+      "allow_comment": false,
+      "show_if": null,
+      "options": [
+        { "id": "prototype_demo", "label": "Prototype / demo only" },
+        { "id": "small_under_100", "label": "Small (up to ~100 users)" },
+        { "id": "medium_100_10k", "label": "Medium (~100–10k users)" },
+        { "id": "large_ha", "label": "Large / high-availability" },
+        { "id": "not_sure", "label": "Not sure" }
+      ]
+    },
+    {
+      "id": "design_assets",
+      "prompt": "Do you have design or branding assets?",
+      "type": "single",
+      "required": false,
+      "allow_comment": false,
+      "show_if": null,
+      "options": [
+        { "id": "have_branding", "label": "Yes - I have branding / mockups to follow" },
+        { "id": "default_clean_theme", "label": "No - use a clean default theme" },
+        { "id": "need_design_help", "label": "No - I'd like design suggestions" },
+        { "id": "not_sure", "label": "Not sure" }
+      ]
+    },
+    {
+      "id": "timeline",
+      "prompt": "How urgent is delivery?",
+      "type": "single",
+      "required": true,
+      "allow_comment": true,
+      "show_if": null,
+      "options": [
+        { "id": "asap_quick_mvp", "label": "ASAP - quickest possible MVP" },
+        { "id": "few_weeks", "label": "Within a few weeks" },
+        { "id": "flexible", "label": "Flexible - quality over speed" }
+      ]
+    }
+  ]
+}
