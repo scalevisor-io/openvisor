@@ -4824,11 +4824,64 @@ def _exit_reason(project: Project) -> dict:
         return {}
 
 
+
+def _agent_report(project: Project) -> str | None:
+    """§investigation runs: the findings a run wrote to .openvisor/report.md when
+    the honest outcome was "nothing to change" (development_system.md step 8).
+    Same artifact channel and the same defensive pass as the PR description -
+    this text is posted straight into the customer's thread, so PEM material
+    drops it wholesale and platform secrets are redacted."""
+    from app.services import leakscan
+    try:
+        path = dev_concurrency.run_ws(project) / ".openvisor" / "report.md"
+        text = path.read_text(errors="replace").strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    text = text[:PR_BODY_MAX]
+    if leakscan.PRIVATE_KEY_RE.search(text):
+        return None
+    for val in leakscan.platform_secret_values():
+        if val:
+            text = text.replace(val, "***")
+    return text.strip() or None
+
+
+def _finish_investigation(db: Session, project: Project, logs: str, report: str) -> None:
+    """Close a run whose deliverable was an ANSWER, not a diff (§investigation
+    runs). "Check whether X drifted, open a change if it did" is a complete task
+    when nothing drifted, and the pipeline used to record exactly that as a
+    failed build - telling the customer to describe what they expected and hit
+    Resume, for a question the agent had already answered correctly.
+
+    The request closes `done` here rather than waiting on a merge: there is no
+    PR to merge, and the report IS the delivery."""
+    thread = _dev_thread(db, project)
+    _post_message(db, project.id, thread, "agent", report)
+    req = db.get(Request, project.dev_request_id) if project.dev_request_id else None
+    if req is not None and req.status not in ("done", "rejected"):
+        req.status = "done"
+    _safe_transition(db, project, "awaiting_customer",
+                     "Investigation finished - no change needed")
+    _save_run(project, "done", logs=logs)
+
+
 def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
     """Park a no-output run as failed+resumable with a nudge toward the steering
     channel - an empty change must never reach the customer's tracker. A session
     that ended at its iteration cap says SO: the generic "no changes" copy sent
     customers hunting phantom bugs when the agent simply ran out of steps."""
+    # An investigation that concluded "no change needed" is a COMPLETED task, not
+    # an empty build - the agent says which it was by writing (or not writing) a
+    # report. Only for scoped requests: an MVP build that produced nothing is a
+    # failure whatever it claims.
+    report = _agent_report(project)
+    if report and project.dev_request_id:
+        req = db.get(Request, project.dev_request_id)
+        if req is not None and req.type != "mvp":
+            _finish_investigation(db, project, logs, report)
+            return
     reason = _exit_reason(project)
     if reason.get("reason") == "max_iterations":
         # the marker carries the cap the session actually ran with
