@@ -32,6 +32,10 @@ celery.conf.update(
             "task": "app.workers.programs.program_schedule_sweep",
             "schedule": 60.0,  # every minute (§28): due schedules + stale-run reaper
         },
+        "routine-sweep": {
+            "task": "app.workers.tasks.routine_sweep",
+            "schedule": 60.0,  # every minute (§routines): fire due saved prompts
+        },
         "auto-dev-issue-sweep": {
             "task": "app.workers.tasks.auto_dev_issue_sweep",
             "schedule": 60.0,

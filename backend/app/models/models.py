@@ -414,6 +414,48 @@ class Message(Base):
     # Immutable: no update/delete endpoints exist, ever.
 
 
+class ProjectRoutine(Base):
+    """§routines: a saved prompt on a project that can run on a schedule.
+
+    A routine is a TEMPLATE, not a run: every firing creates an ordinary
+    `Request` seeded with `prompt` and dispatches it down the normal pipeline
+    (thread, dev run, PR/MR, billing) - the same thing the auto_dev sweep does
+    with a repo issue. One routine therefore owns many requests over time,
+    exactly as Program owns ProgramRun.
+
+    `schedule_cron` empty = a saved prompt fired by hand; set = also fired by
+    the sweep when `next_run_at` comes due. Unlike auto_dev there is no natural
+    dedup key (the same prompt every Monday IS the point), so `last_request_id`
+    is the guard: a firing is skipped while the previous one is still open,
+    which is what stops a weekly routine stacking builds on an unmerged PR."""
+    __tablename__ = "project_routine"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    prompt: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    schedule_cron: Mapped[str] = mapped_column(String(64), default="")
+    next_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
+    # The request the last firing created - the skip-while-open guard reads its
+    # status. SET NULL so deleting history never deletes the routine.
+    last_request_id: Mapped[str | None] = mapped_column(
+        ForeignKey("request.id", ondelete="SET NULL"), nullable=True)
+    # §repo binding: which connected repo the spawned request builds into.
+    # Null = resolve the push target at fire time, like any other request.
+    repo_id: Mapped[str | None] = mapped_column(
+        ForeignKey("project_repo.id", ondelete="SET NULL"), nullable=True)
+    # Why the last sweep tick did nothing (previous run still open, no credits,
+    # build slots busy) - shown to the customer so a quiet routine is never a
+    # mystery, cleared on a successful firing.
+    last_skip_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Request(Base):
     __tablename__ = "request"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)

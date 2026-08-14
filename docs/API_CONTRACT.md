@@ -166,6 +166,23 @@ Platform-GitLab projects keep the auto-merge-on-green-CI path (always squashed -
 
 AI-handled feature/edit/bug requests spawn a scoped dev job (§14) when the project is buildable (MVP shipped, credits > 0, not blocked, no run in flight): request → `in_progress`, the agent builds only that change and opens a PR titled after the request, and once the customer merges it the demo redeploys and the request → `done`. When the job can't start, the agent explains why and points at the Request-human-answer button. Failed request runs on an open project are resumable via `retry-build`; on a `finished` project the button is disabled (closed projects never resume - the customer submits a new request instead, or the admin reopens via `development`). `manual` requests notify the admin directly (quote path).
 
+## Routines (§routines)
+
+A routine is a SAVED PROMPT on a project, optionally scheduled. It is a template, not a run: every firing creates an ordinary `Request` seeded with the prompt and dispatches it down the normal pipeline, so one routine owns many requests over time (the Program → ProgramRun shape). Available on any project that builds (`ai` and `auto_dev`); `chat` projects have no build pipeline and no tab.
+
+- `GET /projects/{id}/routines` → `[Routine]` (oldest first).
+- `POST /projects/{id}/routines` `{title, prompt, enabled?, schedule_cron?, repo_id?}` → `Routine`. An empty `schedule_cron` means hand-fired only; a set one is validated by croniter against the `ROUTINE_MIN_SCHEDULE_MINUTES` floor (default 60 - a routine starts a real dev run, so the floor is higher than the program one) and 400s below it. `repo_id` must be a repo connected to this project (§repo binding); null resolves the push target at fire time.
+- `PUT /projects/{id}/routines/{routine_id}` - partial update, same validation. `next_run_at` is recomputed on every write: a scheduled AND enabled routine always has one, anything else has none (so pausing or clearing the cron stops it immediately).
+- `DELETE /projects/{id}/routines/{routine_id}` → `{ok}` - deletes the routine; the requests it already spawned are history and stay.
+- `POST /projects/{id}/routines/{routine_id}/run` → `Routine` - fire now. Ignores the schedule but NOT the guards (same `routines.fire` the sweep calls), so it 409s with the same copy the sweep would have recorded.
+
+`Routine = {id, project_id, title, prompt, enabled, schedule_cron, next_run_at, last_run_at, last_request_id, last_request_status, last_skip_reason, repo_id, created_at}`
+
+Firing guards (all 409 on "Run now", all recorded in `last_skip_reason` on a scheduled tick, which then moves `next_run_at` on): the routine is paused, the project is canceled/finished or has automatic development blocked, the org wallet is empty, a build already holds the project's slot, or - the one specific to routines - **the previous request is still open**. Unlike the auto_dev sweep, a routine has no dedup key (running the same prompt every Monday IS the feature), so that last guard is what stops a weekly routine stacking a second build on an unmerged PR.
+
+Instance switch: `routines_disabled` (admin settings) hides the tab via `GET /settings.routines_enabled` and makes every routine write 403. Existing routines are kept and simply stop firing, so re-enabling resumes them.
+
+
 ## Memory & files
 
 - `GET /meta/memory-placeholders` → `[{key, category, is_secret, description}]` - conventional keys the customer can pre-fill in Add-entry.
