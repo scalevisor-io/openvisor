@@ -106,15 +106,17 @@ def test_steering_transcript_reads_request_thread_for_scoped_runs(steering_proje
     p.dev_request_id = req.id
     db.flush()
     since = t0 + timedelta(minutes=10)
-    # a reply left in the request's own thread reaches the resumed run,
-    # merged chronologically with main-thread notes; other threads stay out
+    # §steering scope: a scoped run listens to its OWN thread only. Main-thread
+    # notes stay out - main belongs to the project (chat proposals, talk about
+    # OTHER work), and folding it in is how two pricing runs each shipped a
+    # LinkedIn footer: the main-chat ask was classified into its own request
+    # AND arrived in both unrelated dispatches as "newer guidance".
     msg("customer", "the CSV export should use semicolons", 15,
         thread=f"request:{req.id}")
-    msg("customer", "and please keep the header row", 16)
+    msg("customer", "a main-thread ask about something else entirely", 16)
     msg("customer", "unrelated thread noise", 17, thread="request:other")
     assert tasks._steering_note(db, p, since) == (
-        "[customer] the CSV export should use semicolons\n\n"
-        "[customer] and please keep the header row")
+        "[customer] the CSV export should use semicolons")
 
 
 def test_steering_transcript_fallback_without_dispatch_clock(steering_project):
