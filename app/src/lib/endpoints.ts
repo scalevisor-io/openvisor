@@ -44,6 +44,7 @@ import type {
   ProjectSpend,
   ProjectStatus,
   ProjectSummary,
+  Routine,
   PublicSettings,
   QuestionsDoc,
   Quote,
@@ -135,6 +136,24 @@ export const mcpApi = {
 export const usageApi = {
   series: (projectId: string, days = 30) =>
     api.get<ProjectUsage>(`/projects/${projectId}/usage?days=${days}`),
+};
+
+export const routinesApi = {
+  // §routines: saved prompts on a project. Each firing creates an ordinary
+  // request, so the run itself shows up in the Requests tab like any other.
+  list: (projectId: string) => api.get<Routine[]>(`/projects/${projectId}/routines`),
+  create: (projectId: string, body: {
+    title: string; prompt: string; enabled?: boolean;
+    schedule_cron?: string; repo_id?: string | null;
+  }) => api.post<Routine>(`/projects/${projectId}/routines`, body),
+  update: (projectId: string, id: string, body: {
+    title?: string; prompt?: string; enabled?: boolean;
+    schedule_cron?: string; repo_id?: string | null;
+  }) => api.put<Routine>(`/projects/${projectId}/routines/${id}`, body),
+  remove: (projectId: string, id: string) =>
+    api.del<{ ok: boolean }>(`/projects/${projectId}/routines/${id}`),
+  run: (projectId: string, id: string) =>
+    api.post<Routine>(`/projects/${projectId}/routines/${id}/run`),
 };
 
 export const projectsApi = {

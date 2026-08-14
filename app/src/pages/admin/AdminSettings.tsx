@@ -111,6 +111,24 @@ export default function AdminSettings() {
 
         <div className="between" style={{ alignItems: "flex-start" }}>
           <div style={{ paddingRight: "1rem" }}>
+            <strong>Disable routines</strong>
+            <div className="muted small">
+              Hides the Routines tab and refuses every routine write, on every project. Saved
+              routines are kept but stop firing, so switching this back on resumes them where they
+              were.
+            </div>
+          </div>
+          <Toggle
+            checked={settings.routines_disabled}
+            disabled={busy !== null}
+            onChange={(v) => update({ routines_disabled: v }, "routines")}
+          />
+        </div>
+
+        <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "1rem 0" }} />
+
+        <div className="between" style={{ alignItems: "flex-start" }}>
+          <div style={{ paddingRight: "1rem" }}>
             <strong>Pause chat deposits</strong>
             <div className="muted small">
               Stops new "Just chat with me" projects. Chat is opt-in and starts paused: enabling it

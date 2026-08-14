@@ -17,6 +17,7 @@ import RequestsTab from "../components/RequestsTab";
 import AdminProjectControls from "../components/AdminProjectControls";
 import BuildConsole, { CheckMark, RunConsole } from "../components/BuildConsole";
 import KindChip from "../components/KindChip";
+import RoutinesTab from "../components/RoutinesTab";
 import ShareModal from "../components/ShareModal";
 import type {
   DevRunState,
@@ -29,9 +30,9 @@ import type {
   StatusChange,
 } from "../types";
 
-type Tab = "overview" | "quotes" | "requests" | "memory" | "usage" | "mcp";
+type Tab = "overview" | "quotes" | "requests" | "routines" | "memory" | "usage" | "mcp";
 
-const TABS: Tab[] = ["overview", "requests", "quotes", "memory", "mcp", "usage"];
+const TABS: Tab[] = ["overview", "requests", "quotes", "routines", "memory", "mcp", "usage"];
 
 // Display labels where the default capitalized id isn't enough; the `memory`
 // route id stays stable so existing links keep working.
@@ -145,9 +146,12 @@ export default function ProjectDetail() {
     project?.kind === "chat"
       ? ["overview", "memory", "usage"]
       : project?.kind === "ai" && counts != null && counts.quotes === 0
-        ? ["overview", "requests", "memory", "mcp", "usage"]
+        ? ["overview", "requests", "routines", "memory", "mcp", "usage"]
         : TABS;
-  const tab: Tab = isTab(tabParam) && tabs.includes(tabParam) ? tabParam : "overview";
+  const visibleTabs = settings?.routines_enabled === false
+    ? tabs.filter((t) => t !== "routines")
+    : tabs;
+  const tab: Tab = isTab(tabParam) && visibleTabs.includes(tabParam) ? tabParam : "overview";
   const setTab = (t: Tab) =>
     navigate(t === "overview" ? `/projects/${id}` : `/projects/${id}/${t}`);
   // Returning to the overview after a tab where the socket wasn't mounted
@@ -535,7 +539,7 @@ export default function ProjectDetail() {
       />
 
       <div className="tabs">
-        {tabs.map((t) => (
+        {visibleTabs.map((t) => (
           <div key={t} className={`tab${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
             {TAB_LABELS[t] ?? t[0].toUpperCase() + t.slice(1)}
             {t === "requests" && counts != null && counts.requests > 0 && (
@@ -816,6 +820,8 @@ export default function ProjectDetail() {
           }}
         />
       )}
+
+      {tab === "routines" && <RoutinesTab projectId={id} readOnly={readOnly} />}
 
       {tab === "memory" && <MemoryTab projectId={id} readOnly={readOnly} isOwner={isOwner} />}
 

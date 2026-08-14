@@ -470,6 +470,27 @@ export interface PublicSettings {
   consultant_first_name: string;
   credit_currency: string;
   specialities: { id: string; label: string; description: string }[];
+  // §routines: false hides the Routines tab. Advisory only - every routine
+  // write re-checks the flag server-side.
+  routines_enabled: boolean;
+}
+
+// §routines: a saved prompt on a project. An empty schedule_cron = fired by
+// hand; last_request_status is what the skip-while-open guard reads.
+export interface Routine {
+  id: string;
+  project_id: string;
+  title: string;
+  prompt: string;
+  enabled: boolean;
+  schedule_cron: string;
+  next_run_at: string | null;
+  last_run_at: string | null;
+  last_request_id: string | null;
+  last_request_status: string | null;
+  last_skip_reason: string | null;
+  repo_id: string | null;
+  created_at: string;
 }
 
 // admin-editable global settings (GET/PUT /api/admin/settings)
@@ -478,6 +499,8 @@ export interface AdminSettings {
   pause_direct_deposits: boolean;
   pause_auto_dev_deposits: boolean;
   pause_chat_deposits: boolean;
+  // §routines: instance kill switch (the feature is on unless this is true).
+  routines_disabled: boolean;
   // §egress: dev-sandbox egress lockdown (enforced on Kubernetes deployments).
   egress_lockdown_enabled: boolean;
   egress_allowlist: string[];
