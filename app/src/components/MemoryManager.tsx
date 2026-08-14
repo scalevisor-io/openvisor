@@ -34,6 +34,10 @@ export default function MemoryManager({
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [isSecret, setIsSecret] = useState(false);
+  // A stored secret is masked until asked for. Revealing swaps the masked
+  // single-line box for the real editor, so the mask never depends on a CSS
+  // property some browsers ignore.
+  const [revealValue, setRevealValue] = useState(false);
   const [description, setDescription] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,6 +76,7 @@ export default function MemoryManager({
     setIsSecret(false);
     setDescription("");
     setPhQuery("");
+    setRevealValue(false);
     setModalOpen(true);
   }
 
@@ -81,6 +86,7 @@ export default function MemoryManager({
     setValue(e.value);
     setIsSecret(e.is_secret);
     setDescription(e.description);
+    setRevealValue(false);
     setModalOpen(true);
   }
 
@@ -94,6 +100,7 @@ export default function MemoryManager({
     setValue("");
     setIsSecret(p.is_secret);
     setDescription(p.description);
+    setRevealValue(false);
   }
 
   function toggleExpanded(id: string) {
@@ -295,25 +302,46 @@ export default function MemoryManager({
               </div>
             )}
 
-            <div className="grid-2">
-              <div className="field">
-                <label>Key</label>
-                <input
-                  type="text"
-                  value={key}
-                  disabled={!!editing}
-                  placeholder="e.g. SCW_ACCESS_KEY"
-                  onChange={(e) => setKey(e.target.value)}
-                />
-              </div>
-              <div className="field">
+            <div className="field">
+              <label>Key</label>
+              <input
+                type="text"
+                value={key}
+                disabled={!!editing}
+                placeholder="e.g. SCW_ACCESS_KEY"
+                onChange={(e) => setKey(e.target.value)}
+              />
+            </div>
+            {/* Value spans the full width: a PEM key or a JSON credential is
+                unreadable in a half-width cell. */}
+            <div className="field">
                 <label>Value</label>
-                <input
-                  type={isSecret ? "password" : "text"}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                />
-              </div>
+                {isSecret && !revealValue ? (
+                  // Masked, and deliberately not a masked <textarea>: there is no
+                  // cross-browser way to mask one, so the value is shown as dots
+                  // here and the real editor appears only once revealed.
+                  <div className="row gap-sm">
+                    <input type="password" value={value} readOnly style={{ flex: 1 }} />
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => setRevealValue(true)}
+                    >
+                      {value ? "Show / edit" : "Enter"}
+                    </button>
+                  </div>
+                ) : (
+                  <textarea
+                    value={value}
+                    spellCheck={false}
+                    style={{ minHeight: 90, fontFamily: "var(--font-mono, monospace)" }}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                )}
+                <div className="hint">
+                  Multi-line values are kept exactly as pasted - a PEM key or a JSON
+                  credential reaches the agent byte for byte.
+                </div>
             </div>
             <div className="field">
               <label>Description (optional) - helps the AI understand what this value is for</label>
