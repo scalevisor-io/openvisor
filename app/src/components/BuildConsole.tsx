@@ -117,6 +117,7 @@ export default function BuildConsole({
   resumeBlocker,
   retryBusy,
   onRetry,
+  onStartFresh,
   onStale,
   consultant,
   forRequest = null,
@@ -128,6 +129,7 @@ export default function BuildConsole({
   resumeBlocker: string | null;
   retryBusy: boolean;
   onRetry: () => void;
+  onStartFresh?: () => void;
   onStale: () => void;
   consultant: string;
   // §threads: the request this build belongs to - names the console and links
@@ -440,9 +442,28 @@ export default function BuildConsole({
             className="btn btn-sm"
             onClick={onRetry}
             disabled={retryBusy || !canResume}
-            title={resumeBlocker ?? undefined}
+            title={resumeBlocker ?? "Continues the failed build: same branch, same files, your notes folded in"}
           >
             {retryBusy ? <Spinner /> : "Resume development"}
+          </button>
+        )}
+        {!readOnly && onStartFresh && canResume && (
+          <button
+            className="btn btn-sm"
+            onClick={() => {
+              // Abandoning a chain is not undoable - the discarded runs never
+              // resume - so it earns a confirm where plain Resume does not.
+              if (
+                window.confirm(
+                  "Start over from scratch? The failed build's work in progress is set aside and a new build starts clean on a new branch.",
+                )
+              )
+                onStartFresh();
+            }}
+            disabled={retryBusy}
+            title="Discards the failed build's work in progress and starts a clean build"
+          >
+            Start fresh
           </button>
         )}
         <button

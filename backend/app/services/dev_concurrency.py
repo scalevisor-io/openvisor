@@ -195,7 +195,7 @@ def default_request(db: Session, project: Project) -> Request | None:
 
 
 def acquire_slot(db: Session, project: Project, request: Request | None = None,
-                 predecessor: DevRun | None = None) -> DevRun:
+                 predecessor: DevRun | None = None, fresh: bool = False) -> DevRun:
     """Take a run slot under SELECT..FOR UPDATE on the project row and create
     the DevRun ledger row (state 'queued'; run_development flips it to
     'running'). Raises SlotRefused with customer-facing copy. The caller owns
@@ -222,6 +222,12 @@ def acquire_slot(db: Session, project: Project, request: Request | None = None,
     # the limit mid-run can never mix modes on one working tree. Exemption and
     # rationale in _mode_conflicts.
     parallel_mode = limit > 1 and predecessor is None
+    if fresh:
+        # §run chains Start fresh: the abandoned chain's tree must not leak into
+        # this run, so a fresh retry ALWAYS gets its own isolated dir - at limit
+        # 1 too, where chaining would otherwise reuse the canonical checkout
+        # with the discarded (possibly uncommitted) work still in it.
+        parallel_mode = True
     if predecessor is not None:
         parallel_mode = bool(predecessor.workspace_dir)
         if (limit > 1 and not predecessor.workspace_dir
@@ -268,17 +274,32 @@ def acquire_slot(db: Session, project: Project, request: Request | None = None,
     return run
 
 
-def acquire_for_project(project_id: str, request_id: str | None = None) -> str:
+def acquire_for_project(project_id: str, request_id: str | None = None,
+                        fresh: bool = False) -> str:
     """Standalone sync twin for async API callers (run_in_threadpool): opens its
     own session, commits the row, returns its id. Raises SlotRefused. A resume
-    chains onto the request's latest failed run (same workspace dir + branch)."""
+    chains onto the request's latest failed run (same workspace dir + branch);
+    `fresh` (§run chains Start fresh) instead SUPERSEDES every failed run of the
+    request and starts an unchained run - new workspace, no inherited branch -
+    for when a chain went down a bad path and resuming would keep building on
+    it. The entrypoint continues origin/<branch> and even local unpushed
+    commits, so without the supersede+rename a "fresh" run would silently
+    resurrect the discarded work."""
     with SyncSession() as db:
         project = db.get(Project, project_id)
         if project is None:
             raise SlotRefused("Unknown project")
         request = db.get(Request, request_id) if request_id else None
-        run = acquire_slot(db, project, request,
-                           predecessor=latest_failed_run(db, project, request))
+        if fresh:
+            resolved = request or default_request(db, project)
+            if resolved is not None:
+                (db.query(DevRun)
+                 .filter(DevRun.request_id == resolved.id, DevRun.state == "failed")
+                 .update({DevRun.state: "superseded"}, synchronize_session=False))
+            run = acquire_slot(db, project, resolved, predecessor=None, fresh=True)
+        else:
+            run = acquire_slot(db, project, request,
+                               predecessor=latest_failed_run(db, project, request))
         db.commit()
         return run.id
 

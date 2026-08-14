@@ -22,7 +22,7 @@ from app.models import (
 )
 from app.schemas.schemas import (
     AnswersIn, ProjectCreateIn, ProjectUpdateIn, RepoConnectIn, RepoUpdateIn,
-    RoutineIn, RoutineUpdateIn, ShareIn,
+    RetryBuildIn, RoutineIn, RoutineUpdateIn, ShareIn,
 )
 from app.services import (
     app_settings, dev_concurrency, devfeed, model_prices, naming, project_actions,
@@ -533,16 +533,20 @@ async def require_review(project: Project = Depends(get_project_for_user),
 
 
 @router.post("/{project_id}/retry-build")
-async def retry_build(project: Project = Depends(get_project_for_user),
+async def retry_build(body: RetryBuildIn | None = None,
+                      project: Project = Depends(get_project_for_user),
                       user: User = Depends(get_current_user),
                       db: AsyncSession = Depends(get_db)):
     """Resume development after a build stalled, timed out, or failed (§14.5).
     Gated by the same dev_resume_capability the UI renders, so the button and
     the endpoint can't drift: there must be an actual failed run, no run in
     flight, a repository to build into, and the project must not be closed
-    (finished/canceled - a finished project takes new work via requests)."""
+    (finished/canceled - a finished project takes new work via requests).
+    `fresh` (§run chains Start fresh) discards the failed chain instead of
+    resuming it: new workspace, new branch, the abandoned runs superseded."""
     try:
-        await project_actions.retry_build(db, project, is_admin=user.role == "admin")
+        await project_actions.retry_build(db, project, is_admin=user.role == "admin",
+                                          fresh=bool(body and body.fresh))
     except project_actions.ActionError as exc:
         raise HTTPException(exc.status, exc.detail)
     await db.refresh(project, ["repos"])
