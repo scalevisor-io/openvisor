@@ -277,6 +277,34 @@ def test_routine_crud_round_trip(client, customer):
     assert client.get(f"/api/projects/{pid}/routines", headers=headers).json() == []
 
 
+def test_renaming_and_rewording_a_routine(client, customer):
+    """What the Edit form on the card sends: a routine's name and prompt are the
+    two things a customer revises as the work settles, and both must survive the
+    round trip without disturbing the schedule."""
+    headers, pid = customer
+    r = client.post(f"/api/projects/{pid}/routines", headers=headers, json={
+        "title": "Weekly audit", "prompt": "Audit the dependencies.",
+        "schedule_cron": "0 7 * * 1"})
+    rid = r.json()["id"]
+
+    r = client.put(f"/api/projects/{pid}/routines/{rid}", headers=headers, json={
+        "title": "Monthly dependency sweep",
+        "prompt": "Upgrade only patch releases and open one PR per package."})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title"] == "Monthly dependency sweep"
+    assert body["prompt"] == "Upgrade only patch releases and open one PR per package."
+    assert body["schedule_cron"] == "0 7 * * 1"  # untouched by a name/prompt edit
+
+    # and it is persisted, not just echoed
+    listed = client.get(f"/api/projects/{pid}/routines", headers=headers).json()[0]
+    assert listed["title"] == "Monthly dependency sweep"
+
+    # an empty name is refused rather than silently blanking the card
+    assert client.put(f"/api/projects/{pid}/routines/{rid}", headers=headers,
+                      json={"title": ""}).status_code == 422
+
+
 def test_the_api_rejects_a_cadence_under_the_floor(client, customer):
     headers, pid = customer
     r = client.post(f"/api/projects/{pid}/routines", headers=headers, json={
