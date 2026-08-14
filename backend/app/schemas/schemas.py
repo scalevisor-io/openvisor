@@ -222,12 +222,34 @@ class ApiTokenIn(BaseModel):
 
 
 # ---- admin ----
+class RoutineIn(BaseModel):
+    """§routines: a saved prompt. `schedule_cron` empty = fired by hand only."""
+    title: str = Field(min_length=1, max_length=255)
+    prompt: str = Field(min_length=1, max_length=8000)
+    enabled: bool = True
+    schedule_cron: str = Field(default="", max_length=64)
+    repo_id: str | None = Field(default=None, max_length=36)
+
+
+class RoutineUpdateIn(BaseModel):
+    """Partial update; omit a field to leave it unchanged. An empty
+    schedule_cron clears the schedule back to hand-fired."""
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    prompt: str | None = Field(default=None, min_length=1, max_length=8000)
+    enabled: bool | None = None
+    schedule_cron: str | None = Field(default=None, max_length=64)
+    repo_id: str | None = Field(default=None, max_length=36)
+
+
 class AppSettingsIn(BaseModel):
     # partial update: omit a field to leave that flag unchanged
     pause_ai_deposits: bool | None = None
     pause_direct_deposits: bool | None = None
     pause_auto_dev_deposits: bool | None = None
     pause_chat_deposits: bool | None = None
+    # §routines: instance kill switch for scheduled saved prompts (the
+    # feature is on by default; this is what a future paid tier gates).
+    routines_disabled: bool | None = None
     # §chat images: the instance-default model has no ModelEndpoint row to carry a
     # probe verdict, so the admin declares it here (saved endpoints are declared or
     # probed on the Model configuration page instead).

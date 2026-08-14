@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.services import app_settings, speciality as speciality_svc
+from app.services import app_settings, routines as routines_svc, speciality as speciality_svc
 from app.services.pricing import load_static
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -60,4 +60,8 @@ async def public_settings(db: AsyncSession = Depends(get_db)):
             "auto_dev_enabled": not app_settings.is_kind_paused(flags, "auto_dev"),
             "chat_enabled": not app_settings.is_kind_paused(flags, "chat"),
         },
+        # §routines: advisory for the SPA (it hides the tab when off); every
+        # routine write re-checks the flag server-side.
+        "routines_enabled": not await app_settings.get_flag(
+            db, routines_svc.ROUTINES_DISABLED),
     }

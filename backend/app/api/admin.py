@@ -20,8 +20,8 @@ from app.schemas.schemas import (
     QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, dev_concurrency, egress, speciality as speciality_svc,
-    stripe_svc, vision,
+    app_settings, brand, dev_concurrency, egress, routines as routines_svc,
+    speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
 from app.services.lifecycle import TransitionError, transition_async
@@ -98,6 +98,8 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     out = await app_settings.get_deposit_pause(db)
     out["default_model_supports_images"] = await app_settings.get_flag(
         db, vision.DEFAULT_MODEL_IMAGES_KEY)
+    out["routines_disabled"] = await app_settings.get_flag(
+        db, routines_svc.ROUTINES_DISABLED)
     out["default_model"] = settings.openai_model
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
@@ -113,6 +115,11 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
     if body.default_model_supports_images is not None:
         await app_settings.set_flag(db, vision.DEFAULT_MODEL_IMAGES_KEY,
                                     body.default_model_supports_images)
+    if body.routines_disabled is not None:
+        # §routines instance kill switch: read on every sweep tick and every
+        # customer write, so flipping it takes effect without a deploy.
+        await app_settings.set_flag(db, routines_svc.ROUTINES_DISABLED,
+                                    body.routines_disabled)
     if body.egress_allowlist is not None:
         try:
             cleaned = egress.normalize_list(body.egress_allowlist)
@@ -138,6 +145,8 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
     out = await app_settings.get_deposit_pause(db)
     out["default_model_supports_images"] = await app_settings.get_flag(
         db, vision.DEFAULT_MODEL_IMAGES_KEY)
+    out["routines_disabled"] = await app_settings.get_flag(
+        db, routines_svc.ROUTINES_DISABLED)
     out["default_model"] = settings.openai_model
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)

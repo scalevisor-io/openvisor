@@ -16,14 +16,17 @@ from app.core.encryption import decrypt, encrypt
 from app.models import (
     DevRun,
     IssueWatchEvent, OnboardingAnswer, Organization, OrgMemory, Project,
-    ProjectMemory, ProjectRepo, ProjectShare, StatusChange, User,
+    ProjectMemory, ProjectRepo, ProjectRoutine, ProjectShare,
+    Request as RequestRow, StatusChange, User,
+    utcnow,
 )
 from app.schemas.schemas import (
-    AnswersIn, ProjectCreateIn, ProjectUpdateIn, RepoConnectIn, RepoUpdateIn, ShareIn,
+    AnswersIn, ProjectCreateIn, ProjectUpdateIn, RepoConnectIn, RepoUpdateIn,
+    RoutineIn, RoutineUpdateIn, ShareIn,
 )
 from app.services import (
     app_settings, dev_concurrency, devfeed, model_prices, naming, project_actions,
-    project_search, repos as repolib, sshkeys, vision,
+    project_search, repos as repolib, routines as routines_svc, sshkeys, vision,
 )
 from app.services.pricing import load_static
 from app.workers.celery_app import celery
@@ -748,3 +751,126 @@ async def remove_share(share_id: str,
     await db.delete(share)
     await db.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- §routines
+
+async def _routines_enabled_or_409(db: AsyncSession) -> None:
+    """The instance kill switch, enforced server-side on every write. The SPA
+    also hides the tab from `GET /meta/config`, but that is advisory - this is
+    the gate, and it is what a future paid tier flips."""
+    if await app_settings.get_flag(db, routines_svc.ROUTINES_DISABLED):
+        raise HTTPException(403, "Routines are disabled on this instance")
+
+
+async def _get_routine(db: AsyncSession, project: Project, routine_id: str) -> ProjectRoutine:
+    routine = await db.get(ProjectRoutine, routine_id)
+    if routine is None or routine.project_id != project.id:
+        raise HTTPException(404, "Unknown routine")
+    return routine
+
+
+async def _routine_out(db: AsyncSession, routine: ProjectRoutine) -> dict:
+    """Serialize with the last spawned request's status, which is what the
+    skip-while-open guard keys on - the customer sees the same fact the sweep
+    decides on."""
+    status = None
+    if routine.last_request_id:
+        last = await db.get(RequestRow, routine.last_request_id)
+        status = last.status if last is not None else None
+    return routines_svc.out(routine, status)
+
+
+def _validated_cron_or_400(cron: str) -> str:
+    cron = (cron or "").strip()
+    if cron:
+        error = routines_svc.validate_cron(cron)
+        if error:
+            raise HTTPException(400, error)
+    return cron
+
+
+async def _validated_repo_or_400(db: AsyncSession, project: Project,
+                                 repo_id: str | None) -> str | None:
+    if not repo_id:
+        return None
+    repo = await db.get(ProjectRepo, repo_id)
+    if repo is None or repo.project_id != project.id:
+        raise HTTPException(400, "Unknown repository for this project")
+    return repo.id
+
+
+@router.get("/{project_id}/routines")
+async def list_routines(project: Project = Depends(get_project_for_user),
+                        db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(
+        select(ProjectRoutine).where(ProjectRoutine.project_id == project.id)
+        .order_by(ProjectRoutine.created_at))).scalars().all()
+    return [await _routine_out(db, r) for r in rows]
+
+
+@router.post("/{project_id}/routines")
+async def create_routine(body: RoutineIn, project: Project = Depends(get_project_for_user),
+                         db: AsyncSession = Depends(get_db)):
+    await _routines_enabled_or_409(db)
+    cron = _validated_cron_or_400(body.schedule_cron)
+    routine = ProjectRoutine(
+        project_id=project.id, title=body.title.strip(), prompt=body.prompt.strip(),
+        enabled=body.enabled, schedule_cron=cron,
+        repo_id=await _validated_repo_or_400(db, project, body.repo_id),
+        next_run_at=routines_svc.next_run(cron) if (cron and body.enabled) else None)
+    db.add(routine)
+    await db.commit()
+    return await _routine_out(db, routine)
+
+
+@router.put("/{project_id}/routines/{routine_id}")
+async def update_routine(routine_id: str, body: RoutineUpdateIn,
+                         project: Project = Depends(get_project_for_user),
+                         db: AsyncSession = Depends(get_db)):
+    await _routines_enabled_or_409(db)
+    routine = await _get_routine(db, project, routine_id)
+    if body.title is not None:
+        routine.title = body.title.strip()
+    if body.prompt is not None:
+        routine.prompt = body.prompt.strip()
+    if body.schedule_cron is not None:
+        routine.schedule_cron = _validated_cron_or_400(body.schedule_cron)
+    if body.repo_id is not None:
+        routine.repo_id = await _validated_repo_or_400(db, project, body.repo_id or None)
+    if body.enabled is not None:
+        routine.enabled = body.enabled
+    # One rule for the next occurrence however the row was edited: a scheduled,
+    # enabled routine always has a fresh one; anything else has none.
+    routine.next_run_at = (routines_svc.next_run(routine.schedule_cron)
+                           if routine.schedule_cron and routine.enabled else None)
+    routine.updated_at = utcnow()
+    await db.commit()
+    return await _routine_out(db, routine)
+
+
+@router.delete("/{project_id}/routines/{routine_id}")
+async def delete_routine(routine_id: str, project: Project = Depends(get_project_for_user),
+                         db: AsyncSession = Depends(get_db)):
+    routine = await _get_routine(db, project, routine_id)
+    await db.delete(routine)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{project_id}/routines/{routine_id}/run")
+async def run_routine(routine_id: str, project: Project = Depends(get_project_for_user),
+                      db: AsyncSession = Depends(get_db)):
+    """Fire now, ignoring the schedule but NOT the guards - the same
+    `routines.fire` the sweep calls, so "Run now" can never do something the
+    scheduled path would have refused."""
+    await _routines_enabled_or_409(db)
+    routine = await _get_routine(db, project, routine_id)
+    try:
+        request_id = await run_in_threadpool(routines_svc.fire_now, routine.id)
+    except routines_svc.RoutineError as exc:
+        raise HTTPException(409, str(exc))
+    await db.refresh(routine)
+    celery.send_task("app.workers.tasks.handle_request",
+                     args=[project.id, request_id, ""])
+    return await _routine_out(db, routine)

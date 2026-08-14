@@ -20,10 +20,10 @@ from app.core.encryption import decrypt
 from app.models import (
     ChatImage, DeploymentEvent, DevRun, IssueWatchEvent, KnowledgeBase, Message, Organization,
     OrgMemory, Project, ProjectFile, ProjectMemory, ProjectRepo, ProjectToolConfig,
-    Request, Tool, User, utcnow,
+    ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, rag, repos as repolib, sbom, sovereign, speciality, vision, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -1452,6 +1452,54 @@ def _sweep_auto_dev_project(db: Session, project: Project) -> None:
                      issue={"url": pending.source_issue_url, "title": pending.title},
                      request_id=pending.id)
         db.commit()
+
+
+@celery.task(name="app.workers.tasks.routine_sweep")
+def routine_sweep() -> None:
+    """Beat (§routines): fire every scheduled saved prompt whose cron came due.
+
+    A firing is just a Request - the same object a customer types - so the whole
+    pipeline downstream is unchanged. What this task owns is deciding WHETHER to
+    fire: `_blocked_reason` refuses while the previous request is still open (a
+    routine has no dedup key, so nothing else stops a weekly prompt stacking
+    builds on an unmerged PR), when the wallet is empty, or when a build already
+    holds the project's slot. A refusal is recorded on the row and the schedule
+    moves on, so a blocked routine neither spins nor goes silent.
+
+    Instant no-op when the instance has routines switched off, or when no routine
+    is due."""
+    with SyncSession() as db:
+        if not routines_svc.enabled_sync(db):
+            return
+        now = utcnow()
+        due = (db.query(ProjectRoutine)
+               .filter(ProjectRoutine.enabled.is_(True),
+                       ProjectRoutine.schedule_cron != "",
+                       ProjectRoutine.next_run_at.isnot(None),
+                       ProjectRoutine.next_run_at <= now)
+               .order_by(ProjectRoutine.next_run_at).all())
+        for routine in due:
+            try:
+                _fire_routine(db, routine)
+            except Exception as exc:  # noqa: BLE001 - one routine never kills the sweep
+                log.warning("routine sweep failed for %s: %s", routine.id, exc)
+                db.rollback()
+
+
+def _fire_routine(db: Session, routine: ProjectRoutine) -> None:
+    """One due routine: fire it, or record why not. Committed per routine so a
+    later failure cannot roll back an already-dispatched sibling."""
+    try:
+        req = routines_svc.fire(db, routine)
+    except routines_svc.RoutineError as exc:
+        routines_svc.record_skip(routine, str(exc))
+        db.commit()
+        log.info("routine %s skipped: %s", routine.id, exc)
+        return
+    _post_message(db, routine.project_id, f"request:{req.id}", "customer",
+                  routine.prompt)
+    db.commit()
+    handle_request.apply_async(args=[routine.project_id, req.id, ""])
 
 
 @celery.task(name="app.workers.tasks.auto_dev_issue_sweep")

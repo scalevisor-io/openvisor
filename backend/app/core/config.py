@@ -269,6 +269,12 @@ class Settings(BaseSettings):
     program_run_retention: int = 20
     program_min_schedule_minutes: int = 15
 
+    # §routines: minimum gap between two firings of one saved prompt. Higher than
+    # the program floor on purpose - a routine starts a real dev run (agent time,
+    # tokens, a PR), so a mistyped `* * * * *` is expensive rather than merely
+    # noisy. The skip-while-open guard bounds concurrency; this bounds frequency.
+    routine_min_schedule_minutes: int = 60
+
     # Internal
     deployer_url: str = "http://deployer:8500"
     browser_mcp_url: str = "http://browser-mcp:3000/mcp"
