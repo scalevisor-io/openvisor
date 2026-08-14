@@ -2185,6 +2185,11 @@ def _prepare_runner_inputs(db: Session, project: Project,
     (openvisor_dir / "usage.json").unlink(missing_ok=True)
     # Stale agent-authored PR description must never describe a NEWER run.
     (openvisor_dir / "pr.md").unlink(missing_ok=True)
+    # ...and neither may a previous session's findings or outcome declaration
+    # (§run outcome): a stale "no_change_needed" would close a run that never
+    # even started its own investigation.
+    (openvisor_dir / "report.md").unlink(missing_ok=True)
+    (openvisor_dir / "outcome.json").unlink(missing_ok=True)
     if project.ssh_private_key_enc:
         key_path = openvisor_dir / "deploy_key"
         key_path.write_text(decrypt(project.ssh_private_key_enc))
@@ -4848,6 +4853,27 @@ def _exit_reason(project: Project) -> dict:
 
 
 
+def _agent_outcome(project: Project) -> dict | None:
+    """§run outcome: the agent's own end-of-session declaration from
+    .openvisor/outcome.json (development_system.md step 9) -
+    {"outcome": "changed"|"no_change_needed"|"blocked", "summary": str}.
+    None when missing or malformed: the verdict then rests on artifacts alone
+    (report.md, the diff), exactly as before the contract existed - the matrix
+    degrades, never breaks, on a non-compliant agent."""
+    import json as _json
+    try:
+        path = dev_concurrency.run_ws(project) / ".openvisor" / "outcome.json"
+        data = _json.loads(path.read_text(errors="replace"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    outcome = str(data.get("outcome") or "").strip()
+    if outcome not in ("changed", "no_change_needed", "blocked"):
+        return None
+    return {"outcome": outcome, "summary": str(data.get("summary") or "")[:512]}
+
+
 def _agent_report(project: Project) -> str | None:
     """§investigation runs: the findings a run wrote to .openvisor/report.md when
     the honest outcome was "nothing to change" (development_system.md step 8).
@@ -4895,16 +4921,51 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
     channel - an empty change must never reach the customer's tracker. A session
     that ended at its iteration cap says SO: the generic "no changes" copy sent
     customers hunting phantom bugs when the agent simply ran out of steps."""
-    # An investigation that concluded "no change needed" is a COMPLETED task, not
-    # an empty build - the agent says which it was by writing (or not writing) a
-    # report. Only for scoped requests: an MVP build that produced nothing is a
-    # failure whatever it claims.
+    # §run outcome: the pipeline's evidence here is "no publishable diff"; what
+    # that MEANS depends on the outcome the agent declared. An investigation
+    # that concluded "no change needed" is a COMPLETED task; a claimed change
+    # with nothing on the branch is a precise, explainable failure; a declared
+    # blocker is reported as the blocker it is. Only scoped requests can close
+    # as investigations - an MVP build that produced nothing is a failure
+    # whatever it claims.
+    declared = _agent_outcome(project)
     report = _agent_report(project)
-    if report and project.dev_request_id:
+    scoped = False
+    if project.dev_request_id:
         req = db.get(Request, project.dev_request_id)
-        if req is not None and req.type != "mvp":
-            _finish_investigation(db, project, logs, report)
+        scoped = req is not None and req.type != "mvp"
+    if scoped and (report or (declared and declared["outcome"] == "no_change_needed")):
+        if not (declared and declared["outcome"] in ("changed", "blocked")):
+            _finish_investigation(db, project, logs,
+                                  report or declared["summary"]
+                                  or "The task needed no change.")
             return
+    if declared and declared["outcome"] == "changed":
+        # The agent believes it delivered, but nothing reached the branch -
+        # usually uncommitted or deliberately untracked files (a prod run
+        # declared a gitignored runbook "delivered"). Name the discrepancy so
+        # the customer steers the next run instead of hunting phantom bugs.
+        _post_message(db, project.id, _dev_thread(db, project), "agent",
+                      "I reported the work as done, but nothing publishable reached "
+                      "the branch - most likely I left the files uncommitted or "
+                      "untracked. My summary of what I did: "
+                      f"{declared['summary'] or '(none given)'} - "
+                      "Resume with a note telling me to commit the deliverable, "
+                      "or Start fresh.")
+        _safe_transition(db, project, "awaiting_customer",
+                         "Build claimed a change but published nothing")
+        _save_run(project, "failed", logs=logs,
+                  error="The agent reported a change but nothing was committed "
+                        "to publish")
+        return
+    if declared and declared["outcome"] == "blocked":
+        blocker = declared["summary"] or "the agent reported being blocked"
+        _post_message(db, project.id, _dev_thread(db, project), "agent",
+                      f"I couldn't complete this: {blocker} - reply with what "
+                      "you'd like me to do about it and hit Resume.")
+        _safe_transition(db, project, "awaiting_customer", "Build blocked")
+        _save_run(project, "failed", logs=logs, error=f"Blocked: {blocker}"[:512])
+        return
     reason = _exit_reason(project)
     if reason.get("reason") == "max_iterations":
         # the marker carries the cap the session actually ran with
