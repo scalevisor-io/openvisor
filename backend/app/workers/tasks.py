@@ -2137,6 +2137,22 @@ def _prepare_runner_inputs(db: Session, project: Project,
                                                   steering_note=steering_note,
                                                   consult_question=consult_question)
     (openvisor_dir / "task.md").write_text(task_text)
+    # §conversation resume: the steering note ALONE, for a runner that
+    # rehydrated the previous agent session - it sends this as the follow-up
+    # message instead of replaying the whole task (which the restored history
+    # already contains). Unlinked when absent so a stale note never steers a
+    # later run.
+    if steering_note:
+        (openvisor_dir / "steering.md").write_text(steering_note)
+    else:
+        (openvisor_dir / "steering.md").unlink(missing_ok=True)
+    # A conversation belongs to ONE chain: an unchained run (a new request, a
+    # Start fresh, the first run of a unit) must never rehydrate a previous
+    # request's session out of a reused legacy checkout.
+    _row = dev_concurrency.bound_run(project)
+    if _row is None or not _row.predecessor_id:
+        shutil.rmtree(openvisor_dir / "conversation", ignore_errors=True)
+        (openvisor_dir / "conversation_id").unlink(missing_ok=True)
     if approved_plan:
         (openvisor_dir / "plan.md").write_text(approved_plan)
     mcp_json, mcp_secret_values = _mcp_config(db, project.kb_ids, project=project)
