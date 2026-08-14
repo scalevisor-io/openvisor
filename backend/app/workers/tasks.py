@@ -3124,6 +3124,18 @@ def _save_run(project: Project, state: str, logs: str | None = None,
                 row.acceptance = project.dev_acceptance
                 if row.started_at is None:
                     row.started_at = project.dev_run_started_at
+            # §parallel-builds: a finishing run must not regress the SHARED
+            # display mirror while a sibling is still building. bound_run is
+            # per-worker, so each run updates its own row correctly - but
+            # project.dev_run_state is one scalar for the whole project, and
+            # writing it unconditionally made a finished sibling announce
+            # "Development complete" over a live build (prod: a pricing run
+            # closing at 03:2x while the Trust-page run had 10 more minutes,
+            # so the customer saw DONE and tried to retry a build that had
+            # never stopped). Repoint at the newest still-active sibling; a
+            # no-op when this was the last run.
+            if state not in dev_concurrency.ACTIVE_ROW_STATES:
+                _recompute_mirror(db, project)
     except Exception:  # noqa: BLE001
         log.exception("dev_run shadow mirror failed for %s", project.id)
 
