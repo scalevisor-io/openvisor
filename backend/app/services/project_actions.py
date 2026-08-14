@@ -112,7 +112,8 @@ async def charge_chat_upfront(db: AsyncSession, project: Project) -> None:
                              kind="chat_upfront", detail="Chat opening fee"))
 
 
-async def retry_build(db: AsyncSession, project: Project, is_admin: bool) -> None:
+async def retry_build(db: AsyncSession, project: Project, is_admin: bool,
+                      fresh: bool = False) -> None:
     """Resume development after a failed/stalled build (§14.5). Gated by the same
     dev_resume_capability the UI renders, so button and endpoint can't drift."""
     await db.refresh(project, ["repos"])
@@ -133,7 +134,8 @@ async def retry_build(db: AsyncSession, project: Project, is_admin: bool) -> Non
     # §parallel-builds MR1: take a run slot through the one chokepoint (sync
     # service, threadpool - knowledge.py precedent) before dispatching.
     try:
-        run_id = await run_in_threadpool(dev_concurrency.acquire_for_project, project.id)
+        run_id = await run_in_threadpool(dev_concurrency.acquire_for_project,
+                                         project.id, None, fresh)
     except dev_concurrency.SlotRefused as exc:
         raise ActionError(409, str(exc))
     celery.send_task("app.workers.tasks.run_development", args=[project.id],

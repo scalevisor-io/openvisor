@@ -350,6 +350,10 @@ export default function ProjectDetail() {
     project.kind === "ai" && config?.review_request_credits
       ? `· ${formatCredits(config.review_request_credits)} credits`
       : undefined;
+  // §run chains Start fresh: not a shared NowActionId (the hub panel has no
+  // such button) - a local callback BuildConsole renders next to Resume.
+  const startFresh = () =>
+    act("resume", () => projectsApi.retryBuild(id, true), "Starting a clean build…");
   const nowActions: Partial<Record<NowActionId, () => void>> = {
     evaluate: isDraftAi
       ? () =>
@@ -371,6 +375,7 @@ export default function ProjectDetail() {
       project.dev_run_state !== "idle"
         ? () => act("resume", () => projectsApi.retryBuild(id), "Resuming development…")
         : undefined,
+
     stop: running
       ? () => act("stop", () => projectsApi.stopBuild(id), "Stopping the build…")
       : undefined,
@@ -603,6 +608,7 @@ export default function ProjectDetail() {
                   resumeBlocker={resumeBlocker ?? null}
                   retryBusy={busyAction === "resume"}
                   onRetry={() => nowActions.resume?.()}
+                  onStartFresh={startFresh}
                   onStale={reload}
                   consultant={consultant}
                   forRequest={
@@ -816,6 +822,7 @@ export default function ProjectDetail() {
             resumeBlocker: resumeBlocker ?? null,
             retryBusy: busyAction === "resume",
             onRetry: () => nowActions.resume?.(),
+            onStartFresh: startFresh,
             onStale: reload,
           }}
         />

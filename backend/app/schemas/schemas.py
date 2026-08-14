@@ -222,6 +222,12 @@ class ApiTokenIn(BaseModel):
 
 
 # ---- admin ----
+class RetryBuildIn(BaseModel):
+    # §run chains Start fresh: true discards the failed chain (new workspace,
+    # new branch) instead of resuming it. Absent body = plain resume.
+    fresh: bool = False
+
+
 class RoutineIn(BaseModel):
     """§routines: a saved prompt. `schedule_cron` empty = fired by hand only."""
     title: str = Field(min_length=1, max_length=255)

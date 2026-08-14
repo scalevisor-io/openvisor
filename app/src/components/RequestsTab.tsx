@@ -55,6 +55,7 @@ export default function RequestsTab({
     resumeBlocker: string | null;
     retryBusy: boolean;
     onRetry: () => void;
+    onStartFresh?: () => void;
     onStale: () => void;
   };
 }) {
@@ -496,6 +497,7 @@ export default function RequestsTab({
             resumeBlocker={build.resumeBlocker}
             retryBusy={build.retryBusy}
             onRetry={build.onRetry}
+            onStartFresh={build.onStartFresh}
             onStale={build.onStale}
             consultant={consultant}
             readOnly={readOnly}

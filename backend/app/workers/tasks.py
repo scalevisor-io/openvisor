@@ -2354,7 +2354,18 @@ def _ensure_dev_branch(db: Session, project: Project) -> None:
                     .filter(DevRun.project_id == project.id,
                             DevRun.state.in_(dev_concurrency.ACTIVE_ROW_STATES),
                             DevRun.id != row.id).all())
-        if any((sib.branch or "") == branch for sib in siblings):
+        taken = {sib.branch or "" for sib in siblings}
+        if row.request_id:
+            # §run chains Start fresh: an unchained retry must not re-derive the
+            # discarded chain's branch name - the entrypoint continues
+            # origin/<branch> (and even local unpushed commits), so a same-name
+            # "fresh" run would silently resurrect the abandoned work. The
+            # request's PRIOR runs (any state) therefore also reserve names.
+            taken |= {b for (b,) in db.query(DevRun.branch)
+                      .filter(DevRun.request_id == row.request_id,
+                              DevRun.id != row.id,
+                              DevRun.branch.isnot(None)).all()}
+        if branch in taken:
             branch = naming.sanitize_branch(f"{branch}-{row.id[:6]}")
         row.branch = branch
     project.dev_branch = branch
