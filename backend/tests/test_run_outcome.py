@@ -97,7 +97,7 @@ def test_a_claimed_change_with_no_diff_fails_with_the_discrepancy_named(ws, monk
             tasks._fail_no_changes(db, project, "logs")
             db.flush()
             assert saved["state"] == "failed"
-            assert "nothing was committed" in saved["error"]
+            assert "nothing publishable" in saved["error"]
             assert req.status == "in_progress"          # resumable, not closed
         finally:
             db.rollback()
