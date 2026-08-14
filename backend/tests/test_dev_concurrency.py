@@ -186,9 +186,20 @@ def test_save_run_shadow_mirror(org_id, quiet):
         tasks._save_run(p, "failed", logs="tail", error="boom")
         db.flush()
         assert (run.state, run.run_error, run.run_log) == ("failed", "boom", "tail")
-        # branch back-fills from the scalar only while the row has none; the PR
-        # pointer is row-authoritative and flows through _set_run_pr (§MR3)
-        assert run.branch == "agent/mvp-x"
+        # the scalar back-fills CHAINED rows only (§run chains: stamping an
+        # unchained row defeated Start fresh in prod - the stale branch made
+        # naming early-return and origin/<branch> resurrected discarded work);
+        # this first, unchained run stays branch-less until naming runs
+        assert run.branch is None
+        chained = dev_concurrency.acquire_slot(db, p, predecessor=run)
+        db.commit()
+        chained.branch = None          # a legacy resume row pre-naming
+        dev_concurrency.bind_run(p, chained)
+        tasks._save_run(p, "running")
+        assert chained.branch == "agent/mvp-x"
+        tasks._save_run(p, "failed", logs="tail", error="boom")
+        db.flush()
+        run = chained
         dev_concurrency.bind_run(p, run)
         tasks._set_run_pr(p)
         assert run.pr_number == 4

@@ -3149,7 +3149,14 @@ def _save_run(project: Project, state: str, logs: str | None = None,
                 if logs is not None:
                     row.run_log = logs[-16000:]
                 row.run_error = project.dev_run_error
-                if not row.branch:
+                # Backfill the branch for CHAINED rows only (legacy resumes,
+                # whose branch genuinely is the project scalar). An unchained
+                # row - a fresh retry, the first run of a unit - must stay
+                # branch-less until naming runs: stamping the stale scalar here
+                # made _ensure_dev_branch early-return, so a Start fresh
+                # re-landed on the abandoned branch and the entrypoint's
+                # origin/<branch> continuation resurrected the discarded work.
+                if not row.branch and row.predecessor_id:
                     row.branch = project.dev_branch
                 row.harness_version = project.dev_harness_version
                 row.security_review = project.dev_security_review
@@ -4962,17 +4969,18 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
         # declared a gitignored runbook "delivered"). Name the discrepancy so
         # the customer steers the next run instead of hunting phantom bugs.
         _post_message(db, project.id, _dev_thread(db, project), "agent",
-                      "I reported the work as done, but nothing publishable reached "
-                      "the branch - most likely I left the files uncommitted or "
-                      "untracked. My summary of what I did: "
+                      "I reported the work as done, but the platform found nothing "
+                      "it considers publishable on the branch - either I left the "
+                      "files uncommitted or untracked, or everything I committed was "
+                      "ignore-rule plumbing. My summary of what I did: "
                       f"{declared['summary'] or '(none given)'} - "
                       "Resume with a note telling me to commit the deliverable, "
                       "or Start fresh.")
         _safe_transition(db, project, "awaiting_customer",
                          "Build claimed a change but published nothing")
         _save_run(project, "failed", logs=logs,
-                  error="The agent reported a change but nothing was committed "
-                        "to publish")
+                  error="The agent reported a change but nothing publishable "
+                        "reached the branch")
         return
     if declared and declared["outcome"] == "blocked":
         blocker = declared["summary"] or "the agent reported being blocked"
