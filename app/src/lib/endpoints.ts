@@ -206,7 +206,10 @@ export const projectsApi = {
   evaluation: (id: string) => api.get<Evaluation>(`/projects/${id}/evaluation`),
   submit: (id: string) => api.post<Project>(`/projects/${id}/submit`),
   requireReview: (id: string) => api.post<Project>(`/projects/${id}/require-review`),
-  retryBuild: (id: string) => api.post<Project>(`/projects/${id}/retry-build`),
+  // fresh (§run chains Start fresh) discards the failed chain - new workspace,
+  // new branch - instead of resuming it.
+  retryBuild: (id: string, fresh = false) =>
+    api.post<Project>(`/projects/${id}/retry-build`, fresh ? { fresh: true } : undefined),
   stopBuild: (id: string, runId?: string) =>
     api.post<{ ok: boolean }>(
       `/projects/${id}/stop-build${runId ? `?run_id=${runId}` : ""}`,
