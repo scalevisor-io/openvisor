@@ -316,7 +316,14 @@ if [[ "${GIT_PUSH:-0}" == "1" ]] && git -C /workspace remote get-url origin >/de
     # grep exits 1 on no match - harmless here, but fatal under pipefail+set -e.
     GITIGNORE_REAL=$(git -C /workspace diff --cached -- .gitignore | { grep -E '^[+-]' || true; } | { grep -vE '^(\+\+\+|---)' || true; } | { grep -vxF '+.openvisor/' || true; } | head -1)
     BRANCH_REAL=$(git -C /workspace diff --name-only "origin/$DEFAULT_BRANCH...HEAD" -- . ':(exclude).gitignore' 2>/dev/null | head -1 || true)
-    if [[ -z "$STAGED_REAL" && -z "$GITIGNORE_REAL" && -z "$BRANCH_REAL" ]]; then
+    # A COMMITTED .gitignore change (beyond the .openvisor/ plumbing line) is a
+    # real deliverable too - excluding .gitignore wholesale from the branch diff
+    # made a branch whose intended change WAS an ignore rule read as empty, and
+    # the customer was told "nothing was committed" over a commit sitting right
+    # on the branch. The pure-plumbing commit this gate exists to block still
+    # is: its only line is '+.openvisor/'.
+    BRANCH_GITIGNORE_REAL=$(git -C /workspace diff "origin/$DEFAULT_BRANCH...HEAD" -- .gitignore 2>/dev/null | { grep -E '^[+-]' || true; } | { grep -vE '^(\+\+\+|---)' || true; } | { grep -vxF '+.openvisor/' || true; } | head -1)
+    if [[ -z "$STAGED_REAL" && -z "$GITIGNORE_REAL" && -z "$BRANCH_REAL" && -z "$BRANCH_GITIGNORE_REAL" ]]; then
       echo "runner: NO_CHANGES_TO_PUBLISH - the agent session produced no changes; not publishing" >&2
       emit_event error "No changes produced - nothing to publish"
       exit 5
