@@ -5,8 +5,10 @@ Reads its inputs
 from /workspace/.openvisor/."""
 import json
 import os
+import shutil
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from openhands.sdk import LLM, Conversation
@@ -212,16 +214,79 @@ def main() -> int:
     conv_kwargs = {"agent": agent, "workspace": "/workspace", "callbacks": [feed]}
     if max_iters > 0:
         conv_kwargs["max_iteration_per_run"] = max_iters
+
+    def _construct(kwargs):
+        try:
+            return Conversation(**kwargs)
+        except TypeError:
+            print("driver: callbacks kwarg unsupported; running without the live feed",
+                  file=sys.stderr)
+            slim = {k: v for k, v in kwargs.items()
+                    if k in ("agent", "workspace", "persistence_dir",
+                             "conversation_id", "delete_on_close")}
+            return Conversation(**slim)
+
+    # §conversation resume: persist the session under the workspace, which a
+    # resume chain reuses - so the next run of THIS chain rehydrates the full
+    # agent conversation (messages, tool calls, its own reasoning) instead of
+    # starting cold with only the artifact files. The worker deletes the state
+    # for unchained runs, so a resume is the only way to land here with one.
+    # Any persistence failure wipes the state and falls back to today's
+    # ephemeral conversation: a broken resume must never kill a build.
+    persist_dir = OPENVISOR / "conversation"
+    cid_file = OPENVISOR / "conversation_id"
+    conversation = None
+    resumed = False
     try:
-        conversation = Conversation(**conv_kwargs)
-    except TypeError:
-        print("driver: callbacks kwarg unsupported; running without the live feed",
-              file=sys.stderr)
-        conversation = Conversation(agent=agent, workspace="/workspace")
+        if cid_file.exists():
+            cid = uuid.UUID(cid_file.read_text().strip())
+            resumed = persist_dir.is_dir() and any(persist_dir.iterdir())
+        else:
+            cid = uuid.uuid4()
+            cid_file.write_text(str(cid))
+        conversation = _construct({**conv_kwargs, "persistence_dir": str(persist_dir),
+                                   "conversation_id": cid, "delete_on_close": False})
+        if resumed:
+            prior = len(getattr(conversation.state, "events", []) or [])
+            if prior == 0:
+                resumed = False          # state dir existed but nothing loaded
+            else:
+                print(f"driver: resumed previous session ({prior} events restored)")
+    except Exception as exc:  # noqa: BLE001 - persistence must never fail the run
+        print(f"driver: conversation persistence unavailable ({exc}); "
+              "running a fresh session", file=sys.stderr)
+        try:
+            shutil.rmtree(persist_dir, ignore_errors=True)
+            cid_file.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        conversation = None
+        resumed = False
+    if conversation is None:
+        conversation = _construct(conv_kwargs)
     if max_iters > 0 and getattr(conversation, "max_iteration_per_run", None) != max_iters:
         print("driver: iteration cap NOT applied by this SDK version "
               "(deployer timeout still applies)", file=sys.stderr)
-    conversation.send_message(task)
+
+    if resumed:
+        # The restored history already contains the task; replaying it would
+        # double the context. Send only what is NEW: the customer's steering
+        # since the session ended (worker-written), else a plain continuation.
+        steering_file = OPENVISOR / "steering.md"
+        note = ""
+        if steering_file.is_file():
+            note = steering_file.read_text(errors="replace").strip()
+        if note:
+            message = ("Continuing the SAME task from your previous session - its "
+                       "full history is restored above. New guidance from the "
+                       "customer since that session ended:\n\n" + note)
+        else:
+            message = ("Continuing the SAME task from your previous session - its "
+                       "full history is restored above. Pick up exactly where you "
+                       "stopped and finish the task.")
+        conversation.send_message(message)
+    else:
+        conversation.send_message(task)
 
     try:
         conversation.run()
