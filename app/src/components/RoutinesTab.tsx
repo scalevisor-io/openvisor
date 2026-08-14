@@ -196,6 +196,15 @@ export default function RoutinesTab({
   );
 }
 
+// A prompt taller than this collapses behind "See more" - routines are a LIST,
+// and one page-long prompt (a pasted runbook) must not bury its siblings.
+const PROMPT_CLAMP_LINES = 6;
+const PROMPT_CLAMP_CHARS = 600;
+
+function promptIsLong(prompt: string): boolean {
+  return prompt.split("\n").length > PROMPT_CLAMP_LINES || prompt.length > PROMPT_CLAMP_CHARS;
+}
+
 function RoutineCard({
   routine,
   projectId,
@@ -211,6 +220,7 @@ function RoutineCard({
 }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>({
     title: routine.title,
     prompt: routine.prompt,
@@ -309,9 +319,34 @@ function RoutineCard({
         />
       ) : (
         <>
-          <p className="tiny" style={{ whiteSpace: "pre-wrap", margin: 0 }}>
+          <p
+            className="tiny"
+            style={{
+              whiteSpace: "pre-wrap",
+              margin: 0,
+              ...(promptIsLong(routine.prompt) && !promptOpen
+                ? {
+                    // ~PROMPT_CLAMP_LINES of text; the standards-track clamp
+                    // needs the deprecated -webkit prefix pair to work.
+                    display: "-webkit-box",
+                    WebkitLineClamp: PROMPT_CLAMP_LINES,
+                    WebkitBoxOrient: "vertical" as const,
+                    overflow: "hidden",
+                  }
+                : {}),
+            }}
+          >
             {routine.prompt}
           </p>
+          {promptIsLong(routine.prompt) && (
+            <button
+              className="btn-link tiny"
+              style={{ background: "none", border: 0, padding: 0, marginTop: "0.35rem", cursor: "pointer", color: "var(--accent-light)" }}
+              onClick={() => setPromptOpen((v) => !v)}
+            >
+              {promptOpen ? "See less" : "See more…"}
+            </button>
+          )}
           {openRun && (
             <p className="tiny faint" style={{ margin: "0.5rem 0 0" }}>
               Its last request is still open - the next scheduled run waits for it to close.
