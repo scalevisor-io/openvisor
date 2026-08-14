@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Message, Project, StatusChange, User
+from app.models import Message, Project, Request, StatusChange, User
 from app.services import brand, events, hub_events
 from app.services.statuses import can_transition, emails_for
 
@@ -38,6 +38,27 @@ def _plan_emails(project: Project, customer_email: str | None, from_s, to_s, rea
     return out
 
 
+# §threads Request #0: a terminal project closes its initial-build request. The
+# two endings mean different things and the request must not lie about which:
+# `finished` is a delivery the customer accepted, so the MVP really is done;
+# `canceled` never delivered anything, so it is rejected. Living here rather
+# than in approve_delivery means EVERY route to a terminal status closes it -
+# the admin status route and the hub included, which is what left projects
+# closed while their Request #0 sat "in_progress" forever (and, for a project
+# with no MVP phase, forever meant forever: nothing else could ever close it).
+_TERMINAL_MVP_STATUS = {"finished": "done", "canceled": "rejected"}
+
+
+def _mvp_close_status(to_status: str) -> str | None:
+    return _TERMINAL_MVP_STATUS.get(to_status)
+
+
+def _open_mvp_query(project: Project):
+    return select(Request).where(
+        Request.project_id == project.id, Request.type == "mvp",
+        Request.status.notin_(("done", "rejected")))
+
+
 async def transition_async(
     db: AsyncSession, project: Project, to_status: str, actor: str, reason: str | None = None
 ) -> Project:
@@ -58,6 +79,12 @@ async def transition_async(
     hub_events.record(db, project, "status",
                       {"from": from_s, "to": to_status, "actor": actor, "reason": reason})
     hub_events.record(db, project, "message", hub_events.message_payload(msg))
+
+    mvp_status = _mvp_close_status(to_status)
+    if mvp_status:
+        mvp = (await db.execute(_open_mvp_query(project))).scalars().first()
+        if mvp is not None:
+            mvp.status = mvp_status
 
     owner = (await db.execute(
         select(User).where(User.org_id == project.org_id).order_by(User.created_at)
@@ -92,6 +119,12 @@ def transition_sync(
     hub_events.record(db, project, "status",
                       {"from": from_s, "to": to_status, "actor": actor, "reason": reason})
     hub_events.record(db, project, "message", hub_events.message_payload(msg))
+
+    mvp_status = _mvp_close_status(to_status)
+    if mvp_status:
+        mvp = db.execute(_open_mvp_query(project)).scalars().first()
+        if mvp is not None:
+            mvp.status = mvp_status
 
     owner = db.execute(
         select(User).where(User.org_id == project.org_id).order_by(User.created_at)
