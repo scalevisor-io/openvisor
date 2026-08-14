@@ -185,10 +185,8 @@ async def approve_delivery(db: AsyncSession, project: Project, actor: str) -> No
                                "Delivery approved by the customer")
     except TransitionError as exc:
         raise ActionError(409, str(exc))
-    # §threads Request #0: accepting the delivery closes the initial-build request.
-    mvp = await mvp_request(db, project)
-    if mvp is not None and mvp.status != "done":
-        mvp.status = "done"
+    # §threads Request #0 is closed by the transition itself (services/lifecycle):
+    # every route to a terminal status closes it, not just this one.
     await db.commit()
 
 
