@@ -3191,7 +3191,14 @@ def _dev_thread(db: Session, project: Project) -> str:
     """Chat thread the active dev run narrates into: the request's own thread
     for a request-scoped run (§14), else the MVP request's thread (§threads
     Request #0 - the initial build is a request like any other), falling back
-    to main for projects born before MVP requests existed."""
+    to main for projects born before MVP requests existed. The BOUND run's
+    request wins over the Project.dev_request_id mirror: under parallel
+    dispatches the mirror is whoever stamped last, and a sibling's stamp
+    landing mid-dispatch would narrate (and steer) this run into the wrong
+    thread."""
+    row = dev_concurrency.bound_run(project)
+    if row is not None and row.request_id:
+        return f"request:{row.request_id}"
     if project.dev_request_id:
         return f"request:{project.dev_request_id}"
     mvp = _mvp_request(db, project)
@@ -4682,8 +4689,23 @@ def _steering_note(db: Session, project: Project,
     back to "after the agent last spoke" per thread. Bounded to the newest
     STEERING_MAX_MESSAGES / STEERING_MAX_CHARS so a long thread never blows up
     the task; None when nothing new was said."""
+    # §steering scope: which conversations may steer THIS run. A scoped request
+    # run listens to its OWN thread only - the main thread belongs to the
+    # project (chat proposals, plan gates, talk about OTHER work), and folding
+    # it in is how two pricing runs each built a LinkedIn footer: the customer's
+    # main-chat ask was already classified into its own request, then ALSO
+    # arrived in both unrelated dispatches as "newer customer guidance". The
+    # MVP/unscoped build keeps main - there, main IS the build conversation.
+    thread = _dev_thread(db, project)
+    threads = {thread}
+    row = dev_concurrency.bound_run(project)
+    req_id = (row.request_id if row is not None and row.request_id
+              else project.dev_request_id)
+    req = db.get(Request, req_id) if req_id else None
+    if req is None or req.type == "mvp":
+        threads.add("main")
     notes: list[Message] = []
-    for thread in {"main", _dev_thread(db, project)}:
+    for thread in threads:
         cutoff = since
         if cutoff is None:
             last_agent = (db.query(Message)
