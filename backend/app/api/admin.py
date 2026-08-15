@@ -16,8 +16,8 @@ from app.models import (
     Project, ProjectModelConfig, Quote, QuoteAttachment, Request, User, utcnow,
 )
 from app.schemas.schemas import (
-    AppSettingsIn, CreditAdjustIn, ModelConfigIn, PriceIn, ProjectPatchIn,
-    QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
+    AdminUserPatchIn, AppSettingsIn, CreditAdjustIn, ModelConfigIn, PriceIn,
+    ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
     app_settings, brand, dev_concurrency, egress, routines as routines_svc,
@@ -528,5 +528,23 @@ async def list_users(db: AsyncSession = Depends(get_db)):
         .order_by(User.created_at.desc()))).all()
     return [{"id": u.id, "email": u.email, "role": u.role, "org_id": o.id,
              "org_name": o.name, "credit_balance": round(o.credit_balance or 0.0, 4),
-             "email_verified": u.email_verified, "created_at": u.created_at}
+             "email_verified": u.email_verified, "blocked": u.blocked,
+             "created_at": u.created_at}
             for u, o in rows]
+
+
+@router.patch("/users/{user_id}")
+async def patch_user(user_id: str, body: AdminUserPatchIn,
+                     db: AsyncSession = Depends(get_db)):
+    """§user blocking: flip a user's lockout. Blocking refuses their login with
+    an explicit message and kills existing sessions and API tokens on their next
+    request (deps.get_current_user / _resolve_api_token / the MCP server)."""
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    if body.blocked is not None:
+        if user.role == "admin":
+            raise HTTPException(403, "Admin accounts cannot be blocked")
+        user.blocked = body.blocked
+    await db.commit()
+    return {"id": user.id, "blocked": user.blocked}

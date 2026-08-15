@@ -17,7 +17,7 @@ Datetimes are ISO-8601 UTC strings. Money/credits are numbers (float, 1 credit =
   → 201 `{ok: true}` (sends verification email). Password min 10 chars. `accept_terms` must be `true` (ToS + privacy policy consent, stamped on the user as `tos_accepted_at`); otherwise 400. An `organization` signup requires `company_name` and `full_name` (the contact person); otherwise 400. VAT and the billing address are not asked at signup - they live on the account page (`PATCH /account`). The new account starts with `signup_credits` welcome credits (default 5) as a ledger entry of kind `signup`.
 - `POST /auth/verify-email` `{token}` → `{ok: true}`
 - `POST /auth/resend-verification` `{email}` → always `{ok: true}`
-- `POST /auth/login` `{email, password}` → `{user: User}` + sets session cookie. 401 on bad creds.
+- `POST /auth/login` `{email, password}` → `{user: User}` + sets session cookie. 401 on bad creds; 403 with an explicit detail message when the account is blocked (§user blocking - checked after the credential check, so a wrong-password probe learns nothing). A blocked user's EXISTING sessions 401 (`"Account blocked"`) on their next request and their API tokens stop authenticating (403 `"Account blocked"`; the MCP server treats their tokens as unauthenticated).
 - `POST /auth/logout` → `{ok: true}`
 - `POST /auth/forgot-password` `{email}` → always `{ok: true}`
 - `POST /auth/reset-password` `{token, password}` → `{ok: true}`
@@ -339,7 +339,8 @@ Event outbox (spoke→hub): every status/message/evaluation/demo event on a `sou
 - `POST /admin/projects/{id}/refund-review` → `{credit_balance, refunded}` - refund the review-request fee (409 if already refunded, 404 if none)
 - `POST /admin/orgs/{org_id}/credits` `{amount, reason}` → `{credit_balance}` (manual adjust/topup)
 - `POST /admin/hub-token` → `{id, name, scope, token}` - mint a hub-scoped API token (plaintext once) authenticating a central hub to `/api/hub/*`. A hub token can read usage and grant credits but never bills a knowledge query.
-- `GET /admin/users` → `[{id, email, role, org_id, org_name, email_verified, created_at}]`
+- `GET /admin/users` → `[{id, email, role, org_id, org_name, email_verified, blocked, created_at}]`
+- `PATCH /admin/users/{id}` `{blocked?}` → `{id, blocked}` - §user blocking: flip a user's lockout (applied only when the field is sent). 404 unknown user; 403 `"Admin accounts cannot be blocked"` for admin targets.
 
 ## Notes for the SPA
 
