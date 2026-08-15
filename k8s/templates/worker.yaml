@@ -18,6 +18,13 @@ spec:
         {{- include "openvisor.workspacesConsumerLabel" . | nindent 8 }}
         {{- include "openvisor.labels" . | nindent 8 }}
     spec:
+      # The entrypoint execs celery, so SIGTERM triggers a warm shutdown that
+      # finishes in-flight tasks - but the kubelet's default 30s grace SIGKILLs
+      # it mid-task. A dev run's post-sandbox phase (billing, security review,
+      # opening the MR) takes minutes; killing it there strands the run at
+      # 'running' until the reaper's 70-minute clock. 15 minutes covers that
+      # window; a pod with no in-flight task still exits immediately.
+      terminationGracePeriodSeconds: 900
       {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
       {{- include "openvisor.workspacesAffinity" . | nindent 6 }}
       containers:
