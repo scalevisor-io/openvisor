@@ -12,7 +12,7 @@ There is **no build step**. Both apps compile the TypeScript source directly thr
 ## Contract
 
 - Every component is **pure/presentational** - props in, JSX out, no data-fetching, no app-specific `lib/` imports. Data access is abstracted behind the `ProjectApi` interface (`types.ts`), which each app implements against its own transport (the spoke's own REST, the hub's `/api/customer/me/*` proxy).
-- **Security invariant (do not weaken):** `MessageBody` linkifies URLs with an `http`/`https`-only scheme allowlist and never uses `dangerouslySetInnerHTML`. A hub renders spoke-attested and customer-authored text through this same code, so loosening the allowlist would be a stored-XSS vector.
+- **Security invariant (do not weaken):** `MessageBody` renders message text as markdown through `react-markdown` (+ `remark-gfm`, `remark-breaks` - peer dependencies the hub must install when it vendors this folder). No raw HTML ever renders (react-markdown builds a React element tree; no `rehype-raw`, no `dangerouslySetInnerHTML`), link hrefs are allowlisted to `http`/`https` only (any other scheme renders as plain text), and images never render - their alt text does. A hub renders spoke-attested and customer-authored text through this same code, so loosening the scheme allowlist is a stored-XSS vector and letting `<img>` through makes a stored message a tracking pixel against every reader.
 
 ## License
 
