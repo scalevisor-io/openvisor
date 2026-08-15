@@ -28,6 +28,7 @@ make dev
 - Offer catalog: the specialities customers pick from, the Memory placeholder suggestions and the onboarding questions live in `backend/app/static_data/*.example.json`. The shipped defaults are deliberately generic - reshape them to the services you actually sell (live copies are materialized from the examples on first start: edit the live `*.json` for a running instance, the `.example` for new deployments).
 - Landing copy: copy `landing/src/data/site.example.yml` to `site.yml` and edit freely.
 - Knowledge base: drop documents into the gitignored `./knowledge` folder, then `POST /api/admin/knowledge/reindex`.
+- Agent behavior: every agent - moderation, chat, the dev workflow - speaks from a versioned prompt template in `backend/app/agents/prompts/`, yours to edit ([placeholder and rebuild rules](docs/DEPLOY_WITH_AI.md#customizing-agent-behavior)).
 
 ## Production
 
