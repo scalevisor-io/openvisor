@@ -15,9 +15,15 @@ def send_email(to: str, subject: str, body: str) -> bool:
     msg["Subject"] = subject
     msg.set_content(body)
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as s:
+        # Port 465 is implicit-TLS (SMTPS): the server speaks TLS from the very
+        # first byte, so a plaintext SMTP() + starttls() would hang on the
+        # greeting. Every other port keeps the STARTTLS upgrade before login.
+        smtps = int(settings.smtp_port) == 465
+        conn = smtplib.SMTP_SSL if smtps else smtplib.SMTP
+        with conn(settings.smtp_host, settings.smtp_port, timeout=15) as s:
             if settings.smtp_user:
-                s.starttls()
+                if not smtps:
+                    s.starttls()
                 s.login(settings.smtp_user, settings.smtp_password)
             s.send_message(msg)
         return True
