@@ -46,7 +46,7 @@ One line each - the detail is in [docs/CODE_MAP.md](docs/CODE_MAP.md). Read that
 - `k8s/` - the optional Helm deployment (compose stays the reference). Images come from `compose.prod.yml`, so `make prod-build` produces exactly what the chart pulls.
 - `mcp/main.py` - the MCP server. THREE token scopes route to three tool lists (hub / project / user) - a scope that falls through to the user branch inherits org-wide reads, so the branch is explicit and `test_mcp_scopes.py` pins it.
 - `api/hub.py` + `services/hub_client.py` + `workers/hub.py` - the optional Scalevisor hub link. Standalone is the default; every hub project route 404s unless `Project.source == 'hub'`.
-- `app/shared-ui/` - components shared with the closed hub console, authored ONCE here and vendored there at a pinned commit. `MessageBody` linkifies with an http/https-only allowlist and never uses `dangerouslySetInnerHTML` - a looser scheme is stored XSS.
+- `app/shared-ui/` - components shared with the closed hub console, authored ONCE here and vendored there at a pinned commit. `MessageBody` renders message markdown via react-markdown with an http/https-only link allowlist, no raw HTML and no images (alt text only) - a looser scheme is stored XSS.
 - `app/src/lib/api.ts` - the SPA fetch wrapper (CSRF header, 401 → /login).
 
 ## Development workflow
