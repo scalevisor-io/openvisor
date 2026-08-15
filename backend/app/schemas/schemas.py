@@ -505,6 +505,12 @@ class McpDelegateIn(BaseModel):
     type: Literal["feature", "edit", "bug"] = "feature"
 
 
+class AdminUserPatchIn(BaseModel):
+    """§user blocking: the only admin-editable user field so far. None = leave
+    unchanged, so the shape can grow more fields without breaking callers."""
+    blocked: bool | None = None
+
+
 class McpConsultIn(BaseModel):
     """§MCP consult: a question about the project's own codebase, answered by a
     read-only harness pass. Never persisted - see api/mcp_delegate.consult."""

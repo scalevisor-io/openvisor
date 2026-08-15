@@ -72,6 +72,11 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="customer")  # customer|admin
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # §user blocking: admin-set lockout (the /admin/users page). Login refuses
+    # with an explicit message, and existing sessions and API tokens stop
+    # authenticating (deps.get_current_user, deps._resolve_api_token, the MCP
+    # server's authenticate). Admin accounts can never be blocked.
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     # when the user accepted the ToS + privacy policy at signup (GDPR proof of consent);
     # null only for pre-consent accounts and the seeded admin
     tos_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -119,6 +119,12 @@ async def login(body: LoginIn, request: Request, response: Response,
     user = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(401, "Invalid email or password")
+    # §user blocking: refused AFTER the credential check so a wrong-password
+    # probe learns nothing, with an explicit message instead of a generic 401.
+    if user.blocked:
+        raise HTTPException(
+            403, "This account has been blocked by the administrator. "
+                 "Contact support if you believe this is a mistake.")
     _set_session(response, user.id)
     audit.log_action(request, user.email)
     return {"user": user_out(user)}

@@ -17,6 +17,26 @@ export default function AdminUsers() {
   const toast = useToast();
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [blockBusyId, setBlockBusyId] = useState<string | null>(null);
+
+  // §user blocking: flip the lockout; the API refuses admin targets (403).
+  async function toggleBlocked(u: AdminUser) {
+    setBlockBusyId(u.id);
+    try {
+      const res = await adminApi.patchUser(u.id, { blocked: !u.blocked });
+      setUsers((prev) =>
+        (prev ?? []).map((x) => (x.id === u.id ? { ...x, blocked: res.blocked } : x)),
+      );
+      toast.push(
+        res.blocked ? `${u.email} blocked - they can no longer sign in` : `${u.email} unblocked`,
+        "ok",
+      );
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Failed", "err");
+    } finally {
+      setBlockBusyId(null);
+    }
+  }
 
   useEffect(() => {
     adminApi
@@ -76,6 +96,7 @@ export default function AdminUsers() {
                     <th>Email</th>
                     <th>Role</th>
                     <th>Verified</th>
+                    <th>Access</th>
                     <th>Created</th>
                   </tr>
                 </thead>
@@ -91,6 +112,25 @@ export default function AdminUsers() {
                           <Badge label="verified" kind="finished" />
                         ) : (
                           <Badge label="unverified" kind="canceled" />
+                        )}
+                      </td>
+                      <td>
+                        {u.role === "admin" ? (
+                          <span className="tiny faint">—</span>
+                        ) : (
+                          <div className="row gap-sm">
+                            {u.blocked && <Badge label="blocked" kind="canceled" />}
+                            <button
+                              className="btn btn-sm"
+                              disabled={blockBusyId === u.id}
+                              title={u.blocked
+                                ? "Let this user sign in again"
+                                : "Refuse login and kill this user's sessions and API tokens"}
+                              onClick={() => toggleBlocked(u)}
+                            >
+                              {blockBusyId === u.id ? <Spinner /> : u.blocked ? "Unblock" : "Block"}
+                            </button>
+                          </div>
                         )}
                       </td>
                       <td className="faint">{relTime(u.created_at)}</td>
