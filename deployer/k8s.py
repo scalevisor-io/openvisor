@@ -48,6 +48,11 @@ RUNTIME = os.environ.get("DEMO_RUNTIME", "")
 # §dev-docker: inner dockerd for dev-run sandboxes - RuntimeClass (Sysbox) when
 # configured, privileged-container fallback otherwise (demo DinD parity).
 DEV_SANDBOX_DOCKER = os.environ.get("DEV_SANDBOX_DOCKER", "0") == "1"
+# Size of the per-run ephemeral PVC backing the dev sandbox's /var/lib/docker.
+# Without a volume the inner image builds write into the container layer, count
+# against the pod's 8Gi ephemeral-storage limit (_resources), and a repo whose
+# compose build exceeds it gets the sandbox EVICTED mid-session.
+DEV_DOCKER_VOLUME_SIZE = os.environ.get("DEV_DOCKER_VOLUME_SIZE", "20Gi")
 
 _core = None
 _batch = None
@@ -769,6 +774,25 @@ def dev_run(body, cpu: str, mem: str) -> dict:
             pod_spec["runtimeClassName"] = RUNTIME
         else:
             pod_spec["containers"][0]["securityContext"] = {"privileged": True}
+        # The inner docker graph gets its own per-run generic ephemeral PVC
+        # (born and deleted with the pod, like the demo verify pods' throwaway
+        # graph but on real block storage): image builds no longer write into
+        # the container layer, so they stop counting against the pod's 8Gi
+        # ephemeral-storage limit - which otherwise EVICTS the sandbox in the
+        # middle of any repo whose compose build is bigger than the cap.
+        claim: dict = {"accessModes": ["ReadWriteOnce"],
+                       "resources": {"requests": {"storage": DEV_DOCKER_VOLUME_SIZE}}}
+        if DEMO_STORAGE_CLASS:
+            claim["storageClassName"] = DEMO_STORAGE_CLASS
+        pod_spec["containers"][0]["volumeMounts"].append(
+            {"name": "docker-graph", "mountPath": "/var/lib/docker"})
+        pod_spec["volumes"].append({
+            "name": "docker-graph",
+            "ephemeral": {"volumeClaimTemplate": {
+                "metadata": {"labels": {"openvisor/dev-run": "true"}},
+                "spec": claim,
+            }},
+        })
     if RUNNER_PULL_SECRETS:
         pod_spec["imagePullSecrets"] = [{"name": s} for s in RUNNER_PULL_SECRETS]
     _apply_extra_host(pod_spec, body.extra_host)
