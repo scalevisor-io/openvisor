@@ -474,6 +474,8 @@ export const adminApi = {
   adjustCredits: (orgId: string, amount: number, reason: string) =>
     api.post<{ credit_balance: number }>(`/admin/orgs/${orgId}/credits`, { amount, reason }),
   users: () => api.get<AdminUser[]>("/admin/users"),
+  patchUser: (userId: string, body: { blocked?: boolean }) =>
+    api.patch<{ id: string; blocked: boolean }>(`/admin/users/${userId}`, body),
   settings: () => api.get<AdminSettings>("/admin/settings"),
   updateSettings: (body: Partial<AdminSettings>) =>
     api.put<AdminSettings>("/admin/settings", body),

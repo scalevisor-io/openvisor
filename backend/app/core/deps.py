@@ -31,6 +31,10 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     user = await db.get(User, uid) if uid else None
     if user is None:
         raise HTTPException(401, "Not authenticated")
+    # §user blocking: existing sessions die with the block. 401 (not 403) so the
+    # SPA drops to /login, where the next attempt gets the explicit message.
+    if user.blocked:
+        raise HTTPException(401, "Account blocked")
     # §audit: one line per authenticated mutation (hashed actor + route template,
     # never content). Resolved once per request - FastAPI caches the dependency.
     audit.log_action(request, user.email)
@@ -64,6 +68,11 @@ async def _resolve_api_token(request: Request, db: AsyncSession) -> tuple[ApiTok
         raise HTTPException(401, "Invalid API token")
     row.last_used_at = utcnow()
     user = await db.get(User, row.user_id)
+    # §user blocking: a blocked (or deleted) owner's tokens stop authenticating.
+    if user is None:
+        raise HTTPException(401, "Invalid API token")
+    if user.blocked:
+        raise HTTPException(403, "Account blocked")
     await db.commit()
     return row, user
 

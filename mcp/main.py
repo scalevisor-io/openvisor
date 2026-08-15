@@ -529,10 +529,13 @@ async def authenticate(request: Request) -> dict | None:
     token_hash = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
     p = await pool()
     row = await p.fetchrow(
-        'SELECT t.id AS token_id, t.scope, t.project_id, u.id AS user_id, u.org_id, u.role '
-        'FROM api_token t JOIN "user" u ON u.id = t.user_id WHERE t.token_hash = $1',
+        'SELECT t.id AS token_id, t.scope, t.project_id, u.id AS user_id, u.org_id, u.role, '
+        'u.blocked FROM api_token t JOIN "user" u ON u.id = t.user_id WHERE t.token_hash = $1',
         token_hash)
     if row is None:
+        return None
+    # §user blocking: a blocked owner's tokens authenticate to nothing.
+    if row["blocked"]:
         return None
     await p.execute("UPDATE api_token SET last_used_at = $1 WHERE id = $2",
                     datetime.now(timezone.utc), row["token_id"])

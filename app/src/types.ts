@@ -438,6 +438,7 @@ export interface AdminUser {
   org_name: string;
   credit_balance: number;
   email_verified: boolean;
+  blocked: boolean;
   created_at: string;
 }
 
