@@ -130,6 +130,14 @@ spec:
                   name: {{ .Values.envSecretName }}
                   key: DEV_SANDBOX_DOCKER
                   optional: true
+            # §dev-docker: per-run ephemeral PVC size for the sandbox's inner
+            # /var/lib/docker (deployer default 20Gi when the key is absent).
+            - name: DEV_DOCKER_VOLUME_SIZE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.envSecretName }}
+                  key: DEV_DOCKER_VOLUME_SIZE
+                  optional: true
           ports:
             - name: http
               containerPort: 8500
