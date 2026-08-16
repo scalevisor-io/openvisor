@@ -470,6 +470,17 @@ def customer_open_mr(base_url: str, token: str, path: str, source_branch: str,
         raise GitLabError(f"open MR failed: {r.status_code} {r.text[:200]}")
 
 
+def customer_update_mr_desc(base_url: str, token: str, path: str, iid: int,
+                            description: str) -> None:
+    """Replace an open MR's description (§PR description parity: a revise run's
+    fresh pr.md must reach the displayed description - customer_open_mr returns
+    a pre-existing MR untouched)."""
+    with _customer_client(base_url, token) as c:
+        r = c.put(f"/projects/{quote(path, safe='')}/merge_requests/{iid}",
+                  json={"description": description})
+        r.raise_for_status()
+
+
 def customer_list_open_issues(base_url: str, token: str, path: str) -> list[dict]:
     """Open issues normalized for the §auto_dev sweep (same shape as
     github.list_open_issues; GitLab labels are already plain strings)."""

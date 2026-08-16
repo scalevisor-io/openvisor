@@ -233,6 +233,16 @@ def commits_contained_in(owner: str, repo: str, base: str, head_sha: str,
         return r.json().get("status") in ("identical", "behind")
 
 
+def update_pr_body(owner: str, repo: str, number: int, body: str,
+                   token: str | None = None) -> None:
+    """Replace an open PR's body (§PR description parity: a revise run's fresh
+    pr.md must reach the displayed description - open_pr returns a pre-existing
+    PR untouched)."""
+    with _client(token) as c:
+        r = c.patch(f"/repos/{owner}/{repo}/pulls/{number}", json={"body": body})
+        r.raise_for_status()
+
+
 def merge_pr(owner: str, repo: str, number: int, method: str = "squash",
              token: str | None = None) -> tuple[bool, str]:
     """Merge a PR (admin/auto path). The customer normally merges via their own
