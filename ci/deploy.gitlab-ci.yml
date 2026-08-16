@@ -55,6 +55,11 @@ build-push:
   image: docker:27
   variables:
     GIT_DEPTH: "20"
+    # compose interpolates the WHOLE file even for `build`, and the OCPA
+    # required-var convention (`${VAR:?...}`) has no defaults for runtime
+    # secrets. This value never enters an image - it only satisfies
+    # interpolation of runtime-only environment blocks.
+    MEILI_MASTER_KEY: ci-build-placeholder
   script:
     - '[ -n "$IMAGE_REGISTRY_PASSWORD" ] || { echo "Set the registry password CI variable (see ci/deploy.gitlab-ci.yml header)"; exit 1; }'
     - echo "$IMAGE_REGISTRY_PASSWORD" | docker login "${IMAGE_REGISTRY%%/*}" -u "${IMAGE_REGISTRY_USER:-nologin}" --password-stdin
