@@ -723,7 +723,10 @@ def dev_run(body, cpu: str, mem: str) -> dict:
         {"name": "SKIP_AGENT", "value": "1" if body.skip_agent else "0"},
         {"name": "PLAN_ONLY", "value": "1" if body.plan_only else "0"},
         {"name": "LLM_REASONING_EFFORT", "value": body.reasoning_effort or ""},
-        {"name": "LLM_CACHE_KEY", "value": f"dev-{rel}"},
+        # Last path segment only (the run id): OpenAI caps prompt_cache_key at
+        # 64 chars and the full devruns/<pid>/<rid> path is 85 - it 400s EVERY
+        # call of the build.
+        {"name": "LLM_CACHE_KEY", "value": f"dev-{rel.rsplit('/', 1)[-1]}"},
     ]
     # §egress: on lockdown, stand up the per-run filtering proxy first and route
     # the runner's HTTP(S) egress through it; the job pod is labelled so the
