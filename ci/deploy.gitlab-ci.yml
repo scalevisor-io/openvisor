@@ -63,6 +63,9 @@ build-push:
   script:
     - '[ -n "$IMAGE_REGISTRY_PASSWORD" ] || { echo "Set the registry password CI variable (see ci/deploy.gitlab-ci.yml header)"; exit 1; }'
     - echo "$IMAGE_REGISTRY_PASSWORD" | docker login "${IMAGE_REGISTRY%%/*}" -u "${IMAGE_REGISTRY_USER:-nologin}" --password-stdin
+    # compose refuses any command while a declared `env_file: .env` is absent
+    # (push included); an empty file defers every value to the job environment
+    - touch .env
     - IMAGE_TAG="$CI_COMMIT_SHORT_SHA" ./scripts/deploy-helm.sh build-push
     # keep :latest pointing at the same build so the manual make helm-bpdr
     # path (and compose prod) never runs stale images
