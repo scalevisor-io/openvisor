@@ -5177,6 +5177,20 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
         _safe_transition(db, project, "awaiting_customer", "Build blocked")
         _save_run(project, "failed", logs=logs, error=f"Blocked: {blocker}"[:512])
         return
+    err = _runner_error(project)
+    if err:
+        # The session CRASHED before publishing: "no changes" is the symptom,
+        # not the story. Surface the driver's structured report (error.json,
+        # read-and-unlink) - three prod runs died on a provider 400 and told
+        # the customer "the run produced no changes to publish".
+        msg = str(err["message"])[:300]
+        _post_message(db, project.id, _dev_thread(db, project), "agent",
+                      f"The build stopped before completing: {msg} - hit Resume "
+                      "to run it again once the cause is fixed, or ask for "
+                      f"{settings.consultant_first_name}'s review.")
+        _safe_transition(db, project, "awaiting_customer", "Build agent crashed")
+        _save_run(project, "failed", logs=logs, error=msg[:400])
+        return
     reason = _exit_reason(project)
     if reason.get("reason") == "max_iterations":
         # the marker carries the cap the session actually ran with

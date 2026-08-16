@@ -181,3 +181,28 @@ def test_a_malformed_declaration_is_ignored(ws, monkeypatch):
             assert saved["state"] == "failed"           # degraded, not crashed
         finally:
             db.rollback()
+
+
+def test_a_driver_crash_report_beats_the_generic_no_changes_copy(ws, monkeypatch):
+    """error.json parity at the no-changes gate: a session that CRASHED before
+    publishing surfaces the driver's structured report - a provider 400 on the
+    first model call killed three prod builds whose customers were each told
+    'the run produced no changes to publish' (2026-08-16). Read-and-unlink, so
+    a stale report never explains a later, different failure."""
+    with SyncSession() as db:
+        try:
+            saved = {}
+            _stub(monkeypatch, saved)
+            project = _project(db)
+            _request(db, project)
+            (ws / "error.json").write_text(json.dumps({
+                "category": "agent_error",
+                "message": "the build agent crashed (BadRequestError: "
+                           "prompt_cache_key too long)"}))
+            tasks._fail_no_changes(db, project, "logs")
+            db.flush()
+            assert saved["state"] == "failed"
+            assert "prompt_cache_key too long" in saved["error"]
+            assert not (ws / "error.json").exists()
+        finally:
+            db.rollback()
