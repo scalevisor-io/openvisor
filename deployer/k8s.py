@@ -477,7 +477,7 @@ def verify_pod_name(project_id: str) -> str:
 
 
 def demo_verify(project_id: str, port: int, workdir: str, cpu: str, mem: str,
-                name: str = "", run_dir: str = "") -> dict:
+                name: str = "", run_dir: str = "", screenshots: list | None = None) -> dict:
     """§14.5 boot gate, same contract as main.py: throwaway DinD pod (emptyDir,
     no PVC, no Service/HTTPRoute - the probe runs via exec), carrying the
     openvisor/demo label so it inherits the demo NetworkPolicy isolation.
@@ -501,7 +501,17 @@ def demo_verify(project_id: str, port: int, workdir: str, cpu: str, mem: str,
             wait_for_app(name, port, workdir)
         except HTTPException as exc:
             return {"ok": False, "logs": str(exc.detail)}
-        return {"ok": True, "logs": ""}
+        # §After-shots: the inner compose publishes $PORT on the pod interface;
+        # browser-mcp's page loads are allowlisted into demo pods by the
+        # demo-isolation NetworkPolicy, so the pod IP is photographable for as
+        # long as this window stays open.
+        shots = []
+        if screenshots:
+            import browsershot
+            pod_ip = core.read_namespaced_pod(name, NAMESPACE).status.pod_ip
+            if pod_ip:
+                shots = browsershot.capture(f"http://{pod_ip}:{port}", screenshots)
+        return {"ok": True, "logs": "", "screenshots": shots}
     finally:
         try:
             _delete_pod_and_wait(name)
