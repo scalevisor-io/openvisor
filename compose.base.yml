@@ -135,20 +135,8 @@ services:
     command: ["npx", "-y", "@upstash/context7-mcp@1.0.14", "--transport", "http", "--port", "3000"]
     environment:
       CONTEXT7_API_KEY: ${CONTEXT7_API_KEY:-}
-    # demos network too (like chrome): program sandboxes (§28) receive
-    # CONTEXT7_MCP_URL and must be able to resolve/reach it from their DinD
-    networks: [internal, demos]
-    restart: unless-stopped
-
-  chrome:
-    image: zenika/alpine-chrome:latest
-    command:
-      - --headless
-      - --disable-gpu
-      - --no-sandbox
-      - --remote-debugging-address=0.0.0.0
-      - --remote-debugging-port=9222
-      - --remote-allow-origins=*
+    # demos network too: program sandboxes (§28) receive CONTEXT7_MCP_URL and
+    # must be able to resolve/reach it from their DinD
     networks: [internal, demos]
     restart: unless-stopped
 
@@ -164,25 +152,28 @@ services:
     restart: unless-stopped
 
   browser-mcp:
-    # The dev agent's browser tool: Playwright MCP in HTTP mode bridging over CDP
-    # to the shared `chrome` service - no browser binaries here, page loads run in
-    # chrome, which reaches the runner container's dev server over `internal`.
-    # Internal-only: dev runners consume it via BROWSER_MCP_URL; demos and program
-    # sandboxes never see it. The CDP hop rides an in-container localhost relay
-    # because Chromium rejects DevTools HTTP requests whose Host header is a DNS
-    # name (IP/localhost only); the endpoint pins 127.0.0.1 because `localhost` can
-    # resolve to ::1, which the relay does not bind. It re-resolves `chrome` per connection, so
-    # a chrome restart never strands it.
-    image: node:20-alpine
+    # The dev agent's browser tool: the official Playwright MCP image with its own
+    # bundled headless chromium (the image entrypoint already carries --headless
+    # --browser chromium --no-sandbox; container args append to it). --isolated
+    # gives EVERY MCP session its own in-memory browser profile, born on connect
+    # and destroyed on disconnect - a killed dev run can never wedge or leak state
+    # into another session's browser (the shared-chrome-over-CDP design this
+    # replaces died exactly that way: one wedged chromium timed out every
+    # session's initializeServer while all shallow health checks stayed green).
+    # Page loads run HERE and reach the runner container's dev server over
+    # `internal`; on `demos` too so demos-side targets stay reachable. Dev runners
+    # consume it via BROWSER_MCP_URL; demos and program sandboxes never see it.
+    image: mcr.microsoft.com/playwright/mcp:v0.0.79
+    init: true
     command:
-      - sh
-      - -c
-      - |
-        node -e "const net=require('net');net.createServer(s=>{const c=net.connect(9222,'chrome');s.pipe(c).pipe(s);s.on('error',()=>c.destroy());c.on('error',()=>s.destroy());}).listen(9222,'127.0.0.1')" &
-        exec npx -y @playwright/mcp@0.0.79 --port 3000 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint http://127.0.0.1:9222
-    environment:
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-    networks: [internal]
+      - --isolated
+      - --port
+      - "3000"
+      - --host
+      - 0.0.0.0
+      - --allowed-hosts
+      - "*"
+    networks: [internal, demos]
     restart: unless-stopped
 
   traefik:
