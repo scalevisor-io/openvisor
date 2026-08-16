@@ -2575,6 +2575,16 @@ table.data tbody tr:hover {
   border-radius: 2px 2px 0 0;
   background: color-mix(in srgb, var(--surface, #fff) 55%, transparent);
 }
+/* Request outcomes: done fills the bar, canceled stacks on top in the danger
+   tone - the same one-glance stacked idiom as the MCP share above. */
+.usage-bar-requests {
+  background: var(--ok, #22c55e);
+}
+.usage-bar-canceled {
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--danger, #ef4444);
+}
 .field-label {
   display: block;
   font-family: var(--font-mono);

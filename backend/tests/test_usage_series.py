@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from app.core.db import SyncSession
-from app.models import CreditTransaction, Organization, Project, utcnow
+from app.models import CreditTransaction, Organization, Project, Request, utcnow
 
 
 @pytest.fixture
@@ -30,6 +30,7 @@ def org_project():
     finally:
         with SyncSession() as db:
             db.execute(delete(CreditTransaction).where(CreditTransaction.org_id == ids[0]))
+            db.execute(delete(Request).where(Request.project_id == ids[1]))
             db.execute(delete(Project).where(Project.org_id == ids[0]))
             db.execute(delete(Organization).where(Organization.id == ids[0]))
             db.commit()
@@ -95,6 +96,50 @@ async def test_series_is_dense_and_sums_the_window(org_project):
     assert out["totals"]["mcp_tokens"] == 800
     assert out["totals"]["credits"] == pytest.approx(1.75)  # topup excluded
     assert sum(1 for b in out["series"] if b["tokens"] == 0) == 5
+
+
+@pytest.mark.asyncio
+async def test_request_outcomes_bucket_done_vs_canceled(org_project):
+    """§usage graph request outcomes: done and rejected ("canceled") requests
+    land in their filing day's bucket; open/in-flight ones never count; the
+    lifetime totals see past the window."""
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.api import usage as usage_api
+    from app.core.config import settings
+    from app.models import Request
+
+    org_id, pid = org_project
+    now = utcnow()
+    with SyncSession() as db:
+        db.add(Request(project_id=pid, title="shipped", type="feature",
+                       handling="ai", status="done"))
+        db.add(Request(project_id=pid, title="killed", type="bug",
+                       handling="ai", status="rejected",
+                       created_at=now - timedelta(days=2)))
+        db.add(Request(project_id=pid, title="still open", type="bug",
+                       handling="ai", status="open"))
+        db.add(Request(project_id=pid, title="ancient win", type="feature",
+                       handling="ai", status="done",
+                       created_at=now - timedelta(days=30)))
+        db.commit()
+
+    eng = create_async_engine(settings.database_url)
+    try:
+        async with async_sessionmaker(eng, class_=AsyncSession,
+                                      expire_on_commit=False)() as db:
+            project = await db.get(Project, pid)
+            out = await usage_api.project_usage(days=7, project=project, db=db)
+    finally:
+        await eng.dispose()
+
+    assert out["totals"]["requests_done"] == 1          # the window slice
+    assert out["totals"]["requests_canceled"] == 1
+    assert out["totals"]["lifetime_requests_done"] == 2  # the ancient win too
+    assert out["totals"]["lifetime_requests_canceled"] == 1
+    assert out["series"][-1]["requests_done"] == 1       # today's bucket
+    assert sum(b["requests_canceled"] for b in out["series"]) == 1
+    assert all("requests_done" in b and "requests_canceled" in b for b in out["series"])
 
 
 def test_zero_never_renders_as_negative_zero(org_project):
