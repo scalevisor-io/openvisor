@@ -145,6 +145,33 @@ def _dump_error(exc: Exception) -> None:
         print(f"driver: error report failed: {dump_exc}", file=sys.stderr)
 
 
+def _with_images(text: str):
+    """Attach the worker-staged conversation screenshots (§chat images →
+    sandbox: .openvisor/images.json, vision-gated worker-side) to a user
+    message as inline data URIs, so "fix what this screenshot shows" reaches
+    the model as pixels. Plain text when there is nothing staged or the SDK
+    refuses the shape - an image must never fail a build."""
+    manifest = OPENVISOR / "images.json"
+    if not manifest.is_file():
+        return text
+    try:
+        import base64
+        from openhands.sdk.llm import ImageContent, Message, TextContent
+        urls = []
+        for entry in json.loads(manifest.read_text())[:4]:
+            data = (Path("/workspace") / entry["path"]).read_bytes()
+            ctype = entry.get("content_type", "image/png")
+            urls.append(f"data:{ctype};base64,{base64.b64encode(data).decode()}")
+        if not urls:
+            return text
+        print(f"driver: attaching {len(urls)} conversation screenshot(s)", flush=True)
+        return Message(role="user",
+                       content=[TextContent(text=text), ImageContent(image_urls=urls)])
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: screenshot attach skipped: {exc}", file=sys.stderr)
+        return text
+
+
 def main() -> int:
     task = (OPENVISOR / "task.md").read_text()
     # A previous session's end-of-run marker must never drive this run's copy.
@@ -284,9 +311,9 @@ def main() -> int:
             message = ("Continuing the SAME task from your previous session - its "
                        "full history is restored above. Pick up exactly where you "
                        "stopped and finish the task.")
-        conversation.send_message(message)
+        conversation.send_message(_with_images(message))
     else:
-        conversation.send_message(task)
+        conversation.send_message(_with_images(task))
 
     try:
         conversation.run()
