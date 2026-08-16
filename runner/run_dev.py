@@ -192,7 +192,10 @@ def main() -> int:
     effort = (os.environ.get("LLM_REASONING_EFFORT") or "").strip()
     if effort:
         llm_kwargs["reasoning_effort"] = effort
-    cache_key = (os.environ.get("LLM_CACHE_KEY") or "").strip()
+    # OpenAI rejects prompt_cache_key over 64 chars with a 400 - which would
+    # fail EVERY call of the build. An overlong key degrades to truncation
+    # (worst case a cache miss), never a dead run.
+    cache_key = (os.environ.get("LLM_CACHE_KEY") or "").strip()[:64]
     if cache_key and _cache_key_supported(llm_kwargs["base_url"]):
         llm_kwargs["litellm_extra_body"] = {"prompt_cache_key": cache_key}
     try:

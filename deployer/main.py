@@ -561,8 +561,10 @@ def dev_run(body: DevRunIn):
         "-e", f"LLM_REASONING_EFFORT={body.reasoning_effort or ''}",
         # Stable per-workspace id (resume chains share it): the runner sends it as
         # prompt_cache_key so providers with opt-in prompt caching (Mistral) serve
-        # + report cache reads, billed at the §18 cached rate.
-        "-e", f"LLM_CACHE_KEY=dev-{rel}",
+        # + report cache reads, billed at the §18 cached rate. Last path segment
+        # only (the run id): OpenAI caps prompt_cache_key at 64 chars and the
+        # full devruns/<pid>/<rid> path is 85 - it 400s EVERY call of the build.
+        "-e", f"LLM_CACHE_KEY=dev-{rel.rsplit('/', 1)[-1]}",
     ]
     if DEV_SANDBOX_DOCKER:
         cmd += (["--runtime", RUNTIME] if RUNTIME else ["--privileged"])
