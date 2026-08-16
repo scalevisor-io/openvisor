@@ -23,6 +23,11 @@ spec:
         - podSelector:
             matchLabels:
               app: traefik
+        # §After-shots: the deployer photographs a just-booted verify pod
+        # through browser-mcp, whose page loads originate here.
+        - podSelector:
+            matchLabels:
+              app: browser-mcp
   egress:
     - to:
         - namespaceSelector: {}

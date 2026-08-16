@@ -103,6 +103,8 @@ spec:
               value: {{ .Values.gateway.name | quote }}
             - name: GATEWAY_SECTION
               value: {{ include "openvisor.routeSection" . | quote }}
+            - name: BROWSER_MCP_URL
+              value: http://browser-mcp:3000/mcp
             - name: DEMO_DIND_IMAGE
               value: {{ .Values.demo.dindImage | quote }}
             - name: DEMO_CPU_LIMIT

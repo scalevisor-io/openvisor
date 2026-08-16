@@ -114,6 +114,8 @@ services:
       PLATFORM_NETWORK: ${COMPOSE_PROJECT_NAME:-openvisor}_internal
       RUNNER_IMAGE: ${COMPOSE_PROJECT_NAME:-openvisor}-runner
       DEMOS_NETWORK: ${DEMOS_NETWORK:-openvisor-demos}
+      # §After-shots: the browser service the verify window photographs through
+      BROWSER_MCP_URL: http://browser-mcp:3000/mcp
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - traefik-dynamic:/traefik-dynamic

@@ -17,6 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+import browsershot
 import healthcheck
 import programs_common
 
@@ -76,6 +77,10 @@ class VerifyIn(BaseModel):
     # §parallel-builds MR3 ('' = legacy verify-<project_id> + project workspace)
     name: str = ""
     run_dir: str = ""
+    # §After-shots: [[width, height], ...] viewports to photograph once the app
+    # answers (browsershot.py via browser-mcp, inside the verify window - the
+    # sandbox dies in the finally). [] = no screenshots. Always best-effort.
+    screenshots: list = []
 
 
 class DevStopIn(BaseModel):
@@ -384,7 +389,8 @@ def verify(body: VerifyIn):
     if ORCHESTRATOR == "kubernetes":
         return k8s_backend.demo_verify(body.project_id, body.port, body.workdir,
                                        CPU_LIMIT, MEM_LIMIT,
-                                       name=body.name, run_dir=body.run_dir)
+                                       name=body.name, run_dir=body.run_dir,
+                                       screenshots=body.screenshots)
     name = body.name or verify_name(body.project_id)
     if body.name and not re.match(r"^verify-[0-9a-fA-F-]{1,64}(-[0-9a-fA-F]{1,16})?$", body.name):
         raise HTTPException(400, "bad verify name")
@@ -403,7 +409,12 @@ def verify(body: VerifyIn):
             return {"ok": False, "logs": str(exc.detail)}
         # Booted - run the advisory acceptance checks against it (§Phase 1 #5).
         acceptance = run_acceptance(name, body.port, body.checks) if body.checks else None
-        return {"ok": True, "logs": "", "acceptance": acceptance}
+        # §After-shots: the verify DinD publishes $PORT on its own interface and
+        # browser-mcp shares the demos network, so the sandbox is photographable
+        # by name for exactly as long as this window stays open.
+        shots = (browsershot.capture(f"http://{name}:{body.port}", body.screenshots)
+                 if body.screenshots else [])
+        return {"ok": True, "logs": "", "acceptance": acceptance, "screenshots": shots}
     finally:
         run(["docker", "rm", "-f", name], check=False)
 

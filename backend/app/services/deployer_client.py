@@ -42,7 +42,7 @@ def stop_dev_job(project_id: str, run_name: str = "") -> dict:
 
 
 def verify_demo(project_id: str, workdir: str = ".", checks: list | None = None,
-                name: str = "", run_dir: str = "") -> dict:
+                name: str = "", run_dir: str = "", screenshots: list | None = None) -> dict:
     """§14.5 boot gate: test-boot the workspace's demo stack in a throwaway
     sandbox. {"ok": bool, "logs": str, "acceptance": {...}|None} - ok=false is
     agent-fixable (build/boot failure with diagnostics); infra errors raise
@@ -51,7 +51,7 @@ def verify_demo(project_id: str, workdir: str = ".", checks: list | None = None,
     Generous timeout: the sandbox may cold-pull images and build from scratch."""
     return _call("POST", "/demos/verify",
                  {"project_id": project_id, "workdir": workdir, "checks": checks or [],
-                  "name": name, "run_dir": run_dir},
+                  "name": name, "run_dir": run_dir, "screenshots": screenshots or []},
                  timeout=1500)
 
 
