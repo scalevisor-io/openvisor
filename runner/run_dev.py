@@ -321,6 +321,21 @@ def main() -> int:
     try:
         conversation.run()
     except Exception as exc:
+        # §cache-key fallback (mirror of services/llm.py's strip-and-retry): a
+        # provider rejecting the prompt_cache_key extra param kills the session
+        # mid-call. Re-exec the driver ONCE without the key - the persisted
+        # conversation resumes where it stopped, so the worst case is uncached
+        # pricing, never a dead build. os.execve skips finally: bill first.
+        if ("prompt_cache_key" in str(exc)
+                and "litellm_extra_body" in llm_kwargs
+                and not os.environ.get("OPENVISOR_CACHE_KEY_RETRIED")):
+            print("driver: provider rejected prompt_cache_key - retrying the "
+                  "session without it", file=sys.stderr)
+            _dump_usage(llm, quiet=True)
+            env = dict(os.environ, OPENVISOR_CACHE_KEY_RETRIED="1")
+            env.pop("LLM_CACHE_KEY", None)
+            os.execve(sys.executable,
+                      [sys.executable, os.path.abspath(__file__)], env)
         _dump_error(exc)
         raise
     finally:
