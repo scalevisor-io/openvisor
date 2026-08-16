@@ -1,0 +1,99 @@
+# §CI deploy: auto-redeploy a Kubernetes instance when the default branch moves.
+#
+# Include this from the instance repository's root `.gitlab-ci.yml`:
+#
+#   include:
+#     - local: ci/deploy.gitlab-ci.yml
+#   variables:
+#     IMAGE_REGISTRY: registry.example.com/openvisor   # where images are pushed
+#     IMAGE_REGISTRY_USER: nologin                     # e.g. `nologin` on Scaleway
+#     IMAGE_REGISTRY_PASSWORD: $MY_REGISTRY_SECRET     # map your masked CI variable
+#     DEPLOY_DOMAIN: example.com
+#     GATEWAY_TLS_ENABLED: "true"
+#     RELEASE_NAME: openvisor
+#     NAMESPACE: openvisor
+#     BRAND_NAME: ...                                  # landing build args (compose
+#     CONSULTANT_NAME: ...                             # reads them from the env)
+#
+# CI/CD variables to add on the project (Settings → CI/CD → Variables):
+#   KUBECONFIG                type File, Protected - kubeconfig of the target
+#                             cluster (kubectl/helm read the env var as a path,
+#                             which is exactly what a File variable provides).
+#                             File variables cannot be Masked (multiline).
+#   <your registry secret>    Masked + Protected, mapped to IMAGE_REGISTRY_PASSWORD
+#                             in the variables block above.
+#
+# What this pipeline does on the default branch: build every platform image via
+# compose.prod.yml (the exact `make prod-build` artifacts - parity by
+# construction) tagged with the commit SHA (plus `latest`, so the manual
+# `make helm-bpdr` path stays fresh), push them, then `helm upgrade
+# --reuse-values --set imageTag=<sha>` - the per-commit tag guarantees a real
+# rollout and keeps helm history rollback-able (`helm rollback`).
+#
+# What it deliberately does NOT do (these stay on the manual `make helm-bpdr`
+# path, which renders values from .env.deploy and syncs the env Secret):
+#   - bootstrap a fresh cluster (release/namespace/TLS + env Secrets/registry
+#     pull secret/storage classes) - the deploy job SKIPS, green, until
+#     `helm status` finds the release, so pointing KUBECONFIG at a
+#     not-yet-migrated cluster never fails the pipeline;
+#   - sync the openvisor-env Secret (.env changes), re-render chart values
+#     (--reuse-values keeps the stored ones), or apply Gateway/Traefik CRDs.
+#     A release that introduces NEW chart values needs one manual deploy.
+#
+# The runner needs a docker daemon (socket-bound docker executor or dind) for
+# the build job; the deploy job only needs network reach to the cluster API.
+
+stages: [build, deploy]
+
+.deploy-rules:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $KUBECONFIG'
+
+build-push:
+  stage: build
+  extends: .deploy-rules
+  image: docker:27
+  variables:
+    GIT_DEPTH: "20"
+  script:
+    - '[ -n "$IMAGE_REGISTRY_PASSWORD" ] || { echo "Set the registry password CI variable (see ci/deploy.gitlab-ci.yml header)"; exit 1; }'
+    - echo "$IMAGE_REGISTRY_PASSWORD" | docker login "${IMAGE_REGISTRY%%/*}" -u "${IMAGE_REGISTRY_USER:-nologin}" --password-stdin
+    - IMAGE_TAG="$CI_COMMIT_SHORT_SHA" ./scripts/deploy-helm.sh build-push
+    # keep :latest pointing at the same build so the manual make helm-bpdr
+    # path (and compose prod) never runs stale images
+    - |
+      for img in backend mcp deployer app landing runner; do
+        docker tag "$IMAGE_REGISTRY/$img:$CI_COMMIT_SHORT_SHA" "$IMAGE_REGISTRY/$img:latest"
+        docker push "$IMAGE_REGISTRY/$img:latest"
+      done
+
+deploy:
+  stage: deploy
+  extends: .deploy-rules
+  image: dtzar/helm-kubectl:3.16.1
+  timeout: 90m
+  resource_group: production
+  script:
+    - kubectl version >/dev/null  # fail fast on an unreachable cluster/bad kubeconfig
+    - |
+      # Bootstrap-aware: a cluster without the release (e.g. a migration target
+      # not yet stood up) skips green instead of failing every pipeline.
+      if ! helm status "$RELEASE_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo "Release $RELEASE_NAME not found on this cluster - skipping deploy."
+        echo "Bootstrap it once with 'make helm-bpdr' (namespace, TLS + env Secrets,"
+        echo "registry pull secret, storage classes), then CI takes over."
+        exit 0
+      fi
+    - |
+      # §deploy gate: never roll the platform while a build sandbox Job is live
+      # (an interrupted run strands at 'running' until the reaper). The worker's
+      # 15-minute termination grace covers post-sandbox processing.
+      for i in $(seq 1 90); do
+        active="$(kubectl get jobs -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cv Complete || true)"
+        [ "${active:-0}" = "0" ] && break
+        echo "deploy gate: $active active sandbox job(s), waiting..."
+        sleep 30
+      done
+      [ "${active:-0}" = "0" ] || { echo "deploy gate held for 45 minutes - retry the job"; exit 1; }
+    - helm upgrade "$RELEASE_NAME" ./k8s --namespace "$NAMESPACE" --reuse-values --set-string imageTag="$CI_COMMIT_SHORT_SHA" --wait --timeout 20m
+    - kubectl -n "$NAMESPACE" get pods
