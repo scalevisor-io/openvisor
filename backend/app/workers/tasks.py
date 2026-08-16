@@ -4318,6 +4318,24 @@ def _record_request_pr(db: Session, req: Request | None, ref: dict | None) -> No
     req.pr_urls = existing + [ref]
 
 
+def _refresh_change_description(ops: dict, number: int, body: str,
+                                agent_summary: str | None, project_id: str) -> None:
+    """§PR description parity (customer GitHub/GitLab path): open() returns a
+    PRE-EXISTING open change untouched, so a revise run's fresh .openvisor/pr.md
+    never reached the displayed description - stale claims outlived the runs
+    that fixed them (prod: an MR said "no browser available; verified by static
+    grep" while its newest commits carried real viewport verification). When
+    THIS run authored a summary, push the rebuilt body onto the change; without
+    one, the existing description is kept - never a downgrade, exactly like the
+    platform-path twin (_personalize_platform_mr). Best-effort."""
+    if not agent_summary:
+        return
+    try:
+        ops["describe"](number, body)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("description refresh failed for %s: %s", project_id, exc)
+
+
 def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
     """Provider adapter for the publish + §14.7 auto-merge path: seed the base,
     open the change, read its diff, merge it - on the push repo. GitHub PRs and
@@ -4335,6 +4353,8 @@ def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
                 github.open_pr(owner, repo, branch, base, title=title, body=body,
                                token=token), "number", "html_url"),
             "diff": lambda number: github.pr_diff(owner, repo, number, token=token),
+            "describe": lambda number, body: github.update_pr_body(
+                owner, repo, number, body, token=token),
             "merge": lambda number: github.merge_pr(
                 owner, repo, number, method="squash" if squash else "merge", token=token),
         }
@@ -4347,6 +4367,8 @@ def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
             gitlab.customer_open_mr(base_url, token, path, branch, base, title, body),
             "iid", "web_url"),
         "diff": lambda number: gitlab.customer_mr_diff(base_url, token, path, number),
+        "describe": lambda number, body: gitlab.customer_update_mr_desc(
+            base_url, token, path, number, body),
         "merge": lambda number: gitlab.customer_merge_mr(base_url, token, path, number,
                                                          squash=squash),
     }
@@ -4452,6 +4474,7 @@ def _run_development_customer(db: Session, project: Project, target: dict,
     project.dev_pr_url = change.get("url")
     _set_run_pr(project)
     _record_request_pr(db, req, _pr_ref(change["number"], change.get("url"), provider))
+    _refresh_change_description(ops, change["number"], body, agent_summary, project.id)
     if req is not None and req.source_issue_iid and project.dev_pr_url:
         _comment_source_issue(db, project, target, req)
 
