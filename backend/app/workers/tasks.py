@@ -2041,8 +2041,8 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
 def _mcp_config(db: Session, kb_ids: list | None = None,
                 project: Project | None = None) -> tuple[str, list[str]]:
     """Assemble the dev run's MCP server map from the enabled KnowledgeBase rows
-    (§KB). `browser` (Playwright MCP bridging the shared headless chrome via the
-    browser-mcp sidecar) is a TOOL, not a KB, so it is always injected. The
+    (§KB). `browser` (the Playwright MCP sidecar, one isolated bundled-chromium
+    session per connection) is a TOOL, not a KB, so it is always injected. The
     enabled `context7` + `mcp` + `websearch` KBs become MCP servers (a websearch
     row resolves to the websearch-mcp sidecar's per-provider route, its key as the
     bearer); disabling a KB on the admin

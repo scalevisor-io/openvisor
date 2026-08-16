@@ -37,7 +37,6 @@ compose and Kubernetes. .Values.backendEnv wins last.
   "TRAEFIK_HTTP_PORT" (ternary "443" "80" (eq .Values.scheme "https"))
   "DEPLOYER_URL" "http://deployer:8500"
   "CONTEXT7_MCP_URL" "http://context7:3000/mcp"
-  "CHROME_CDP_URL" "http://chrome:9222"
   "WORKSPACES_DIR" "/workspaces"
   "DEMO_CPU_LIMIT" (.Values.demo.cpuLimit | toString)
   "DEMO_MEM_LIMIT" (.Values.demo.memLimit | toString)
