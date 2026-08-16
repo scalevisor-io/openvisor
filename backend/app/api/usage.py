@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_db
 from app.core.deps import get_project_for_user
 from app.api.mcp_tokens import positive
-from app.models import CreditTransaction, Project, utcnow
+from app.models import CreditTransaction, Project, Request, utcnow
 
 router = APIRouter(prefix="/api/projects/{project_id}/usage", tags=["usage"])
 
@@ -48,7 +48,8 @@ async def project_usage(days: int = Query(30, ge=1, le=365),
     start = since.date()
     for i in range(days):
         d = start + timedelta(days=i)
-        buckets[d] = {"day": d.isoformat(), "tokens": 0, "credits": 0.0, "mcp_tokens": 0}
+        buckets[d] = {"day": d.isoformat(), "tokens": 0, "credits": 0.0, "mcp_tokens": 0,
+                      "requests_done": 0, "requests_canceled": 0}
     for r in rows:
         d = r.day.date()
         if d not in buckets:  # clock skew / a row on the boundary
@@ -58,6 +59,29 @@ async def project_usage(days: int = Query(30, ge=1, le=365),
         buckets[d]["credits"] = positive(buckets[d]["credits"] + float(-r.amount), 6)
         if r.kind == "mcp_query":
             buckets[d]["mcp_tokens"] += int(r.tokens or 0)
+
+    # §usage graph request outcomes: done vs canceled per day. Bucketed on
+    # created_at (the only timestamp a Request carries), so a bar answers "of
+    # the requests filed that day, how did they end". "canceled" is the
+    # customer-facing name of status `rejected` (cancel_request closes with it).
+    req_day = func.date_trunc("day", Request.created_at).label("day")
+    req_rows = (await db.execute(
+        select(req_day, Request.status, func.count().label("n"))
+        .where(Request.project_id == project.id,
+               Request.created_at >= since,
+               Request.status.in_(("done", "rejected")))
+        .group_by(req_day, Request.status))).all()
+    for r in req_rows:
+        d = r.day.date()
+        if d not in buckets:
+            continue
+        key = "requests_done" if r.status == "done" else "requests_canceled"
+        buckets[d][key] += int(r.n or 0)
+    lifetime_req = dict((await db.execute(
+        select(Request.status, func.count())
+        .where(Request.project_id == project.id,
+               Request.status.in_(("done", "rejected")))
+        .group_by(Request.status))).all())
 
     series = list(buckets.values())
     return {
@@ -70,5 +94,9 @@ async def project_usage(days: int = Query(30, ge=1, le=365),
             # lifetime, from the project counters - the window is only a slice
             "lifetime_tokens": project.tokens_consumed or 0,
             "lifetime_credits": positive(project.cost_credits or 0.0),
+            "requests_done": sum(b["requests_done"] for b in series),
+            "requests_canceled": sum(b["requests_canceled"] for b in series),
+            "lifetime_requests_done": int(lifetime_req.get("done", 0)),
+            "lifetime_requests_canceled": int(lifetime_req.get("rejected", 0)),
         },
     }

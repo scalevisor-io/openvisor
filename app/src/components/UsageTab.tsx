@@ -39,6 +39,7 @@ export default function UsageTab({ projectId }: { projectId: string }) {
 
   const peak = Math.max(1, ...data.series.map((b) => b.tokens));
   const spent = data.series.filter((b) => b.tokens > 0).length;
+  const reqPeak = Math.max(0, ...data.series.map((b) => b.requests_done + b.requests_canceled));
 
   return (
     <div className="stack">
@@ -90,6 +91,57 @@ export default function UsageTab({ projectId }: { projectId: string }) {
             <div className="between tiny faint" style={{ marginTop: "0.4rem" }}>
               <span>{fmtDay(data.series[0].day)}</span>
               <span>peak {fmtTokens(peak)} / day</span>
+              <span>{fmtDay(data.series[data.series.length - 1].day)}</span>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="between mb">
+          <div className="section-title" style={{ margin: 0 }}>
+            Request outcomes
+          </div>
+          <span className="tiny faint">
+            {data.totals.requests_done} done · {data.totals.requests_canceled} canceled in this window
+          </span>
+        </div>
+        {reqPeak === 0 ? (
+          <p className="muted small" style={{ margin: 0 }}>
+            No requests reached done or canceled in this window.
+          </p>
+        ) : (
+          <>
+            {/* Same hand-drawn bar idiom as the tokens chart: a day's bar is the
+                requests FILED that day that later closed, canceled stacked in the
+                danger tone so the failure share reads at a glance. */}
+            <div className="usage-chart" role="img"
+                 aria-label={`${data.totals.requests_done} done and ${data.totals.requests_canceled} canceled requests over ${data.days} days`}>
+              {data.series.map((b) => {
+                const total = b.requests_done + b.requests_canceled;
+                return (
+                  <div key={b.day} className="usage-col" title={
+                    `${fmtDay(b.day)} - ${b.requests_done} done · ${b.requests_canceled} canceled`
+                  }>
+                    {total > 0 && (
+                      <div className="usage-bar usage-bar-requests"
+                           style={{ height: `${(total / reqPeak) * 100}%` }}>
+                        {b.requests_canceled > 0 && (
+                          <div className="usage-bar-canceled"
+                               style={{ height: `${(b.requests_canceled / total) * 100}%` }} />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="between tiny faint" style={{ marginTop: "0.4rem" }}>
+              <span>{fmtDay(data.series[0].day)}</span>
+              <span>
+                lifetime: {data.totals.lifetime_requests_done} done ·{" "}
+                {data.totals.lifetime_requests_canceled} canceled
+              </span>
               <span>{fmtDay(data.series[data.series.length - 1].day)}</span>
             </div>
           </>
