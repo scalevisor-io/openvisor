@@ -1,8 +1,7 @@
 # MCP tooling reachable from dev-run Jobs: Context7 (live library docs; needs npm
-# egress at start - it npx-installs the pinned package), headless Chrome (the
-# shared browser the demos network resolves), and browser-mcp (Playwright MCP
-# bridging to chrome over CDP - the dev agent's browser tool; npx-installed at
-# start like context7).
+# egress at start - it npx-installs the pinned package) and browser-mcp (the dev
+# agent's browser tool: the official Playwright MCP image with its own bundled
+# headless chromium, one isolated in-memory browser profile per MCP session).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -62,65 +61,11 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: chrome
-  labels:
-    {{- include "openvisor.labels" . | nindent 4 }}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: chrome
-  template:
-    metadata:
-      labels:
-        app: chrome
-        {{- include "openvisor.labels" . | nindent 8 }}
-    spec:
-      containers:
-        - name: chrome
-          image: {{ .Values.chrome.image }}
-          args:
-            - --headless
-            - --disable-gpu
-            - --no-sandbox
-            - --remote-debugging-address=0.0.0.0
-            - --remote-debugging-port=9222
-            - --remote-allow-origins=*
-          ports:
-            - name: cdp
-              containerPort: 9222
-          readinessProbe:
-            tcpSocket: { port: cdp }
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: cdp }
-            initialDelaySeconds: 30
-            periodSeconds: 30
-          resources:
-            {{- toYaml .Values.chrome.resources | nindent 12 }}
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: chrome
-  labels:
-    {{- include "openvisor.labels" . | nindent 4 }}
-spec:
-  selector:
-    app: chrome
-  ports:
-    - name: cdp
-      port: 9222
-      targetPort: cdp
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: browser-mcp
   labels:
     {{- include "openvisor.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.browserMcp.replicas }}
   selector:
     matchLabels:
       app: browser-mcp
@@ -133,30 +78,52 @@ spec:
       containers:
         - name: browser-mcp
           image: {{ .Values.browserMcp.image }}
-          # The CDP hop rides an in-container localhost relay: Chromium rejects
-          # DevTools HTTP requests whose Host header is a DNS name (IP/localhost
-          # only; pinned to 127.0.0.1 - `localhost` can resolve to ::1, which the
-          # relay does not bind), re-resolving the `chrome` Service per connection.
-          command:
-            - sh
-            - -c
-            - |
-              node -e "const net=require('net');net.createServer(s=>{const c=net.connect(9222,'chrome');s.pipe(c).pipe(s);s.on('error',()=>c.destroy());c.on('error',()=>s.destroy());}).listen(9222,'127.0.0.1')" &
-              exec npx -y {{ .Values.browserMcp.package }} --port 3000 --host 0.0.0.0 --allowed-hosts "*" --cdp-endpoint http://127.0.0.1:9222
-          env:
-            - name: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
-              value: "1"
+          # The image entrypoint already carries --headless --browser chromium
+          # --no-sandbox; args append. --isolated = one in-memory browser profile
+          # per MCP session, created on connect and destroyed on disconnect, so a
+          # killed dev run can never wedge or leak state into another session.
+          args:
+            - --isolated
+            - --port
+            - "3000"
+            - --host
+            - 0.0.0.0
+            - --allowed-hosts
+            - "*"
           ports:
             - name: http
               containerPort: 3000
           readinessProbe:
             tcpSocket: { port: http }
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 10
+          # The liveness probe exercises the REAL path - full MCP session +
+          # browser_navigate - because the wedge this architecture replaced kept
+          # every shallow check green (HTTP 200, websocket 101) while every
+          # actual browser session timed out. A wedged replica is recycled in
+          # ~5 minutes instead of living for days.
           livenessProbe:
-            tcpSocket: { port: http }
-            initialDelaySeconds: 60
-            periodSeconds: 30
+            exec:
+              command:
+                - node
+                - -e
+                - |
+                  const http=require('http');
+                  const call=(m,h,b)=>new Promise((res,rej)=>{const r=http.request({host:'127.0.0.1',port:3000,path:'/mcp',method:m,headers:h},x=>{let d='';x.on('data',c=>d+=c);x.on('end',()=>res({h:x.headers,d}))});r.on('error',rej);if(b)r.write(JSON.stringify(b));r.end()});
+                  (async()=>{
+                    const H={'content-type':'application/json','accept':'application/json, text/event-stream'};
+                    const i=await call('POST',H,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'liveness',version:'0'}}});
+                    const sid=i.h['mcp-session-id']; if(!sid)throw new Error('no session id');
+                    const H2=Object.assign({},H,{'mcp-session-id':sid});
+                    await call('POST',H2,{jsonrpc:'2.0',method:'notifications/initialized'});
+                    const n=await call('POST',H2,{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'browser_navigate',arguments:{url:'about:blank'}}});
+                    await call('DELETE',H2);
+                    if(!/about:blank/.test(n.d)||/### Error/.test(n.d))throw new Error('navigate failed: '+n.d.slice(0,160));
+                  })().then(()=>process.exit(0)).catch(e=>{console.error(e.message);process.exit(1)});
+            initialDelaySeconds: 30
+            timeoutSeconds: 50
+            periodSeconds: 120
+            failureThreshold: 2
           resources:
             {{- toYaml .Values.browserMcp.resources | nindent 12 }}
 ---
@@ -169,6 +136,9 @@ metadata:
 spec:
   selector:
     app: browser-mcp
+  # HTTP MCP sessions live in one replica's memory - keep a client (one sandbox
+  # = one pod IP) pinned to the replica that holds its session.
+  sessionAffinity: ClientIP
   ports:
     - name: http
       port: 3000

@@ -156,24 +156,21 @@ context7:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
 
-chrome:
-  image: zenika/alpine-chrome:latest
-  resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { cpu: "1", memory: 1Gi }
-
 # Web-search MCP (§KB websearch kind) - runs the mcp image with mcp/websearch.py.
 websearchMcp:
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }
 
+# The dev agent's browser tool: official Playwright MCP image (bundled headless
+# chromium), one isolated in-memory browser per MCP session. Stateless per
+# session - scale with replicas (the Service pins a client to its replica).
 browserMcp:
-  image: node:20-alpine
-  package: "@playwright/mcp@0.0.79"
+  image: mcr.microsoft.com/playwright/mcp:v0.0.79
+  replicas: 2
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { cpu: "1", memory: 512Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
 
 mailpit:
   # Dev/test mail sink (compose.dev parity). When enabled the chart also points

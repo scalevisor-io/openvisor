@@ -44,7 +44,7 @@ spec:
 # cloud metadata (169.254.0.0/16, blocked via privateCidrs so the agent can't SSRF
 # the instance metadata service for node credentials). Set networkPolicy.egressAllowlist
 # to switch to a Copilot-style default-deny allowlist. Ingress only from the
-# chrome pod: the agent's browser tool (browser-mcp) drives chrome, whose page
+# browser-mcp pods: the agent's browser tool runs its own chromium, whose page
 # loads must reach the dev server the agent starts inside its own pod.
 #
 # §egress: this policy governs UNLOCKED runs only - a run the admin's per-run
@@ -69,7 +69,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: chrome
+              app: browser-mcp
   egress:
     - to:
         - namespaceSelector: {}
@@ -139,7 +139,7 @@ spec:
 # tools, the Tailscale git path, and its proxy - NO direct public internet. The
 # proxy (own policy below) then permits just the allowlisted hosts, so an agent that
 # ignores HTTP(S)_PROXY still has no route out except through the filter. Ingress
-# from chrome is preserved (the browser tool). This policy exists regardless of the
+# from browser-mcp is preserved (the browser tool). This policy exists regardless of the
 # Helm egress mode above; the label is what activates it, set per run at dispatch.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -156,7 +156,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app: chrome
+              app: browser-mcp
   egress:
     - to:
         - namespaceSelector: {}
@@ -218,7 +218,7 @@ spec:
 # Program-run sandboxes (§28, admin-authored code processing customer inputs):
 # egress to DNS, context7 (the one in-cluster tool their env carries) and the
 # public internet (base images, the program's own data sources / LLM endpoint)
-# - but NOT postgres/redis/deployer/api/chrome/browser-mcp. No ingress: programs
+# - but NOT postgres/redis/deployer/api/browser-mcp. No ingress: programs
 # are run-to-exit jobs, nothing routes to them.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

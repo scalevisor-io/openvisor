@@ -648,7 +648,7 @@ def _egress_env(run_name: str) -> list:
     """HTTP(S)_PROXY pointing at the per-run proxy, and NO_PROXY for the in-cluster
     hosts the runner must reach DIRECTLY (tools + cluster DNS namespaces)."""
     proxy = f"http://{_egress_proxy_name(run_name)}:{EGRESS_PROXY_PORT}"
-    no_proxy = ("localhost,127.0.0.1,::1,context7,browser-mcp,websearch-mcp,chrome,"
+    no_proxy = ("localhost,127.0.0.1,::1,context7,browser-mcp,websearch-mcp,"
                 ".svc,.svc.cluster.local,.cluster.local")
     return [
         {"name": "HTTP_PROXY", "value": proxy}, {"name": "http_proxy", "value": proxy},

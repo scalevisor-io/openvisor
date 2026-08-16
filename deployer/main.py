@@ -526,7 +526,7 @@ def dev_run(body: DevRunIn):
     run(["docker", "rm", "-f", name], check=False)
     cmd = [
         "docker", "run", "-d", "--name", name,
-        "--network", PLATFORM_NETWORK,  # reach context7/browser-mcp in-network (and chrome reaches the agent's dev server back)
+        "--network", PLATFORM_NETWORK,  # reach context7/browser-mcp in-network (browser-mcp's page loads reach the agent's dev server back)
         f"--cpus={CPU_LIMIT}", f"--memory={MEM_LIMIT}", "--pids-limit=2048",
     ]
     if body.mem_request:
