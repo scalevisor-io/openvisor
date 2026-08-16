@@ -257,6 +257,23 @@ def find_open_mr(project_id: int, source_branch: str) -> dict | None:
         return mrs[0] if mrs else None
 
 
+def upload_file(project_id: int, filename: str, data: bytes) -> str:
+    """Platform-GitLab twin of customer_upload_file: markdown for an uploaded
+    file (§After-shots)."""
+    with _client() as c:
+        r = c.post(f"/projects/{project_id}/uploads",
+                   files={"file": (filename, data, "image/png")})
+        r.raise_for_status()
+        return r.json()["markdown"]
+
+
+def create_mr_note(project_id: int, mr_iid: int, body: str) -> None:
+    with _client() as c:
+        r = c.post(f"/projects/{project_id}/merge_requests/{mr_iid}/notes",
+                   json={"body": body})
+        r.raise_for_status()
+
+
 def update_mr(project_id: int, mr_iid: int, title: str | None = None,
               description: str | None = None) -> None:
     """Retitle/redescribe a platform MR - the runner opens it via push options
@@ -497,6 +514,25 @@ def customer_list_open_issues(base_url: str, token: str, path: str) -> list[dict
             "assignees": [a.get("username", "") for a in it.get("assignees", []) or []],
             "author": (it.get("author") or {}).get("username", ""),
         } for it in r.json()]
+
+
+def customer_upload_file(base_url: str, token: str, path: str,
+                         filename: str, data: bytes) -> str:
+    """Upload a file to the project and return GitLab's ready-made markdown
+    (`![...](/uploads/...)`) - the §After-shots hosting primitive."""
+    with _customer_client(base_url, token) as c:
+        r = c.post(f"/projects/{quote(path, safe='')}/uploads",
+                   files={"file": (filename, data, "image/png")})
+        r.raise_for_status()
+        return r.json()["markdown"]
+
+
+def customer_create_mr_note(base_url: str, token: str, path: str,
+                            mr_iid: int, body: str) -> None:
+    with _customer_client(base_url, token) as c:
+        r = c.post(f"/projects/{quote(path, safe='')}/merge_requests/{mr_iid}/notes",
+                   json={"body": body})
+        r.raise_for_status()
 
 
 def customer_create_issue_note(base_url: str, token: str, path: str,

@@ -3105,14 +3105,20 @@ def _verify_boot(db: Session, project: Project) -> tuple[bool | None, str]:
             return False, sbom.fix_instruction(scan)
     checks = _acceptance_checks(db, project)
     devfeed.append_event(project, "scan", "Boot-testing the demo in a throwaway sandbox")
+    project._boot_screenshots = []  # per-worker transient, like project._dev_run
     try:
-        res = deployer_client.verify_demo(project.id, workdir=workdir, checks=checks)
+        res = deployer_client.verify_demo(project.id, workdir=workdir, checks=checks,
+                                          screenshots=[list(v) for v in AFTER_SHOT_VIEWPORTS])
     except deployer_client.DeployerError as exc:
         log.warning("boot verify unavailable for %s: %s", project.id, exc)
         return None, ""
     ok = bool(res.get("ok"))
     if ok:
         _record_acceptance(db, project, checks, res.get("acceptance"))  # advisory
+        # §After-shots: the deployer photographed the booted app inside the
+        # verify window (the sandbox is gone by publish time); stashed here for
+        # _publish_after_screenshots once the change exists.
+        project._boot_screenshots = res.get("screenshots") or []
     devfeed.append_event(project, "scan" if ok else "error",
                          "Boot check passed - the demo answers HTTP" if ok
                          else "Boot check failed - sending the log back to the agent")
@@ -3756,6 +3762,12 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                               error="No merge request found for the build's branch")
                     db.commit()
                     return
+                _publish_after_screenshots(
+                    {"upload": lambda fn, data: gitlab.upload_file(
+                         project.gitlab_project_id, fn, data),
+                     "comment": lambda n, b: gitlab.create_mr_note(
+                         project.gitlab_project_id, n, b)},
+                    mr["iid"], project)
                 merged, reason = gitlab.auto_merge(project.gitlab_project_id, mr["iid"],
                                                    squash=True)
             except Exception as exc:
@@ -4422,6 +4434,41 @@ def _refresh_change_description(ops: dict, number: int, body: str,
         log.warning("description refresh failed for %s: %s", project_id, exc)
 
 
+AFTER_SHOT_VIEWPORTS = ((1280, 800), (390, 844))  # desktop + phone
+
+
+def _publish_after_screenshots(ops: dict, number: int, project: Project) -> None:
+    """§After-shots: post the boot-gate screenshots as ONE comment on the just
+    published change - the customer sees how the build actually renders without
+    opening anything. Provider-neutral by construction: it only needs the two
+    optional _remote_ops capabilities `upload` (bytes -> image markdown) and
+    `comment` (post a note on change N). A provider that has both (GitLab: the
+    uploads API + MR notes) gets After-shots for free; one that can't host
+    images via API (GitHub - user-image uploads are browser-only) simply omits
+    `upload` and is skipped, and a FUTURE provider (Bitbucket, Gitea, ...) opts
+    in by adding those two lambdas to its _remote_ops branch. Best-effort like
+    every publish decoration - never fails the flow, consumes the stash so a
+    later publish in the same task can't repost stale pixels."""
+    import base64
+    shots = getattr(project, "_boot_screenshots", None) or []
+    project._boot_screenshots = []
+    if not shots or "upload" not in ops or "comment" not in ops:
+        return
+    try:
+        lines = ["## After",
+                 "How this change renders, photographed from the boot-checked build:", ""]
+        for shot in shots:
+            w, h = shot.get("width"), shot.get("height")
+            data = base64.b64decode(shot["png_b64"])
+            md = ops["upload"](f"after-{number}-{w}x{h}.png", data)
+            label = "Mobile" if (w or 0) < 700 else "Desktop"
+            lines += [f"**{label} ({w}×{h})**", md, ""]
+        ops["comment"](number, "\n".join(lines).strip())
+        devfeed.append_event(project, "scan", "After-screenshots posted on the change")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("after-screenshots publish failed for %s: %s", project.id, exc)
+
+
 def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
     """Provider adapter for the publish + §14.7 auto-merge path: seed the base,
     open the change, read its diff, merge it - on the push repo. GitHub PRs and
@@ -4441,6 +4488,10 @@ def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
             "diff": lambda number: github.pr_diff(owner, repo, number, token=token),
             "describe": lambda number, body: github.update_pr_body(
                 owner, repo, number, body, token=token),
+            # no "upload": GitHub has no API to host an image, so After-shots
+            # skip PRs (see _publish_after_screenshots) - comments still work.
+            "comment": lambda number, body: github.create_issue_comment(
+                owner, repo, number, body, token=token),
             "merge": lambda number: github.merge_pr(
                 owner, repo, number, method="squash" if squash else "merge", token=token),
         }
@@ -4454,6 +4505,10 @@ def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
             "iid", "web_url"),
         "diff": lambda number: gitlab.customer_mr_diff(base_url, token, path, number),
         "describe": lambda number, body: gitlab.customer_update_mr_desc(
+            base_url, token, path, number, body),
+        "upload": lambda filename, data: gitlab.customer_upload_file(
+            base_url, token, path, filename, data),
+        "comment": lambda number, body: gitlab.customer_create_mr_note(
             base_url, token, path, number, body),
         "merge": lambda number: gitlab.customer_merge_mr(base_url, token, path, number,
                                                          squash=squash),
@@ -4561,6 +4616,7 @@ def _run_development_customer(db: Session, project: Project, target: dict,
     _set_run_pr(project)
     _record_request_pr(db, req, _pr_ref(change["number"], change.get("url"), provider))
     _refresh_change_description(ops, change["number"], body, agent_summary, project.id)
+    _publish_after_screenshots(ops, change["number"], project)
     if req is not None and req.source_issue_iid and project.dev_pr_url:
         _comment_source_issue(db, project, target, req)
 
