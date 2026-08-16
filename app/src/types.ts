@@ -850,6 +850,8 @@ export interface UsageBucket {
   tokens: number;
   credits: number;
   mcp_tokens: number;
+  requests_done: number;
+  requests_canceled: number;
 }
 
 export interface ProjectUsage {
@@ -861,5 +863,9 @@ export interface ProjectUsage {
     mcp_tokens: number;
     lifetime_tokens: number;
     lifetime_credits: number;
+    requests_done: number;
+    requests_canceled: number;
+    lifetime_requests_done: number;
+    lifetime_requests_canceled: number;
   };
 }
