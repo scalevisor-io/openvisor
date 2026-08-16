@@ -32,6 +32,7 @@ export default function KnowledgeBases() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<KnowledgeBase | "new" | null>(null);
   const [addingGit, setAddingGit] = useState(false);
+  const [gitEditing, setGitEditing] = useState<KnowledgeBase | null>(null);
   const [keyEditing, setKeyEditing] = useState<KnowledgeBase | null>(null);
   const [tiersFor, setTiersFor] = useState<KnowledgeBase | null>(null);
 
@@ -237,6 +238,17 @@ export default function KnowledgeBases() {
                       Check connection
                     </button>
                   )}
+                  {kb.kind === "git" && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busyId === kb.id}
+                      onClick={() => setGitEditing(kb)}
+                      title="Change the URL, branch or credentials of this source"
+                    >
+                      Edit
+                    </button>
+                  )}
                   {kb.kind === "mcp" && (
                     <button
                       type="button"
@@ -299,6 +311,16 @@ export default function KnowledgeBases() {
           onClose={() => setAddingGit(false)}
           onDone={() => {
             setAddingGit(false);
+            load();
+          }}
+        />
+      )}
+      {gitEditing && (
+        <GitEditModal
+          kb={gitEditing}
+          onClose={() => setGitEditing(null)}
+          onSaved={() => {
+            setGitEditing(null);
             load();
           }}
         />
@@ -769,6 +791,158 @@ function GitModal({ onClose, onDone }: { onClose: () => void; onDone: () => void
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+// Edit an existing git knowledge source: name, URL, branch, and for an HTTP
+// source the token (write-only - leave blank to keep the stored one) and Basic
+// username. The API re-arms `verified:false` on any target/credential change,
+// so saving immediately re-runs the connection check and shows the result; a
+// disabled source can be enabled right here once the check passes. An SSH
+// source keeps its generated deploy keypair - the public key is re-shown for
+// installing on a moved repository, never regenerated.
+function GitEditModal({ kb, onClose, onSaved }: {
+  kb: KnowledgeBase;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = useState(kb.name);
+  const [uri, setUri] = useState(kb.uri ?? "");
+  const [ref, setRef] = useState(kb.ref ?? "main");
+  const [pat, setPat] = useState("");
+  const [httpUser, setHttpUser] = useState(kb.http_username ?? "");
+  const [saving, setSaving] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
+  const [check, setCheck] = useState<{ ok: boolean; detail: string } | null>(null);
+
+  // After a save the list is stale (name/uri/verified changed), so every way out
+  // of the modal goes through onSaved to reload it.
+  const close = savedOnce ? onSaved : onClose;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await kbApi.update(kb.id, {
+        name: name.trim() || kb.name,
+        uri: uri.trim(),
+        ref: ref.trim() || "main",
+        ...(kb.auth_kind === "http" && pat.trim() ? { api_key: pat.trim() } : {}),
+        ...(kb.auth_kind === "http" ? { http_username: httpUser.trim() } : {}),
+      });
+      setSavedOnce(true);
+      const res = await kbApi.verify(kb.id);
+      setCheck(res);
+      toast.push(res.ok ? "Saved - connection check passed" : "Saved, but the connection check failed", res.ok ? "ok" : "err");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Could not save the source.", "err");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function enable() {
+    setSaving(true);
+    try {
+      await kbApi.update(kb.id, { enabled: true });
+      toast.push("Git knowledge source enabled", "ok");
+      onSaved();
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Could not enable the source.", "err");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title="Edit Git knowledge source" onClose={close} wide>
+      <form onSubmit={save}>
+        <label className="field">
+          <span>Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={255} />
+        </label>
+        <label className="field">
+          <span>Repository URL</span>
+          <input
+            value={uri}
+            onChange={(e) => setUri(e.target.value)}
+            placeholder={kb.auth_kind === "ssh" ? "git@github.com:acme/handbook.git" : "https://github.com/acme/handbook.git"}
+            required
+            maxLength={512}
+          />
+        </label>
+        <label className="field">
+          <span>Branch</span>
+          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="main" maxLength={128} />
+        </label>
+        {kb.auth_kind === "http" && (
+          <>
+            <label className="field">
+              <span>
+                Access token <span className="muted small">(leave blank to keep the current token)</span>
+              </span>
+              <input
+                type="password"
+                value={pat}
+                onChange={(e) => setPat(e.target.value)}
+                placeholder={kb.has_api_key ? "••••••••" : "ghp_… / glpat-… / gldt-…"}
+                autoComplete="new-password"
+              />
+            </label>
+            <label className="field">
+              <span>Username (optional)</span>
+              <input
+                value={httpUser}
+                onChange={(e) => setHttpUser(e.target.value)}
+                placeholder="oauth2"
+                maxLength={255}
+                autoComplete="off"
+              />
+              <span className="muted small">
+                Leave empty for a personal access token. A GitLab deploy token needs its
+                generated username (gitlab+deploy-token-N); a Bitbucket app password needs
+                your account username.
+              </span>
+            </label>
+          </>
+        )}
+        {kb.auth_kind === "ssh" && kb.ssh_public_key && (
+          <div className="mb">
+            <p className="small">
+              This source authenticates with its <strong>read-only deploy key</strong> - install it on the
+              repository if the URL changed:
+            </p>
+            <CopyField value={kb.ssh_public_key} block />
+          </div>
+        )}
+        {check && (
+          <Alert kind={check.ok ? "success" : "error"}>
+            {check.ok ? "Connected. " : "Connection failed. "}
+            {check.detail}
+          </Alert>
+        )}
+        <div className="row gap-sm mt">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            Save &amp; check connection
+          </button>
+          {check?.ok && !kb.enabled && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={enable}
+              disabled={saving}
+              title="Enable and index this source"
+            >
+              Enable source
+            </button>
+          )}
+          <button type="button" className="btn" onClick={close} disabled={saving}>
+            Close
+          </button>
+        </div>
+      </form>
     </Modal>
   );
 }
