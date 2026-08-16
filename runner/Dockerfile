@@ -7,7 +7,7 @@ FROM python:3.12-slim
 # docker-cli package (a Recommends, which --no-install-recommends skips): the
 # sandbox shipped dockerd with no `docker` for months before §dev-docker.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client curl ca-certificates docker.io docker-cli \
+    git make openssh-client curl ca-certificates docker.io docker-cli \
     && rm -rf /var/lib/apt/lists/*
 
 # gh + glab so the agent drives GitHub/GitLab through their CLIs (issues, PRs,
