@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 
 from app.agents import pipeline
 from app.core.config import settings
-from app.models import DevRunRecord, Project, utcnow
-from app.services import devfeed
+from app.models import DevRun, DevRunRecord, Project, utcnow
+from app.services import dev_concurrency, devfeed
 from app.services.agent_eval.metrics import RunRecord, _PASS_STATES
 
 # Pipeline-owned error strings that pin a specific gate outcome (see workers/tasks.py).
@@ -87,8 +87,20 @@ def capture_run_record(db: Session, project: Project, *, tokens0: int,
     # per-run snapshot is the only source for the split. Output is clamped to the
     # billed total so input + output always reconciles with `credits`; an absent
     # or torn snapshot degrades to input-only rather than losing the row.
+    # The snapshot lives in the RUN's workspace, which `run_ws` finds through the
+    # run bound to the project INSTANCE - a session-local attribute. This capture
+    # runs inside `run_development`'s finally, which re-loads the project in a
+    # FRESH session, so nothing is bound there and the join silently falls back to
+    # the legacy checkout, where a parallel-mode run keeps no progress.json. Bind
+    # the run explicitly (in-memory only) or the split reads as zero exactly like
+    # the hardcoded value it replaced - which is how it shipped the first time.
     output_tokens = 0
     try:
+        run = db.execute(
+            select(DevRun).where(DevRun.project_id == project.id)
+            .order_by(DevRun.created_at.desc())).scalars().first()
+        if run is not None:
+            dev_concurrency.bind_run(project, run)
         snapshot = devfeed.read_progress(project) or {}
         output_tokens = min(max(0, int(snapshot.get("output_tokens") or 0)), tokens)
     except Exception:  # noqa: BLE001 - metering detail must never break the capture

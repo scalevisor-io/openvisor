@@ -8,10 +8,12 @@ derivation, the split (billing has already unlinked usage.json by capture time),
 the attempt auto-increment (pass@1 vs pass@k), the RunRecord round-trip, and that
 a captured batch feeds report.aggregate.
 """
+import json
 from datetime import timedelta
 
+from app.core.config import settings
 from app.core.db import SyncSession
-from app.models import DevRunRecord, Organization, Project, utcnow
+from app.models import DevRun, DevRunRecord, Organization, Project, utcnow
 from app.services.agent_eval import collect
 from app.services.agent_eval.metrics import RunRecord, is_pass
 from app.services.agent_eval.report import aggregate
@@ -74,6 +76,29 @@ def test_output_tokens_come_from_the_runner_snapshot():
         # input + output always reconciles with the billed total
         assert (rec.input_tokens, rec.output_tokens) == (820, 180)
         assert rec.input_tokens + rec.output_tokens == 1000
+        db.rollback()
+
+
+def test_the_split_is_read_from_the_RUNS_workspace_not_the_legacy_checkout(
+        tmp_path, monkeypatch):
+    """The regression the monkeypatched tests below cannot see: this capture runs
+    in a fresh session where no run is bound to the project, so `run_ws` fell back
+    to Project.workspace_path - where a parallel-mode run keeps no progress.json -
+    and every split silently read zero, exactly like the hardcoded 0 it replaced."""
+    monkeypatch.setattr(settings, "workspaces_dir", str(tmp_path))
+    with SyncSession() as db:
+        p = _project(db, _org(db), dev_run_state="awaiting_merge", tokens_consumed=1000,
+                     workspace_path=str(tmp_path / "legacy-checkout"))
+        run_dir = f"devruns/{p.id}/run-1"
+        db.add(DevRun(project_id=p.id, state="running", workspace_dir=run_dir))
+        db.flush()
+        snap = tmp_path / run_dir / ".openvisor"
+        snap.mkdir(parents=True)
+        (snap / "progress.json").write_text(json.dumps(
+            {"model": "m", "input_tokens": 780, "output_tokens": 220}))
+
+        rec = _capture(db, p)            # the REAL read_progress, no monkeypatch
+        assert (rec.input_tokens, rec.output_tokens) == (780, 220)
         db.rollback()
 
 
