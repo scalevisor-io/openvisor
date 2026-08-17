@@ -6,8 +6,14 @@ FROM python:3.12-slim
 # docker.io is the DAEMON only on Debian - the client is the separate
 # docker-cli package (a Recommends, which --no-install-recommends skips): the
 # sandbox shipped dockerd with no `docker` for months before §dev-docker.
+# ripgrep and tmux are the AGENT's tools, not conveniences: the SDK warns about
+# both at startup ("For best agent performance, install tmux"), and the grep/glob
+# tools this driver adds are the ACI the agent explores a repository through -
+# without rg they fall back to slower paths, on a run that already spends most of
+# its steps reading.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git make openssh-client curl ca-certificates docker.io docker-cli \
+    ripgrep tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # gh + glab so the agent drives GitHub/GitLab through their CLIs (issues, PRs,
