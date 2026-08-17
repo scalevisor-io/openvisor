@@ -210,6 +210,8 @@ export interface DevActivityUsage {
   cached_input_tokens: number;
   total_tokens: number;
   credits_estimate: number | null;
+  // The api_model this run executes on - can change between runs.
+  model: string | null;
 }
 
 // Offset-polled chunk from GET /projects/{id}/dev-activity (RunLogChunk parity).

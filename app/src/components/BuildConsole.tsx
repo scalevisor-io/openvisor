@@ -323,11 +323,9 @@ export default function BuildConsole({
         />
       )}
 
-      {/* The stats bar also carries the lifetime counters, so it stays up for a
-          project that has spent something even when this run's feed is empty
-          (a fresh page load after the feed was reset, a run that never emitted). */}
-      {(events.length > 0 || live || project.tokens_consumed > 0
-        || project.cost_credits > 0) && (
+      {/* Per-run stats only - project-lifetime metering lives on the Usage tab,
+          not on every thread's console. */}
+      {(events.length > 0 || live || usage != null) && (
         <>
           <div className={`build-stats${live ? " is-live" : ""}`}>
             {live && started != null && (
@@ -371,15 +369,13 @@ export default function BuildConsole({
                 <span className="mono">{events.length.toLocaleString()}</span>
               </div>
             )}
-            {/* billed lifetime across all runs - the former Usage card, folded
-                in here so the page has one metering surface */}
-            {(project.tokens_consumed > 0 || project.cost_credits > 0) && (
-              <div className="stat stat-lifetime">
-                <label>lifetime</label>
-                <span className="mono" title={`${formatCreditsExact(project.cost_credits)} credits billed`}>
-                  {project.tokens_consumed.toLocaleString()} tok ·{" "}
-                  <span className="grad-text">{formatCreditsExact(project.cost_credits)} cr</span>
-                </span>
+            {/* The model THIS run executes on - it can change between runs
+                (admin reroutes, endpoint switches), so the console names it
+                per run instead of leaving the reader to guess from cost. */}
+            {usage?.model && (
+              <div className="stat stat-model">
+                <label>model</label>
+                <span className="mono" title="The model this run is billed on">{usage.model}</span>
               </div>
             )}
           </div>
