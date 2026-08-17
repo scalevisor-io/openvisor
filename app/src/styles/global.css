@@ -2519,7 +2519,7 @@ table.data tbody tr:hover {
   cursor: pointer;
 }
 .chat-starter:hover { border-color: var(--speed-from, #22d3ee); color: var(--gray-900); }
-.build-stats .stat-lifetime { margin-left: auto; text-align: right; }
+.build-stats .stat-model { margin-left: auto; text-align: right; }
 
 /* CollapsibleCard body must not break parent-child flex chains: inside the
    fixed-height chat card it takes over .chat's old direct-child role. */

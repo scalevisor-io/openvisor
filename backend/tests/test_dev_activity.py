@@ -126,6 +126,9 @@ def test_read_progress_estimates_cost_and_survives_unknown_model(tmp_path, monke
     assert usage["total_tokens"] == 1200 and usage["credits_estimate"] == 0.1234
     # the live estimate discounts prompt-cache reads exactly like billing does
     assert usage["cached_input_tokens"] == 400 and seen["cached"] == 400
+    # the console names the model this run executes on (routing can change
+    # between runs)
+    assert usage["model"] == "test-model"
 
     def _boom(model, i, o, markup=None, **kw):
         raise pricing.UnknownModelError(model)
