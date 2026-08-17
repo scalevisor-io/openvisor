@@ -212,3 +212,106 @@ def one_shot_example(project) -> str:
         return ""  # no boot contract - a demo one-shot would teach the wrong shape
     return _SCAFFOLD_REPORT if dt in _REPORT_TYPES else _SCAFFOLD_DEMO
 
+
+
+# §deliverable-aware prompt: the demo/compose obligations below are the DEFAULT
+# build contract, and they used to be unconditional - the deliverable override
+# reached only line 3 of the prompt while "Non-negotiable rules", the working
+# method's verify step and the closing Deliverable all went on demanding a
+# bootable MVP. A pull-request run therefore read four separate orders to ship
+# compose files and boot the stack, and obeyed them: one production check that
+# only had to compare prices against public docs spent its run on `make env` and
+# `docker compose up -d --build`. Non-PR deliverables (deployed_demo and the
+# report tracks, which ARE demo-booted) render byte-identical text to before.
+_APP_CONTRACT_RULES = """1. **OCPA compose convention** (base file + per-env overlays, secrets only via env vars): compose.base.yml +
+   compose.dev.yml + compose.prod.yml + Makefile + .env.example with NO defaults for
+   secrets (crash if unset). `main` is staging. All work happens through merge requests;
+   green OCPA CI auto-merges. Never push to `main` directly.
+   You MUST also ship a **`.gitlab-ci.yml`** at the repo root that validates the build.
+   It must run on a plain docker-executor runner (no privileged dind) - use exactly this
+   shape, extended with any extra static checks that make sense, but keep the
+   `validate-compose` job so the demo contract is enforced:
+
+   ```yaml
+   stages: [validate]
+   validate-compose:
+     stage: validate
+     image: docker:27
+     variables:
+       PORT: "8080"
+     script:
+       - docker compose -f compose.base.yml -f compose.demo.yml config
+   ```
+2. **Demo routing contract**: place all project files at the REPOSITORY ROOT (do NOT
+   nest them inside a subdirectory). The repo MUST ship `compose.demo.yml` at the root,
+   exposing EXACTLY ONE HTTP service, published on the injected `$PORT` environment
+   variable (`ports: "${PORT}:<internal>"`). Internal services (db, cache, workers) stay
+   on the compose network and are never published.
+   **The image must be self-contained and actually boot.** Every file the container
+   needs at runtime is baked into the image: a Dockerfile that starts `node server.js`
+   MUST `COPY server.js` (prefer `COPY . .` plus a `.dockerignore` over listing files -
+   forgetting one file is the #1 cause of a dead demo). Match the port your server
+   listens on to the internal port `compose.demo.yml` publishes. Before finishing,
+   re-read your Dockerfile and verify every runtime file is copied and the entrypoint
+   exists in the image. The platform test-boots
+   `docker compose -f compose.base.yml -f compose.demo.yml up -d --build` after your
+   push and the exposed service must answer HTTP - a build that does not come up is
+   bounced back to you (billed) or fails the delivery, so treat a booting demo as part
+   of the deliverable, not an afterthought."""
+
+_PR_CONTRACT_RULES = """1. **The repository's conventions win.** You are changing an EXISTING repository:
+   follow its layout, tooling, dependency management and CI as they already are. Do
+   not introduce a compose triplet, a Makefile, an `.env.example` or a `.gitlab-ci.yml`
+   because this platform likes them - if the repo has none, it wants none.
+2. **No platform scaffolding.** There is no demo routing contract on this run: no
+   `compose.demo.yml`, no `$PORT` service, no Dockerfile or server stub added to make
+   the repository "bootable" here. Nothing test-boots this deliverable after you push;
+   the reviewer reads the diff. Files whose only purpose is to satisfy the platform are
+   noise in that diff."""
+
+_APP_VERIFY_WORKFLOW = """This sandbox runs its OWN docker daemon (`docker info` confirms it): a repository that ships a container workflow - compose files, a Makefile with dev/prod targets, a devcontainer - is built, run and tested through THAT workflow (`make dev`, `docker compose up --build`, its documented commands), because its containers already carry every toolchain it needs."""
+
+_PR_VERIFY_WORKFLOW = (
+    "Use the repository's own checks - its test suite, linters and CI config. This "
+    "sandbox has a docker daemon, but booting the project is NOT part of finishing: "
+    "do it only when the change you made cannot be verified any other way, never as a "
+    "routine step, and never on a task that asks you to inspect or report rather than "
+    "to change behaviour."
+)
+
+_APP_REVERIFY_NOTE = """The platform re-verifies with its own boot check; a build that fails its own stated check is not done."""
+
+_PR_REVERIFY_NOTE = (
+    "There is no platform boot check on this run - your own verification is the only "
+    "one, so state in your summary what you actually ran."
+)
+
+_APP_DELIVERABLE_SUMMARY = """A working MVP matching the project description and onboarding answers, deployable with
+`docker compose -f compose.base.yml -f compose.demo.yml up -d` with `$PORT` injected,
+with a passing OCPA CI pipeline and a concise README."""
+
+_PR_DELIVERABLE_SUMMARY = (
+    "The requested change on the customer's existing repository, as a minimal reviewable\n"
+    "diff - or, when the honest answer is that nothing needs changing, the report and the\n"
+    "`no_change_needed` declaration of working-method steps 8 and 9."
+)
+
+_APP_ROLE = "building a customer MVP."
+_PR_ROLE = "working on a customer's EXISTING repository."
+
+
+def prompt_overlays(project) -> dict:
+    """Deliverable-dependent substitutions for `development_system.md`.
+
+    ONE entry point so the two variants of each block stay in sync. Only
+    `pull_request` diverges: everything else is demo-booted by the platform and
+    renders exactly what it always did.
+    """
+    pr = deliverable_type(project) == "pull_request"
+    return {
+        "AGENT_ROLE": _PR_ROLE if pr else _APP_ROLE,
+        "PLATFORM_CONTRACT_RULES": _PR_CONTRACT_RULES if pr else _APP_CONTRACT_RULES,
+        "VERIFY_WORKFLOW": _PR_VERIFY_WORKFLOW if pr else _APP_VERIFY_WORKFLOW,
+        "REVERIFY_NOTE": _PR_REVERIFY_NOTE if pr else _APP_REVERIFY_NOTE,
+        "DELIVERABLE_SUMMARY": _PR_DELIVERABLE_SUMMARY if pr else _APP_DELIVERABLE_SUMMARY,
+    }
