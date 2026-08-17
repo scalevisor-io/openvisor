@@ -17,10 +17,21 @@ from openhands.sdk.tool import Tool
 from openhands.tools.glob import GlobTool  # importing auto-registers the tool
 from openhands.tools.grep import GrepTool  # importing auto-registers the tool
 from openhands.tools.preset.default import get_default_agent
+from openhands.tools.task import TaskToolSet  # importing auto-registers the tool
 
 import live_events
 
 OPENVISOR = Path("/workspace/.openvisor")
+
+# §exploration budget: how many tool calls one agent step may run at once. The
+# SDK ships 1 (strictly sequential), so every file read costs a full model
+# round-trip: a metered production run spent 373 reads and 118 shell commands on
+# 44 distinct files, and reads were ~30% of all its actions. Batching the
+# independent ones collapses those round-trips - and the re-sent context each one
+# would have carried. The SDK's caveat is real and is why this stays small and
+# tunable: concurrent tools share the conversation, filesystem and working
+# directory, so batched MUTATIONS can race. 1 restores the SDK default.
+TOOL_CONCURRENCY = int(os.environ.get("DEV_TOOL_CONCURRENCY") or 3)
 
 
 class RetryingCondenser(LLMSummarizingCondenser):
@@ -43,8 +54,8 @@ class RetryingCondenser(LLMSummarizingCondenser):
 
 
 # §working memory: how many conversation events the agent keeps before the
-# condenser halves its history. The SDK preset's default (120) gives the agent a
-# ~50-event working memory, which on a real build means it forgets what it read
+# condenser halves its history. The SDK preset's default (measured: 80) gives the
+# agent a ~40-event working memory, which on a real build means it forgets what it read
 # and reads it again: one metered production run condensed 68 times in 60 minutes
 # and issued 373 file reads over 44 distinct files - an 8.5x re-read factor, with
 # its own task file re-read 16 times, for a single edit. Every condensation also
@@ -230,8 +241,16 @@ def main() -> int:
     # real search tools instead of shelling out (the SWE-agent ACI thesis). They ship
     # with openhands-tools but aren't in the default preset; model_copy keeps the
     # preset's condenser/system-prompt intact and just extends the tool list.
+    # §exploration budget: `task_tool_set` joins them so wide reading can be
+    # DELEGATED. The preset leaves it off (`get_default_tools(enable_sub_agents=False)`),
+    # which is why every file a run ever opened stayed in the one main context and was
+    # re-uploaded on every later step - the dominant input-token line on a real build.
+    # A subagent reads in its own context and returns a summary, so the transcript
+    # carries the conclusion instead of the corpus.
     agent = agent.model_copy(update={
-        "tools": list(agent.tools) + [Tool(name=GrepTool.name), Tool(name=GlobTool.name)]})
+        "tools": list(agent.tools) + [Tool(name=GrepTool.name), Tool(name=GlobTool.name),
+                                      Tool(name=TaskToolSet.name)],
+        "tool_concurrency_limit": max(1, TOOL_CONCURRENCY)})
     agent = _tuned_condenser(agent)
 
     # Attach the project's MCP servers if present (best-effort - never fail the
