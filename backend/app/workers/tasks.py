@@ -1437,7 +1437,7 @@ def _sweep_auto_dev_project(db: Session, project: Project) -> None:
         # Seed the request thread with the issue itself (the dev task's source text,
         # untrusted DATA under the §16 prompt rules like any customer ask).
         _post_message(db, project.id, f"request:{req.id}", "customer",
-                      f"{issue['title']}\n\n{issue['body'][:4000]}\n\n{issue['url']}")
+                      f"{issue['title']}\n\n{_ask_text(issue['body'])}\n\n{issue['url']}")
         budget -= 1
     db.commit()
     if dev_concurrency.slots_full(db, project):
@@ -1699,6 +1699,30 @@ def _project_files_meta(db: Session, project: Project) -> list[tuple]:
         .order_by(ProjectFile.filename)).all()
 
 
+# §whole ask: the customer's request text reaches the agent COMPLETE. The old
+# 4000-char cut silently dropped 39% of a real 6596-char routine prompt, mid
+# sentence, so the run built against a requirement it could not see - and the
+# agent that noticed said "the scoped request seems truncated" and went hunting
+# through `.openvisor/task.md` for the rest, which is why one production run
+# re-read its own task file 16 times. There is nothing to find: the task file IS
+# the truncation. The bound is generous (an ask is the one thing worth spending
+# context on) and, when it does bite, it SAYS so and names the loss instead of
+# trailing off, so the agent reports what it could not see rather than searching
+# for it.
+ASK_MAX_CHARS = 20000
+
+
+def _ask_text(text: str) -> str:
+    text = text or ""
+    if len(text) <= ASK_MAX_CHARS:
+        return text
+    return (text[:ASK_MAX_CHARS]
+            + f"\n\n[... {len(text) - ASK_MAX_CHARS} more characters of this request "
+              "were not included and are NOT recoverable from this sandbox - do not go "
+              "looking for them. Work from what is above, and say plainly in your "
+              "summary which parts you could not see ...]")
+
+
 def _build_task_file(db: Session, project: Project, fix_instruction: str | None = None,
                      provider: str = "gitlab", plan_only: bool = False,
                      approved_plan: str | None = None,
@@ -1871,7 +1895,7 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
                 f"The MVP is already built and delivered. Implement exactly this "
                 f"{req.type} request on top of the existing code, keeping everything "
                 "else working. Do NOT rebuild or restructure the app.\n"
-                f"### {req.title}\n{(first.body if first else '')[:4000]}\n")
+                f"### {req.title}\n{_ask_text(first.body if first else '')}\n")
 
     # §KB tiers: procedures whose trigger matches THIS task load with their full
     # body - selection is hybrid retrieval over the procedure-class docs keyed on
