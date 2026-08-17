@@ -1432,7 +1432,13 @@ table.data tbody tr:hover {
   flex: 1;
   min-height: 0;
 }
+/* Standalone, the message list carries its own height floor and ceiling. In the
+   rail both have to go: the rail is a box of fixed height that the thread chips
+   also eat into, and a 240px floor here spends height the composer needed -
+   which then gets cut off by the body's `overflow: hidden`. The list scrolls,
+   so it is the one that can afford to yield; the composer cannot be scrolled to. */
 .project-chat-rail .chat-messages {
+  min-height: 0;
   max-height: none;
 }
 @media (prefers-reduced-motion: reduce) {
