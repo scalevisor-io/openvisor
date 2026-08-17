@@ -3,7 +3,8 @@ per dev-run outcome, and load them back for report.aggregate.
 
 The capture derives its gate signals from state the pipeline ALREADY persists on
 the project at run end (dev_run_state, dev_run_error, dev_security_review, the
-token/credit counters) - no new plumbing threaded through the build loops. The
+token/credit counters) plus the runner's own per-run token snapshot for the
+input/output split - no new plumbing threaded through the build loops. The
 error strings are pipeline constants we own, so the derivation is reliable, not
 guesswork. It is best-effort by contract: capturing an eval record must NEVER
 break a build, so run_development calls capture_run_record inside a guarded
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.agents import pipeline
 from app.core.config import settings
 from app.models import DevRunRecord, Project, utcnow
+from app.services import devfeed
 from app.services.agent_eval.metrics import RunRecord, _PASS_STATES
 
 # Pipeline-owned error strings that pin a specific gate outcome (see workers/tasks.py).
@@ -78,6 +80,19 @@ def capture_run_record(db: Session, project: Project, *, tokens0: int,
     acceptance_total = acc.get("total")
     tokens = max(0, (project.tokens_consumed or 0) - (tokens0 or 0))
     credits = max(0.0, round((project.cost_credits or 0.0) - (credits0 or 0.0), 6))
+    # §metering split: output tokens carry the reasoning spend, which on a
+    # reasoning model is the expensive half - recording 0 for them made every
+    # harness comparison score on the input side alone. Billing already consumed
+    # (and unlinked) usage.json by the time we run, so the runner's surviving
+    # per-run snapshot is the only source for the split. Output is clamped to the
+    # billed total so input + output always reconciles with `credits`; an absent
+    # or torn snapshot degrades to input-only rather than losing the row.
+    output_tokens = 0
+    try:
+        snapshot = devfeed.read_progress(project) or {}
+        output_tokens = min(max(0, int(snapshot.get("output_tokens") or 0)), tokens)
+    except Exception:  # noqa: BLE001 - metering detail must never break the capture
+        output_tokens = 0
     prior = db.execute(
         select(func.count()).select_from(DevRunRecord)
         .where(DevRunRecord.spec_id == project.id, DevRunRecord.source == "live")
@@ -89,7 +104,7 @@ def capture_run_record(db: Session, project: Project, *, tokens0: int,
         attempt=int(prior) + 1, final_state=state[:16], boot_result=boot_result,
         contract_ok=None, ci_status=None, security_blocking=blocking, security_ran=ran,
         leak_blocked=(err == _LEAK_BLOCK_ERROR), leak_scanner_errored=False,
-        input_tokens=tokens, output_tokens=0, credits=credits,
+        input_tokens=tokens - output_tokens, output_tokens=output_tokens, credits=credits,
         wall_clock_s=round((utcnow() - t_start).total_seconds(), 1),
         acceptance_passed=acceptance_passed, acceptance_total=acceptance_total,
         error=(err or None) and err[:512], source="live",
