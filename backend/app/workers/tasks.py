@@ -2224,19 +2224,29 @@ def _prepare_runner_inputs(db: Session, project: Project,
                                                   consult_question=consult_question,
                                                   images=images)
     (openvisor_dir / "task.md").write_text(task_text)
-    # §conversation resume: the steering note ALONE, for a runner that
-    # rehydrated the previous agent session - it sends this as the follow-up
-    # message instead of replaying the whole task (which the restored history
-    # already contains). Unlinked when absent so a stale note never steers a
-    # later run.
-    if steering_note:
-        (openvisor_dir / "steering.md").write_text(steering_note)
+    # §conversation resume: what a runner that rehydrated the previous agent
+    # session receives as its follow-up message instead of a replay of the whole
+    # task (which the restored history already contains). Unlinked when absent so
+    # a stale note never steers a later run. A RE-dispatch of the same run carries
+    # its fix text here TOO: the driver's resumed branch sends this file INSTEAD
+    # of task.md, so a fix written only into the task would reach a rehydrated
+    # agent not at all.
+    resume_note = "\n\n".join(n for n in (steering_note, fix_instruction) if n)
+    if resume_note:
+        (openvisor_dir / "steering.md").write_text(resume_note)
     else:
         (openvisor_dir / "steering.md").unlink(missing_ok=True)
     # A conversation belongs to ONE chain: an unchained run (a new request, a
     # Start fresh, the first run of a unit) must never rehydrate a previous
-    # request's session out of a reused legacy checkout.
-    if _row is None or not _row.predecessor_id:
+    # request's session out of a reused legacy checkout. A fix dispatch is NOT a
+    # new chain - it is the SAME DevRun row taking another pass - and wiping the
+    # session there made every boot/CI/security fix re-explore the repository from
+    # cold before it could act on a one-line failure, the most expensive thing the
+    # pipeline did per retry. `fix_instruction` is the marker: all three retry
+    # loops set it and nothing that opens a chain does (a customer Resume and
+    # §revise both arrive WITH a predecessor; Start fresh deliberately arrives
+    # without one and keeps its wipe).
+    if (_row is None or not _row.predecessor_id) and fix_instruction is None:
         shutil.rmtree(openvisor_dir / "conversation", ignore_errors=True)
         (openvisor_dir / "conversation_id").unlink(missing_ok=True)
     if approved_plan:

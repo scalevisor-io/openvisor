@@ -11,7 +11,9 @@ worker owns is the two lifetime rules pinned here:
   Start fresh, the first run of any unit) deletes it, since in the legacy
   single-checkout mode the workspace - and therefore .openvisor/ - is reused
   across DIFFERENT requests, and request B must never resume request A's
-  session.
+  session. A fix dispatch is NOT such a run: it is the same DevRun row taking
+  another pass, so it keeps the session and routes its fix text through the
+  resume channel.
 """
 from types import SimpleNamespace
 
@@ -77,6 +79,41 @@ def test_a_fresh_run_row_without_predecessor_also_discards(db, tmp_path):
     project._dev_run = SimpleNamespace(predecessor_id=None, workspace_dir="")
     _prep(db, project)
     assert not conv.exists()
+
+
+def test_a_fix_dispatch_keeps_the_conversation_on_the_same_row(db, tmp_path):
+    """A boot/CI/security fix is the SAME run taking another pass, not a new
+    chain: wiping there made every retry re-explore the repository from cold."""
+    project = _project(tmp_path)
+    conv = tmp_path / ".openvisor" / "conversation"
+    conv.mkdir(parents=True)
+    (conv / "state.json").write_text("{}")
+    cid = tmp_path / ".openvisor" / "conversation_id"
+    cid.write_text("abc")
+
+    project._dev_run = SimpleNamespace(predecessor_id=None, workspace_dir="")
+    _prep(db, project, fix_instruction="compose up failed: port 8080 in use")
+    assert conv.exists()
+    assert cid.read_text() == "abc"
+
+
+def test_a_fix_dispatch_puts_its_instruction_in_the_resume_channel(db, tmp_path):
+    """The driver's resumed branch sends steering.md INSTEAD of task.md, so a fix
+    that lived only in the task would never reach a rehydrated agent."""
+    project = _project(tmp_path)
+    project._dev_run = SimpleNamespace(predecessor_id=None, workspace_dir="")
+    _prep(db, project, fix_instruction="boot check failed: exit 1")
+    assert "boot check failed: exit 1" in (
+        tmp_path / ".openvisor" / "steering.md").read_text()
+
+
+def test_steering_and_fix_text_both_reach_a_resumed_session(db, tmp_path):
+    project = _project(tmp_path)
+    project._dev_run = SimpleNamespace(predecessor_id="prior-run", workspace_dir="")
+    _prep(db, project, steering_note="use the staging bucket",
+          fix_instruction="tests failed: 3 assertions")
+    note = (tmp_path / ".openvisor" / "steering.md").read_text()
+    assert "use the staging bucket" in note and "tests failed: 3 assertions" in note
 
 
 def test_a_chained_resume_keeps_the_conversation(db, tmp_path):
