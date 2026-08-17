@@ -42,18 +42,36 @@ class RetryingCondenser(LLMSummarizingCondenser):
                 time.sleep(10 * (attempt + 1))
 
 
-def _with_condenser_retry(agent):
-    """Swap the preset condenser for the retrying one, field-for-field. Best-effort:
-    on any SDK drift keep the stock condenser rather than fail the build."""
+# §working memory: how many conversation events the agent keeps before the
+# condenser halves its history. The SDK preset's default (120) gives the agent a
+# ~50-event working memory, which on a real build means it forgets what it read
+# and reads it again: one metered production run condensed 68 times in 60 minutes
+# and issued 373 file reads over 44 distinct files - an 8.5x re-read factor, with
+# its own task file re-read 16 times, for a single edit. Every condensation also
+# rewrites the prefix, so it discards the prompt cache the run had built (that run
+# still held an 80% cache-read rate, which is what makes a WIDER window the cheap
+# option: re-sending a cached prefix costs a tenth of re-deriving it, and costs no
+# agent step at all). Widened, not removed - condensation is still the backstop
+# against a context-window overflow, which fails the build outright.
+CONDENSER_MAX_SIZE = int(os.environ.get("DEV_CONDENSER_MAX_SIZE") or 240)
+
+
+def _tuned_condenser(agent):
+    """Swap the preset condenser for the retrying one and widen its window,
+    field-for-field. Best-effort: on any SDK drift keep the stock condenser rather
+    than fail the build."""
     try:
         base = agent.condenser
         if not isinstance(base, LLMSummarizingCondenser):
             return agent
-        wrapped = RetryingCondenser(
-            **{f: getattr(base, f) for f in LLMSummarizingCondenser.model_fields})
+        fields = {f: getattr(base, f) for f in LLMSummarizingCondenser.model_fields}
+        if "max_size" in fields and CONDENSER_MAX_SIZE > 0:
+            print(f"driver: condenser window {fields['max_size']} -> {CONDENSER_MAX_SIZE}")
+            fields["max_size"] = CONDENSER_MAX_SIZE
+        wrapped = RetryingCondenser(**fields)
         return agent.model_copy(update={"condenser": wrapped})
     except Exception as exc:  # noqa: BLE001
-        print(f"driver: condenser retry wrapper skipped: {exc}", file=sys.stderr)
+        print(f"driver: condenser tuning skipped: {exc}", file=sys.stderr)
         return agent
 
 
@@ -214,7 +232,7 @@ def main() -> int:
     # preset's condenser/system-prompt intact and just extends the tool list.
     agent = agent.model_copy(update={
         "tools": list(agent.tools) + [Tool(name=GrepTool.name), Tool(name=GlobTool.name)]})
-    agent = _with_condenser_retry(agent)
+    agent = _tuned_condenser(agent)
 
     # Attach the project's MCP servers if present (best-effort - never fail the
     # build because an MCP server is unavailable).
