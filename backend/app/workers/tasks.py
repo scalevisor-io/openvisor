@@ -1748,6 +1748,12 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
               .replace("{{DELIVERABLE_CLAUSE}}", speciality.deliverable_clause(project))
               .replace("{{SOVEREIGN_CLAUSE}}", sovereign_clause)
               .replace("{{FORBIDDEN_ACTIONS_JSON}}", str(forbidden["rules"])))
+    # §deliverable-aware prompt: the demo/compose obligations are rendered per
+    # deliverable type. A one-line override above a section headed "Non-negotiable
+    # rules" does not win against it, and did not: a pull-request run was told four
+    # separate times to ship compose files and boot the stack.
+    for key, value in speciality.prompt_overlays(project).items():
+        system = system.replace("{{" + key + "}}", value)
     context = _project_context(db, project)
 
     rag_block = ""
@@ -1872,6 +1878,13 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
             "`.gitlab-ci.yml` or any GitLab CI config. Your branch is pushed and a "
             "human reviewer opens/merges the pull request - there is no auto-merge "
             "pipeline. " + demo_line)
+    elif _pr_deliverable_run(db, project):
+        # The corrective used to live ONLY in the GitHub branch, so a PR run on a
+        # customer's GitLab - which is how auto_dev usually lands here - never
+        # heard it, and read the platform's demo contract as the whole truth.
+        vcs_block = ("\n\n## Deliverable: the change itself\n"
+                     "Your deliverable is the change itself - do NOT add demo or "
+                     "compose scaffolding this repository does not already have.\n")
     if provider in ("github", "gitlab"):
         vcs_block += (
             "\n\n## Pull/merge requests are the platform's job\n"
@@ -1935,7 +1948,18 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
     # otherwise burn billed steps discovering that dockerd is absent, or never
     # realize the stack IS locally bootable (observed live: "Docker/node were
     # not available inside this sandbox" in delivered-run summaries).
+    # A PR deliverable gets the capability WITHOUT the standing order: its boot
+    # gate is skipped (`_build_and_boot` returns early), so "the platform still
+    # re-verifies" was simply untrue there, and the sentence sent read-only runs
+    # into a full stack build they were never going to be judged on.
     sandbox_block = (
+        "\n\n## Sandbox capability: Docker\n"
+        "Docker and `docker compose` ARE available inside this sandbox (a "
+        "dedicated inner daemon - `docker info` confirms it), but nothing "
+        "test-boots this deliverable afterwards: boot the stack only if the "
+        "change you made cannot be verified any other way, never as a routine "
+        "step before finishing.\n"
+        if settings.dev_sandbox_docker and _pr_deliverable_run(db, project) else
         "\n\n## Sandbox capability: Docker\n"
         "Docker and `docker compose` ARE available inside this sandbox (a "
         "dedicated inner daemon - `docker info` confirms it). Build and boot "
