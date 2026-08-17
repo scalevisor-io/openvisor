@@ -7,6 +7,27 @@ import { BrandMark, BrandName, formatCredits, readCardCollapsed, writeCardCollap
 
 const SIDEBAR_KEY = "app:sidebar";
 
+/* Below this width the sidebar stops being a grid column and becomes an overlay
+   drawer opened from the header. Keep in sync with the `max-width: 820px` block
+   in styles/global.css - the two describe the same breakpoint from each side. */
+const DRAWER_QUERY = "(max-width: 820px)";
+
+/* The collapsed icon rail and the drawer are mutually exclusive affordances, and
+   which one applies is a layout fact the markup needs too (the brand-row button
+   closes the drawer on narrow screens and collapses the rail on wide ones), so
+   the breakpoint is read here rather than inferred from CSS alone. */
+function useNarrowLayout() {
+  const [narrow, setNarrow] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches ?? false);
+  useEffect(() => {
+    const mq = window.matchMedia?.(DRAWER_QUERY);
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
+
 function Wordmark() {
   const { settings } = useAuth();
   return (
@@ -164,10 +185,32 @@ export default function Layout() {
     setNavOpen(!navOpen);
     writeCardCollapsed(SIDEBAR_KEY, navOpen);
   };
+  // Narrow screens have no room for a permanent column: the same sidebar slides
+  // in over the content and closes on the first navigation, on Escape, or on a
+  // tap outside it. The remembered desktop collapse never applies there.
+  const narrow = useNarrowLayout();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [pathname]);
+  // Widening past the breakpoint turns the drawer back into a column; forget the
+  // open state there, or narrowing again would reopen a menu nobody asked for.
+  useEffect(() => {
+    if (!narrow) setDrawerOpen(false);
+  }, [narrow]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+  const drawer = narrow && drawerOpen;
 
   return (
-    <div className={`app-shell${navOpen ? "" : " nav-collapsed"}`}>
-      <aside className="app-sidebar" id="app-sidebar">
+    <div className={`app-shell${!narrow && !navOpen ? " nav-collapsed" : ""}${drawer ? " drawer-open" : ""}`}>
+      <aside className="app-sidebar" id="app-sidebar" aria-hidden={narrow && !drawerOpen}>
         <div className="sidebar-brand">
           <Link to="/" className="brand-link" title="Projects">
             <Wordmark />
@@ -175,11 +218,11 @@ export default function Layout() {
           <button
             type="button"
             className="sidebar-toggle"
-            onClick={toggleNav}
-            aria-expanded={navOpen}
+            onClick={narrow ? () => setDrawerOpen(false) : toggleNav}
+            aria-expanded={narrow ? drawerOpen : navOpen}
             aria-controls="app-sidebar"
-            aria-label={navOpen ? "Collapse the sidebar" : "Expand the sidebar"}
-            title={navOpen ? "Collapse the sidebar" : "Expand the sidebar"}
+            aria-label={narrow ? "Close the menu" : navOpen ? "Collapse the sidebar" : "Expand the sidebar"}
+            title={narrow ? "Close the menu" : navOpen ? "Collapse the sidebar" : "Expand the sidebar"}
           >
             <svg
               width="15"
@@ -192,8 +235,17 @@ export default function Layout() {
               strokeLinejoin="round"
               aria-hidden="true"
             >
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <line x1="9" y1="4" x2="9" y2="20" />
+              {narrow ? (
+                <>
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </>
+              ) : (
+                <>
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <line x1="9" y1="4" x2="9" y2="20" />
+                </>
+              )}
             </svg>
           </button>
         </div>
@@ -338,9 +390,43 @@ export default function Layout() {
         )}
       </aside>
 
+      {drawer && (
+        <div className="nav-backdrop" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
+      )}
+
       <header className="app-header">
         <div className="row">
-          <span className="alpha-banner">⚠ alpha</span>
+          {/* The header's left slot is the drawer handle on narrow screens; the
+              alpha chip only rides there when the sidebar is a column and the
+              room is free. */}
+          {narrow ? (
+            <button
+              type="button"
+              className="nav-drawer-btn"
+              onClick={() => setDrawerOpen(true)}
+              aria-expanded={drawerOpen}
+              aria-controls="app-sidebar"
+              aria-label="Open the menu"
+              title="Open the menu"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </svg>
+            </button>
+          ) : (
+            <span className="alpha-banner">⚠ alpha</span>
+          )}
         </div>
         <div className="header-user">
           <HeaderCredits />
