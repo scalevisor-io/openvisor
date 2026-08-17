@@ -102,13 +102,21 @@ if [[ "${DEV_DOCKER:-0}" == "1" ]]; then
 fi
 
 # gh reads GITHUB_TOKEN from the environment as-is (a project Memory secret when
-# the customer set one). glab needs the self-hosted host spelled out: derive it
-# from the push remote when the customer's GITLAB_TOKEN is present.
-if [[ -n "${GITLAB_TOKEN:-}" && -z "${GITLAB_HOST:-}" && -n "${GIT_REMOTE_URL:-}" ]]; then
+# the customer set one). glab needs the self-hosted host spelled out.
+# §glab api host: the worker passes GITLAB_HOST - the base /api/v4 actually
+# answers on, resolved by the same `customer_base_url` the platform's own API
+# calls use. Deriving it from the push remote is the FALLBACK, and it is only
+# correct when an instance serves SSH and the API on one hostname: where they
+# differ, every glab call leaves for the SSH name and lands on whatever else
+# that address serves (observed live as a 502 carrying an unrelated host's TLS
+# certificate, which reads like a network fault rather than a misrouted API).
+if [[ -n "${GITLAB_HOST:-}" ]]; then
+  echo "runner: GITLAB_HOST=$GITLAB_HOST (from the platform)"
+elif [[ -n "${GITLAB_TOKEN:-}" && -n "${GIT_REMOTE_URL:-}" ]]; then
   _gl_host="${GIT_REMOTE_URL#*@}"; _gl_host="${_gl_host%%[:/]*}"
   if [[ -n "$_gl_host" ]]; then
     export GITLAB_HOST="$_gl_host"
-    echo "runner: GITLAB_HOST=$_gl_host (derived for glab)"
+    echo "runner: GITLAB_HOST=$_gl_host (derived from the remote - the platform sent none)"
   fi
 fi
 

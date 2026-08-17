@@ -719,6 +719,8 @@ def dev_run(body, cpu: str, mem: str) -> dict:
         {"name": "GIT_USER_NAME", "value": body.git_author_name},
         {"name": "GIT_USER_EMAIL", "value": body.git_author_email},
         {"name": "GIT_PROVIDER", "value": body.provider},
+        # §glab api host: the API base, which need not be the host git dials.
+        {"name": "GITLAB_HOST", "value": body.gitlab_host},
         {"name": "LLM_MAX_ITERATIONS", "value": str(body.max_iterations)},
         {"name": "SKIP_AGENT", "value": "1" if body.skip_agent else "0"},
         {"name": "PLAN_ONLY", "value": "1" if body.plan_only else "0"},
