@@ -98,6 +98,11 @@ class DevRunIn(BaseModel):
     remote_url: str = ""
     default_branch: str = "main"
     extra_host: str = ""  # "host:ip" for GitLab resolution
+    # §glab api host: the base URL /api/v4 answers on, which need NOT be the host
+    # git dials (an instance can serve SSH on git.example.com and the API on
+    # gitlab.example.com). '' lets the runner fall back to deriving it from the
+    # remote, which is only correct when the two names match.
+    gitlab_host: str = ""
     # §git identity: git user.name / user.email for the agent's commits; '' lets
     # the runner fall back to its own default.
     git_author_name: str = ""
@@ -555,6 +560,8 @@ def dev_run(body: DevRunIn):
         "-e", f"GIT_USER_NAME={body.git_author_name}",
         "-e", f"GIT_USER_EMAIL={body.git_author_email}",
         "-e", f"GIT_PROVIDER={body.provider}",
+        # §glab api host: the API base, which need not be the host git dials.
+        "-e", f"GITLAB_HOST={body.gitlab_host}",
         "-e", f"LLM_MAX_ITERATIONS={body.max_iterations}",
         "-e", f"SKIP_AGENT={'1' if body.skip_agent else '0'}",
         "-e", f"PLAN_ONLY={'1' if body.plan_only else '0'}",
