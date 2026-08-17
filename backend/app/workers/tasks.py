@@ -2891,6 +2891,29 @@ def _project_reasoning_effort(db: Session, project: Project) -> str:
     return "high"
 
 
+def _gitlab_api_host(target: dict) -> str:
+    """§glab api host: the base URL `glab` must talk to inside the sandbox.
+
+    The runner used to derive it from the push remote, which is only correct when
+    an instance serves SSH and the API on the SAME hostname. Ours does not: git
+    dials `GITLAB_SSH_HOST` while only `GITLAB_URL` answers /api/v4, so every
+    `glab` call left the sandbox for the SSH name and landed on whatever else
+    that address serves - observed live as a 502 with a TLS certificate for an
+    unrelated host, which is a confusing way to learn the agent cannot file an
+    issue. `customer_base_url` is the same resolver the worker's own API calls
+    use, so the sandbox and the platform can no longer disagree. Best-effort: an
+    unrecognised remote falls back to the runner's derivation.
+    """
+    provider = target.get("runner_provider") or target.get("provider") or ""
+    if not provider.startswith("gitlab"):
+        return ""
+    try:
+        return gitlab.customer_base_url(target.get("remote") or "")
+    except Exception as exc:  # noqa: BLE001 - never fail a dispatch over a hostname
+        log.warning("gitlab api host unresolved for %s: %s", target.get("remote"), exc)
+        return ""
+
+
 def _dispatch_runner(db: Session, project: Project, target: dict,
                      fix_instruction: str | None = None,
                      skip_agent: bool = False, plan_only: bool = False,
@@ -2928,6 +2951,7 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
             agent_branch=_project_branch(project),
             git_author_name=git_author_name, git_author_email=git_author_email,
             default_branch=target["base_branch"], extra_host=settings.git_extra_host,
+            gitlab_host=_gitlab_api_host(target),
             provider=target.get("runner_provider") or target["provider"],
             max_iterations=(settings.dev_plan_max_iterations if plan_only
                             else project.dev_max_iterations
