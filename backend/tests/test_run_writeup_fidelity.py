@@ -166,3 +166,59 @@ def test_an_oversized_tool_result_is_clipped_smaller_and_persisted():
     tuned = src[src.index("def _tuned_observation_limit"):src.index("def _model_for_litellm")]
     assert "except Exception" in tuned
     assert "_tuned_observation_limit()" in src[src.index("_tuned_condenser(agent)"):]
+
+
+# ------------------------------------------------------------ delegated reading
+
+def test_the_task_tool_has_an_agent_to_delegate_to():
+    """`task_tool_set` ships with an EMPTY roster - get_factory_info() answers
+    "No user-registered agents yet" - so enabling the tool alone (PR #39) gave
+    the agent a delegation tool with nothing behind it."""
+    src = _runner(RUNNER_DRIVER)
+    reg = src[src.index("def _register_web_researcher"):src.index("class RetryingCondenser")]
+    assert "register_agent(" in reg and "agent_definition_to_factory(" in reg
+    # registered BEFORE the Conversation: the Task tool renders its roster into
+    # the tool description at creation time
+    assert src.index("_register_web_researcher(cfg)") < src.index('Conversation(')
+    # ...and never fails the build
+    assert "except Exception" in reg
+
+
+def test_the_researcher_cannot_touch_the_workspace():
+    """It reads public pages. No local tools means no file read, no edit, no
+    command - so a page it opened can never reach a commit."""
+    src = _runner(RUNNER_DRIVER)
+    reg = src[src.index("def _register_web_researcher"):src.index("class RetryingCondenser")]
+    assert "tools=" not in reg  # the AgentDefinition default is []
+    assert "GrepTool" not in reg and "TerminalTool" not in reg
+
+
+def test_only_the_web_servers_are_handed_down():
+    """Context7 and the consultant's own MCP KBs stay with the main agent - the
+    sub-agent is a page reader, not a second holder of internal knowledge."""
+    src = _runner(RUNNER_DRIVER)
+    assert 'WEB_MCP_PREFIXES = ("browser", "websearch")' in src
+    reg = src[src.index("def _register_web_researcher"):src.index("class RetryingCondenser")]
+    assert "name.startswith(WEB_MCP_PREFIXES)" in reg
+    assert "if not servers:" in reg  # a run without them registers nothing
+
+
+def test_the_researcher_reports_what_it_could_not_read():
+    """The failure this exists to stop is a page that did not answer being
+    filled in from memory or from a search-result snippet."""
+    src = _runner(RUNNER_DRIVER)
+    prompt = src[src.index("WEB_AGENT_PROMPT = "):src.index("def _register_web_researcher")]
+    assert "ONLY if you read" in prompt
+    assert "from memory or from a search-result snippet" in prompt
+    # and the adjacent facts that change what a value means - the tier the prod
+    # run found and dropped
+    assert "tier or threshold" in prompt
+
+
+def test_the_prompt_sends_third_party_pages_to_the_sub_agent():
+    p = load_prompt("development_system.md")
+    assert "`web researcher` sub-agent with the `task` tool" in p
+    # the direct browser keeps its job: the app the run itself is running
+    assert "is for the app YOU are running" in p
+    # and rule 6 accepts a delegated read as a read, so the two do not fight
+    assert "returns WITH the URL it read counts as read" in p
