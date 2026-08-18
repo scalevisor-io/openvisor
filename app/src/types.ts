@@ -43,7 +43,12 @@ export type ProjectStatus =
 
 export type DemoState = "stopped" | "running";
 export type Tier = "mvp" | "production";
-export type ProjectKind = "ai" | "direct_quote" | "auto_dev" | "chat";
+// "mcp" (§MCP projects) is created from /settings/tokens or the MCP create_project
+// tool, not the wizard: it carries a model + KB selection for an agent to work through.
+export type ProjectKind = "ai" | "direct_quote" | "auto_dev" | "chat" | "mcp";
+// What the New-project wizard may create: an MCP project is made from
+// /settings/tokens or the create_project tool, never through the wizard.
+export type WizardProjectKind = Exclude<ProjectKind, "mcp">;
 
 // §sharing: the caller's access to a project. "owner" = the owning org (or an
 // admin); shared users are "contributor" (acts as the customer) or "viewer"
@@ -422,6 +427,26 @@ export interface ApiToken {
 
 export interface NewApiToken extends ApiToken {
   token: string;
+}
+
+// A project-scoped MCP token as /settings/tokens lists it: the project it belongs
+// to travels with it, because that binding is the whole point of the scope.
+export interface McpProjectToken {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at: string | null;
+  project_id: string;
+  project_name: string;
+  project_kind: ProjectKind;
+}
+
+// The one-click flow's answer: a new project and its first token, shown once.
+export interface NewMcpProject {
+  project: Project;
+  token: string;
+  token_name: string;
+  mcp_url: string;
 }
 
 // The admin hub-token endpoint returns only these fields (no created_at yet).

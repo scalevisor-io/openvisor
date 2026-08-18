@@ -1,9 +1,12 @@
 """Openvisor MCP server (PROMPT §19) - streamable HTTP transport, JSON-RPC.
 Auth: `ov_` API token, `Authorization: Bearer ov_…`. The token's scope decides
 which tool set it sees:
-- "user" (dashboard-minted): read-only project status/info for the token owner's
-  own projects, plus a billable `search_knowledge` tool proxying to the backend
-  knowledge endpoint (synthesized, cited answers metered against the org wallet).
+- "user" (dashboard-minted): the account-wide token. Read-only project status/info
+  across the owner's own projects, plus `create_project` (proxied to the backend,
+  which owns the write). It does NOT answer knowledge queries: a knowledge answer
+  needs a project to pick its model, narrow its knowledge bases and carry the cost,
+  and an account-wide token has none - `search_knowledge` lives in the project
+  scope only.
 - "hub" (admin-minted, POST /api/admin/hub-token): a central Scalevisor Hub's
   control tools - spoke_info, usage_summary, list_credit_events, find_org,
   create_org, grant_credits, kb_leak_audit, run_eval, plus the §pass-through
@@ -13,7 +16,7 @@ which tool set it sees:
   this sidecar; the backend owns validation and idempotency. kb_leak_audit
   returns a report-only KB-confidentiality risk score; run_eval returns guarded,
   unbilled eval answers.
-User tools: list_projects, get_project_status, get_project_info, search_knowledge.
+User tools: list_projects, get_project_status, get_project_info, create_project.
 Project tools (§MCP project tokens): get_project_status, get_project_info,
 search_knowledge (consult) + delegate_development / get_delegation /
 list_delegations (hand work to the §14 build pipeline)."""
@@ -64,21 +67,25 @@ USER_TOOLS = [
         },
     },
     {
-        "name": "search_knowledge",
+        "name": "create_project",
         "description": (
-            f"Search {CONSULTANT_NAME}'s private consulting knowledge base (sovereign-AI, "
-            "cloud & platform infrastructure, OCPA, defence/gov) and get a synthesized, "
-            f"cited answer. Metered: each call is billed to your {BRAND_NAME} org wallet at "
-            "model cost + markup."
+            f"Create a new {BRAND_NAME} project. Give it a short name (a few words, what "
+            "the work is about) and, optionally, a one- or two-sentence description of "
+            "what you want it for. Returns the new project's id. A project is what holds "
+            "a model choice and a knowledge-base selection, so create one before asking "
+            f"{CONSULTANT_NAME} anything: the project's own MCP token - minted by its "
+            "owner from the project page - is what unlocks searching the knowledge base, "
+            "reading a codebase and delegating development."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Your question."},
-                "k": {"type": "integer", "minimum": 1, "maximum": 12,
-                      "description": "Passages to retrieve (1-12, default 6)."},
+                "title": {"type": "string",
+                          "description": "Short name for the project (a few words)."},
+                "description": {"type": "string",
+                                "description": "Optional: a sentence or two on what it is for."},
             },
-            "required": ["query"],
+            "required": ["title"],
             "additionalProperties": False,
         },
     },
@@ -656,6 +663,32 @@ async def call_knowledge(auth_header: str, args: dict) -> tuple[str, bool]:
     return str(detail), True
 
 
+async def call_create_project(auth_header: str, args: dict) -> tuple[str, bool]:
+    """Proxy create_project to the backend. Writes belong to the backend, which
+    owns validation, the status row and the audit line - this sidecar only reads
+    SQL directly. Returns (text, is_error)."""
+    payload = {"title": args.get("title", "")}
+    if args.get("description"):
+        payload["description"] = args["description"]
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{API_INTERNAL_URL}/api/mcp/projects",
+                headers={"Authorization": auth_header, "Content-Type": "application/json"},
+                json=payload)
+    except httpx.HTTPError as exc:
+        return f"Project service unavailable: {exc}", True
+    if resp.status_code in (200, 201):
+        data = resp.json()
+        return (f"Created project \"{data.get('name')}\" (id {data.get('project_id')}).\n"
+                f"{data.get('next_step', '')}"), False
+    try:
+        detail = resp.json().get("detail", resp.text)
+    except Exception:
+        detail = resp.text
+    return str(detail), True
+
+
 async def call_hub(auth_header: str, name: str, args: dict) -> tuple[str, bool]:
     """Proxy a hub tool to the backend /api/hub/* surface, forwarding the caller's
     Bearer token (the backend re-validates the hub scope and owns money-path
@@ -746,6 +779,11 @@ async def mcp_endpoint(request: Request):
         if name in DELEGATE_ROUTES:
             text, is_error = await call_delegate(
                 request.headers.get("authorization", ""), name, args)
+            return JSONResponse({"jsonrpc": "2.0", "id": id_, "result": {
+                "content": [{"type": "text", "text": text}], "isError": is_error}})
+        if name == "create_project":
+            text, is_error = await call_create_project(
+                request.headers.get("authorization", ""), args)
             return JSONResponse({"jsonrpc": "2.0", "id": id_, "result": {
                 "content": [{"type": "text", "text": text}], "isError": is_error}})
         if name == "search_knowledge":
