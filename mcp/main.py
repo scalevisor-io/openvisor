@@ -273,8 +273,35 @@ HUB_TOOLS = [
                 "sovereign_comment": {"type": "string"},
                 "hub_ref": {"type": "string",
                             "description": "The hub's own project id, echoed in outbox events."},
+                "from_scratch": {"type": "boolean",
+                                 "description": "False when the connected repository already carries code the work extends."},
+                "repos": {"type": "array", "maxItems": 5,
+                          "items": {"type": "object",
+                                    "properties": {"ssh_uri": {"type": "string"}},
+                                    "required": ["ssh_uri"],
+                                    "additionalProperties": False},
+                          "description": ("Git SSH remotes to build into; the first is the push target and replaces the "
+                                          "platform repo (install the project's deploy key on each - project_out carries "
+                                          "ssh_public_key).")},
+                "auto_merge": {"type": "boolean",
+                               "description": "Auto-merge the agent's MRs on the push repo (needs a GITLAB_TOKEN/GITHUB_TOKEN Memory secret)."},
             },
             "required": ["spoke_org_id", "description"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "check_project_repo",
+        "description": (
+            "SSH reachability of a from-hub project's push-target repo over its own deploy key "
+            "({ok, detail}) - run it before funding work into a customer-provided repository."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project_id": {"type": "string"},
+                           "org_id": {"type": "string",
+                                      "description": "Expected spoke org id (403 on mismatch - defense in depth)."}},
+            "required": ["project_id"],
             "additionalProperties": False,
         },
     },
@@ -490,6 +517,7 @@ HUB_TOOL_ROUTES = {
     "kb_leak_audit": ("POST", "/api/hub/kb-audit"),
     "run_eval": ("POST", "/api/hub/eval"),
     "create_project": ("POST", "/api/hub/projects"),
+    "check_project_repo": ("POST", "/api/hub/projects/{project_id}/repos/check"),
     "get_project": ("GET", "/api/hub/projects/{project_id}"),
     "get_project_evaluation": ("GET", "/api/hub/projects/{project_id}/evaluation"),
     "list_project_messages": ("GET", "/api/hub/projects/{project_id}/messages"),

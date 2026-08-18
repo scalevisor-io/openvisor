@@ -474,7 +474,14 @@ class HubOrgCreateIn(BaseModel):
 class HubProjectCreateIn(BaseModel):
     """From-hub project creation (§pass-through P1). The hub acts as the
     'customer' actor on a brokered (hub_managed) org; hub_ref is the hub's own
-    project id, echoed back in outbox events."""
+    project id, echoed back in outbox events.
+
+    `repos` connects the customer's (or the hub's own) git remotes exactly as the
+    customer create does - first one is the push target - so several from-hub
+    projects can build into ONE shared repository (§hub shared repo): the hub
+    provisions an engagement-level repo, installs each project's deploy key on it,
+    and passes it here. With a push-target repo connected, no platform GitLab repo
+    is provisioned - the connected repo is where the work lives."""
     spoke_org_id: str = Field(min_length=1, max_length=36)
     kind: str = Field(default="ai", pattern="^(ai|direct_quote|chat)$")
     speciality: str | None = Field(default=None, max_length=64)
@@ -483,6 +490,12 @@ class HubProjectCreateIn(BaseModel):
     sovereign: bool = False
     sovereign_comment: str | None = Field(default=None, max_length=2000)
     hub_ref: str | None = Field(default=None, max_length=64)
+    repos: list[RepoIn] = Field(default=[], max_length=5)
+    # Turn the platform-merge flow on for the push repo: with a valid GITLAB_TOKEN/
+    # GITHUB_TOKEN Memory secret (the hub feeds one per project) the agent's MR is
+    # security-reviewed and merged automatically; without one the flow degrades to
+    # the customer-merge path exactly as it does for direct customers.
+    auto_merge: bool = False
 
 
 class HubProjectActionIn(BaseModel):
