@@ -15,7 +15,7 @@ from app.core.security import new_api_token
 from app.main import app
 from app.models import (
     ApiToken, CreditTransaction, HubCreditGrant, HubProjectEvent, Message,
-    Organization, Project, ProjectMemory, Request, StatusChange, User,
+    Organization, Project, ProjectMemory, ProjectRepo, Request, StatusChange, User,
 )
 
 
@@ -75,6 +75,7 @@ def env():
                 db.execute(delete(Request).where(Request.project_id.in_(pids)))
                 db.execute(delete(ProjectMemory).where(ProjectMemory.project_id.in_(pids)))
                 db.execute(delete(CreditTransaction).where(CreditTransaction.project_id.in_(pids)))
+                db.execute(delete(ProjectRepo).where(ProjectRepo.project_id.in_(pids)))
             db.execute(delete(Project).where(Project.id.in_(pids)))
             for oid in (env["brokered_org"], env["direct_org"]):
                 db.execute(delete(HubCreditGrant).where(HubCreditGrant.org_id == oid))
@@ -114,6 +115,88 @@ def test_create_hub_project(client, env, monkeypatch):
         # userless org: the spoke never emails or logs in this customer
         assert db.execute(select(User).where(
             User.org_id == env["brokered_org"])).scalars().all() == []
+
+
+# ---- connected repos (§hub shared repo) ----
+
+REPO_URI = "git@gitlab.example.com:engagements/e-1234.git"
+
+
+def test_create_with_repos_binds_push_target_and_skips_platform_repo(client, env, monkeypatch):
+    r = _create(client, env, monkeypatch,
+                repos=[{"ssh_uri": REPO_URI},
+                       {"ssh_uri": "git@github.com:acme/context.git"}],
+                auto_merge=True)
+    assert r.status_code == 201, r.text
+    p = r.json()
+    assert [x["ssh_uri"] for x in p["repos"]] == [REPO_URI, "git@github.com:acme/context.git"]
+    with SyncSession() as db:
+        rows = db.execute(select(ProjectRepo).where(ProjectRepo.project_id == p["id"])
+                          .order_by(ProjectRepo.role)).scalars().all()
+        assert [(x.role, x.is_push_target, x.auto_merge, x.provider) for x in rows] == [
+            ("primary", True, True, "gitlab"), ("secondary", False, False, "github")]
+        project = db.get(Project, p["id"])
+        assert project.ssh_public_key  # its own deploy key, for the shared repo
+
+    # The provisioning worker skips the platform-GitLab half for a project with a
+    # connected push target: the connected repo is where the work lives.
+    from app.workers import tasks as worker_tasks
+    called = []
+    monkeypatch.setattr(worker_tasks.gitlab, "create_project",
+                        lambda *a, **k: called.append(a) or {"id": 1})
+    worker_tasks.provision_project(p["id"], "")
+    assert called == []
+    with SyncSession() as db:
+        assert db.get(Project, p["id"]).gitlab_project_id is None
+
+
+def test_create_repo_gates(client, env, monkeypatch):
+    # from_scratch=false without a repo, non-SSH remotes, and repos on non-ai kinds
+    # are all refused before anything is created.
+    assert _create(client, env, monkeypatch, from_scratch=False).status_code == 400
+    assert _create(client, env, monkeypatch,
+                   repos=[{"ssh_uri": "https://github.com/acme/x.git"}]).status_code == 400
+    assert _create(client, env, monkeypatch, kind="chat", speciality=None,
+                   repos=[{"ssh_uri": REPO_URI}]).status_code == 400
+
+
+def test_save_run_ships_dev_state_to_the_outbox(client, env, monkeypatch):
+    r = _create(client, env, monkeypatch)
+    pid = r.json()["id"]
+    from app.workers import tasks as worker_tasks
+    with SyncSession() as db:
+        project = db.get(Project, pid)
+        db.execute(delete(HubProjectEvent).where(HubProjectEvent.project_id == pid))
+        worker_tasks._save_run(project, "failed", error="boom")
+        db.commit()
+        events = db.execute(select(HubProjectEvent).where(
+            HubProjectEvent.project_id == pid,
+            HubProjectEvent.etype == "demo")).scalars().all()
+        assert [e.payload.get("dev_run_state") for e in events] == ["failed"]
+        # Same state again: no event storm - only CHANGES ship.
+        worker_tasks._save_run(project, "failed", error="boom")
+        db.commit()
+        assert len(db.execute(select(HubProjectEvent).where(
+            HubProjectEvent.project_id == pid,
+            HubProjectEvent.etype == "demo")).scalars().all()) == 1
+
+
+def test_repo_check_route(client, env, monkeypatch):
+    r = _create(client, env, monkeypatch, repos=[{"ssh_uri": REPO_URI}])
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+    from app.api import hub as hub_api
+    monkeypatch.setattr(hub_api.repolib, "check_ssh",
+                        lambda uri, key: (True, f"Reachable: {uri}"))
+    out = client.post(f"/api/hub/projects/{pid}/repos/check",
+                      headers=_h(env["token"])).json()
+    assert out == {"ok": True, "detail": f"Reachable: {REPO_URI}"}
+
+    # A platform-repo project has nothing to check and says so.
+    plain = _create(client, env, monkeypatch)
+    out = client.post(f"/api/hub/projects/{plain.json()['id']}/repos/check",
+                      headers=_h(env["token"])).json()
+    assert out["ok"] is False and "platform repo" in out["detail"]
 
 
 def test_create_rejected_outside_hub_managed_org(client, env):
