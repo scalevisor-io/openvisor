@@ -51,6 +51,7 @@ Summarize for me: the URLs (landing, app, MCP endpoint), where every secret live
 - The prompt assumes the assistant runs INSIDE a clone of this repository with shell access to the target machine. For a remote server, run the assistant on that server (or give it SSH).
 - Everything the prompt references is normal documentation: `CLAUDE.md` (development guide), `docs/CODE_MAP.md` (architecture), `.env.example` (the full variable checklist), `scripts/deploy-helm.sh` (Kubernetes path).
 - The same flow works for a branded fork: set `BRAND_NAME`, `CONSULTANT_NAME` and the color vars in `.env` - the tracked defaults are the neutral Openvisor identity by design.
+- If a CDN or WAF fronts the deployment, exempt the `mcp.<domain>` host from its bot protection. MCP clients are not browsers - Claude Code, for one, ships a Bun/BoringSSL TLS stack - so bot-management rules score them as automated and answer a fraction of otherwise valid requests with an HTML block page. The client reports it as an intermittent `403` against a good token, and the request never reaches the MCP service, so nothing shows up in its logs.
 
 ## Customizing agent behavior
 
