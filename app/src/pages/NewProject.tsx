@@ -13,7 +13,7 @@ import QuestionStepper, {
 import { EvaluationScreen } from "../components/EvaluationScreen";
 import ResendVerify from "../components/ResendVerify";
 import { ApiError } from "../lib/api";
-import type { Answer, Evaluation, ProjectKind, Question, Speciality } from "../types";
+import type { Answer, Evaluation, Question, Speciality, WizardProjectKind } from "../types";
 
 const DESC_LIMIT = 40000;
 const STEP_LABELS = ["Engagement", "Description", "Sources", "Questions", "Sovereignty", "Review"];
@@ -36,7 +36,7 @@ export default function NewProject() {
   const [step, setStep] = useState(0);
 
   // form state
-  const [kind, setKind] = useState<ProjectKind | null>(
+  const [kind, setKind] = useState<WizardProjectKind | null>(
     kindParam === "ai" || kindParam === "direct_quote" || kindParam === "auto_dev" ||
     kindParam === "chat"
       ? kindParam
@@ -101,7 +101,7 @@ export default function NewProject() {
   const pauseAutoDev = !isAdmin && !!config?.pause_auto_dev_deposits;
   const pauseChat = !isAdmin && (config?.pause_chat_deposits ?? true);
   const bothPaused = pauseAi && pauseDirect;
-  const kindPaused = (k: ProjectKind | null) =>
+  const kindPaused = (k: WizardProjectKind | null) =>
     (k === "ai" && pauseAi) || (k === "direct_quote" && pauseDirect) ||
     (k === "auto_dev" && pauseAutoDev) || (k === "chat" && pauseChat);
   const PAUSED_MSG = "We're not accepting this kind of project right now.";

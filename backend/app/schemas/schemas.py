@@ -221,6 +221,16 @@ class ApiTokenIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
 
 
+class McpProjectCreateIn(BaseModel):
+    """§MCP projects: title is the customer's own words (kept verbatim, unlike the
+    wizard kinds where §9.2 derives one), the description is optional context."""
+    title: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=4000)
+    # Only the SPA's one-click flow mints alongside creation; the MCP tool leaves
+    # it unset so no long-lived credential is written into an agent transcript.
+    token_name: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 # ---- admin ----
 class RetryBuildIn(BaseModel):
     # §run chains Start fresh: true discards the failed chain (new workspace,

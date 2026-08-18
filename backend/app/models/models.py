@@ -119,7 +119,7 @@ class Project(Base):
     # True once the customer renamed the project; stops the evaluation-time
     # LLM title pass from overwriting their choice.
     name_customized: Mapped[bool] = mapped_column(Boolean, default=False)
-    kind: Mapped[str] = mapped_column(String(16), default="ai")  # ai|direct_quote|auto_dev
+    kind: Mapped[str] = mapped_column(String(16), default="ai")  # ai|direct_quote|auto_dev|chat|mcp
     # §hub pass-through: 'hub' marks a project the hub created for one of ITS
     # customers - the hub-scoped API may ONLY touch source='hub' projects, and
     # only those feed the hub_project_event outbox. hub_ref is the hub's own

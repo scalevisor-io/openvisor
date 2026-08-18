@@ -5,6 +5,7 @@ from app.api import (
     knowledge_bases,
     tools, memory, meta, model_endpoints, org_memory, program_hooks, programs, projects,
     mcp_delegate,
+    mcp_projects,
     mcp_tokens,
     tokens,
     usage,
@@ -34,9 +35,11 @@ app.include_router(programs.admin_router, dependencies=_csrf)
 app.include_router(demo.router, dependencies=_csrf)
 app.include_router(tokens.router, dependencies=_csrf)
 app.include_router(mcp_tokens.router, dependencies=_csrf)
+app.include_router(mcp_projects.router, dependencies=_csrf)  # §MCP projects: one-click create
 app.include_router(usage.router, dependencies=_csrf)
 # Token-authed (no session, no CSRF) - the MCP sidecar proxies here.
 app.include_router(mcp_delegate.router)
+app.include_router(mcp_projects.tool_router)  # MCP create_project tool
 app.include_router(billing.quotes_router, dependencies=_csrf)
 app.include_router(admin.router, dependencies=_csrf)
 app.include_router(knowledge_bases.router, dependencies=_csrf)  # admin-gated CRUD

@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -1657,21 +1657,9 @@ def _scaffold_index_html(name: str) -> str:
 
 
 def _project_model_config(db: Session, project: Project) -> tuple[str, str, str]:
-    """(base_url, api_key, model) - the per-project override if set, else global.
-    A saved ModelEndpoint (endpoint_id) is preferred so its credential rotates in
-    one place; the legacy inline openai_* columns are the fallback for rows created
-    before saved endpoints; an endpoint that was deleted out from under a row
-    (endpoint_id nulled) degrades to the global default."""
-    from app.models import ModelEndpoint, ProjectModelConfig
-    row = db.query(ProjectModelConfig).filter_by(project_id=project.id).first()
-    if row:
-        if row.endpoint_id:
-            ep = db.get(ModelEndpoint, row.endpoint_id)
-            if ep and ep.model_name:
-                return ep.base_url, decrypt(ep.api_key_enc), ep.model_name
-        elif row.openai_base_url and row.openai_api_key_enc and row.model_name:
-            return row.openai_base_url, decrypt(row.openai_api_key_enc), row.model_name
-    return settings.openai_base_url, settings.openai_api_key, settings.openai_model
+    """(base_url, api_key, model) for this project - see services.model_config,
+    which the knowledge path shares so a project's model means one thing."""
+    return model_config.project_model_config(db, project)
 
 
 def _use_global_memory(db: Session, project: Project) -> bool:
