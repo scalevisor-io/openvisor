@@ -333,7 +333,19 @@ if [[ "${GIT_PUSH:-0}" == "1" ]] && git -C /workspace remote get-url origin >/de
     BRANCH_GITIGNORE_REAL=$(git -C /workspace diff "origin/$DEFAULT_BRANCH...HEAD" -- .gitignore 2>/dev/null | { grep -E '^[+-]' || true; } | { grep -vE '^(\+\+\+|---)' || true; } | { grep -vxF '+.openvisor/' || true; } | head -1)
     if [[ -z "$STAGED_REAL" && -z "$GITIGNORE_REAL" && -z "$BRANCH_REAL" && -z "$BRANCH_GITIGNORE_REAL" ]]; then
       echo "runner: NO_CHANGES_TO_PUBLISH - the agent session produced no changes; not publishing" >&2
-      emit_event error "No changes produced - nothing to publish"
+      # §investigation runs: an investigation that honestly concluded "nothing to
+      # change" lands on this same gate, and the worker finishes it as the
+      # delivered answer it is (_finish_investigation). Only the UNEXPECTED empty
+      # session is an error - a declared no_change_needed reading as a red error
+      # line was the last thing the customer saw on a run that went perfectly.
+      # The exit code is unchanged: it is the worker's contract either way.
+      if [[ -f "$OPENVISOR_DIR/outcome.json" ]] && grep -Eq \
+          '"outcome"[[:space:]]*:[[:space:]]*"no_change_needed"' \
+          "$OPENVISOR_DIR/outcome.json" 2>/dev/null; then
+        emit_event finish "No repository change was needed"
+      else
+        emit_event error "No changes produced - nothing to publish"
+      fi
       exit 5
     fi
   fi
