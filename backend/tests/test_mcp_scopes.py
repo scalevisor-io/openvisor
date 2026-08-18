@@ -121,7 +121,13 @@ def test_each_scope_gets_its_own_tool_list(mcp_main):
 
     # No customer tool ever leaks into the hub list (a hub token must not bill).
     assert "search_knowledge" not in hub
-    assert not (hub & user), "hub and user tool lists must stay disjoint"
+    # `create_project` deliberately exists in BOTH the hub and the account-wide
+    # list: a hub creates projects for an org it administers, a customer creates
+    # their own. They are different backends (call_hub -> /api/hub/projects vs
+    # call_create_project -> /api/mcp/projects) and the dispatcher tries the hub
+    # branch first, so the name can be shared - but nothing else may be, or a
+    # customer tool has leaked into the hub surface.
+    assert (hub & user) <= {"create_project"}, "only create_project may span hub and user"
     assert not (hub & project), "hub and project tool lists must stay disjoint"
 
 
@@ -141,7 +147,14 @@ def test_project_tools_cannot_name_another_project(mcp_main):
     assert delegation <= project, "delegate + consult are the project scope's reason to exist"
     assert not (delegation & user), "a plain user token must not reach the build pipeline"
     assert not (delegation & hub), "the hub drives builds through its own tools"
-    assert (project - delegation) <= user
+    # A knowledge answer is project work: the project picks the model, narrows the
+    # knowledge bases and pays for it. An account-wide token has no project, so it
+    # must not carry the tool at all - the guard that keeps the two tabs honest.
+    assert "search_knowledge" in project
+    assert "search_knowledge" not in user, (
+        "account-wide tokens must not answer knowledge queries - no model, no KB "
+        "selection, nothing to bill")
+    assert (project - delegation - {"search_knowledge"}) <= user
 
 
 def test_project_scope_never_falls_through_to_user_tools(mcp_main):
@@ -226,9 +239,12 @@ def test_a_query_is_never_written_to_the_ledger(org_project, monkeypatch):
     with SyncSession() as db:
         project = db.get(Project, pid)
         knowledge.answer_question(db, project.org_id, secret, 6, project=project)
-        knowledge.answer_question(db, project.org_id, secret, 6)
+        # Without a project there is no model to answer on, no KB selection to
+        # honour and nothing to bill: the query is refused, never billed to the org.
+        with pytest.raises(knowledge.KnowledgeConfigError):
+            knowledge.answer_question(db, project.org_id, secret, 6)
 
-    assert [b[0] for b in billed] == ["project", "org"], "a project token bills its project"
+    assert [b[0] for b in billed] == ["project"], "every knowledge query bills its project"
     for _, detail in billed:
         assert secret not in detail
         assert "rotate" not in detail.lower()

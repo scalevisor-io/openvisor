@@ -11,6 +11,7 @@ import type {
   DevActivityChunk,
   DevRunSummary,
   ChatImage,
+  McpProjectToken,
   McpToken,
   McpUsage,
   ProjectUsage,
@@ -29,6 +30,7 @@ import type {
   ModelConfig,
   ModelEndpoint,
   ModelProvider,
+  NewMcpProject,
   NewApiToken,
   NewHubToken,
   Program,
@@ -131,6 +133,11 @@ export const mcpApi = {
     api.post<McpToken & { token: string }>(`/projects/${projectId}/mcp-tokens`, { name }),
   revoke: (projectId: string, tokenId: string) =>
     api.del<{ ok: boolean }>(`/projects/${projectId}/mcp-tokens/${tokenId}`),
+  // Every project token in the org, grouped by project on /settings/tokens.
+  listMine: () => api.get<McpProjectToken[]>("/mcp/tokens"),
+  // §MCP projects one-click: creates the project AND mints its first token.
+  createProject: (title: string, description?: string) =>
+    api.post<NewMcpProject>("/projects/mcp", { title, description }),
 };
 
 export const usageApi = {

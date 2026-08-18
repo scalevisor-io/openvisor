@@ -74,7 +74,11 @@ There is **no capability discovery** in the OpenAI-compatible contract - `/model
 - `POST /projects/{id}/mcp-tokens` `{name}` → 201 `{id, name, created_at, last_used_at, token}` - mints a `project`-scoped `ov_` token. `token` is the plaintext and is returned ONCE (only its sha256 is stored). 409 past 10 tokens per project.
 - `DELETE /projects/{id}/mcp-tokens/{token_id}` → `{ok}` - revoke. 404 for a token id belonging to another project or of another scope.
 
-A project token authenticates to the same MCP endpoint as a user token, but the sidecar shows it only its own project's tools (no `project_id` argument exists on them) and `POST /knowledge/answer` bills its project - a project `consumption` row and the project's own token/credit counters - instead of the org-level `mcp_query` row a user token writes.
+- `GET /mcp/tokens` → `[{id, name, created_at, last_used_at, project_id, project_name, project_kind}]` - every `project`-scoped token in the caller's org, with the project it is bound to; what the MCP tab of `/settings/tokens` groups by. Secrets never appear here.
+- `POST /projects/mcp` `{title (1-255), description?: ≤4000, token_name?}` → 201 `{project, token, token_name, mcp_url}` - the one-click flow: creates an `mcp`-kind project AND mints its first token in one call, so the customer leaves with a working `claude mcp add` line. `token` is the plaintext, returned ONCE. 409 past 100 MCP projects per org.
+- `POST /mcp/projects` `{title (1-255), description?: ≤4000}` → 201 `{project_id, name, status, next_step}` - the MCP `create_project` tool's backend. Bearer-token auth, no session/CSRF. ACCOUNT-WIDE tokens only: a project-scoped token is bound to one project and gets `403`. Returns NO token on purpose - an agent that could mint its own long-lived credential would write it into a transcript - so `next_step` points the customer at the project page to mint one. Rate-limited 10/60s per org.
+
+A project token authenticates to the same MCP endpoint as an account-wide token, but the sidecar shows it only its own project's tools (no `project_id` argument exists on them). Knowledge answering is **exclusively** its job: `POST /knowledge/answer` needs the project to choose the model, narrow the knowledge bases and carry the cost, so an account-wide token is refused there.
 
 ## Projects (auth required; email_verified required to create)
 
@@ -272,9 +276,11 @@ Two payment paths share the model: **Stripe quotes** (`price_credits` null; `amo
 - `POST /tokens` `{name}` → `{id, name, token}` - token shown once (always `scope="user"`).
 - `DELETE /tokens/{id}` → `{ok}`
 
-## Knowledge (MCP `search_knowledge`, Bearer `ov_` token - no session/CSRF)
+An account-wide (`scope="user"`) token reads across the owner's projects (`list_projects`, `get_project_status`, `get_project_info`) and can create one (`create_project`). It cannot answer knowledge queries - see the scope rule under MCP project tokens.
 
-- `POST /knowledge/answer` `{query (1-2000 chars), k?: 1-12 = 6}` → `{answer, citations: [{n, source, ref}], credits_charged}`. Auth is the `ov_` API token via `Authorization: Bearer` (not the session cookie). Synthesizes a cited answer from the KB (retrieved via Meilisearch hybrid search) and meters the query-embedding + synthesis model cost (× `CREDIT_MARKUP`) against the **org wallet** (`CreditTransaction kind="mcp_query"`, project-less); Meilisearch ranks the passages natively, so no reranker model is billed. Never returns raw KB chunk bodies (citations are references only; verbatim spans are redacted). `402` `{"detail": "Insufficient credits. Top up at …/billing"}` when the wallet is empty; `503` when the knowledge models aren't priced or the LLM is unavailable; per-org rate limit `429`. The `mcp.<domain>/mcp` server's `search_knowledge` tool proxies to this endpoint.
+## Knowledge (MCP `search_knowledge`, Bearer PROJECT-scoped `ov_` token - no session/CSRF)
+
+- `POST /knowledge/answer` `{query (1-2000 chars), k?: 1-12 = 6}` → `{answer, citations: [{n, source, ref}], credits_charged}`. Auth is the `ov_` API token via `Authorization: Bearer` (not the session cookie), and it MUST be **project-scoped**: the project chooses the synthesis model (`services/model_config.project_model_config` - the same resolution its chat and dev runs use), narrows retrieval to its own `kb_ids` selection, and is what the query bills to (a project `consumption` row plus the project's token/credit counters). An account-wide token has none of those, so it gets `403` with a message pointing at project tokens. Synthesizes a cited answer from the KB (retrieved via Meilisearch hybrid search) and meters the query-embedding + synthesis model cost (× `CREDIT_MARKUP`); Meilisearch ranks the passages natively, so no reranker model is billed. Never returns raw KB chunk bodies (citations are references only; verbatim spans are redacted). `402` `{"detail": "Insufficient credits. Top up at …/billing"}` when the wallet is empty; `503` when the knowledge models aren't priced or the LLM is unavailable; per-org rate limit `429`. The `mcp.<domain>/mcp` server's `search_knowledge` tool proxies to this endpoint.
 
 ## Hub (Bearer hub `ov_` token - no session/CSRF)
 
