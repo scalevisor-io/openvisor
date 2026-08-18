@@ -341,11 +341,17 @@ def handle_request(project_id: str, request_id: str, message_id: str) -> None:
         req.status = "in_progress"
         project.dev_request_id = req.id
         project.dev_branch = None  # new work unit -> a freshly named branch
+        # §investigation runs: a scoped request can honestly end with nothing to
+        # change, so the opening line must not promise a change either way - it
+        # promised a pull request on a routine whose correct result was a report.
+        # The noun follows the repo this run will push to (a GitLab target opens
+        # a MERGE request), not the platform's default forge.
         _post_message(db, project_id, thread, "agent",
-                      f'On it - I\'m building "{req.title}" now. You\'ll get a '
-                      "pull request to review"
-                      + ("." if project.kind == "auto_dev"
-                         else "; merging it redeploys your demo automatically."))
+                      f'On it - I\'m working on "{req.title}" now. If it needs a '
+                      f"code change you'll get a {_change_noun(target)} to review"
+                      + ("" if project.kind == "auto_dev"
+                         else "; merging it redeploys your demo automatically")
+                      + ". If nothing needs changing, I'll report what I found here.")
         rid = run.id
         db.commit()
     run_development.apply_async(args=[project_id],
@@ -2347,8 +2353,10 @@ def _prepare_runner_inputs(db: Session, project: Project,
     (openvisor_dir / "pr.md").unlink(missing_ok=True)
     # ...and neither may a previous session's findings or outcome declaration
     # (§run outcome): a stale "no_change_needed" would close a run that never
-    # even started its own investigation.
+    # even started its own investigation, and a stale findings ledger would let
+    # this run report an observation it never actually made.
     (openvisor_dir / "report.md").unlink(missing_ok=True)
+    (openvisor_dir / "findings.md").unlink(missing_ok=True)
     (openvisor_dir / "outcome.json").unlink(missing_ok=True)
     if project.ssh_private_key_enc:
         key_path = openvisor_dir / "deploy_key"
@@ -2843,6 +2851,13 @@ def _dev_target(db: Session, project: Project) -> dict | None:
     rows = db.execute(select(ProjectRepo).where(ProjectRepo.project_id == project.id)
                       .order_by(ProjectRepo.role)).scalars().all()
     return _repo_target(rows[0]) if rows else None
+
+
+def _change_noun(target: dict | None) -> str:
+    """What this run's push target calls a proposed change. GitLab says merge
+    request; GitHub and the API-less `other` hosts say pull request."""
+    return ("merge request"
+            if (target or {}).get("provider") == "gitlab" else "pull request")
 
 
 def _repo_target(r: ProjectRepo) -> dict:
@@ -5147,7 +5162,7 @@ def _exit_reason(project: Project) -> dict:
 
 def _agent_outcome(project: Project) -> dict | None:
     """§run outcome: the agent's own end-of-session declaration from
-    .openvisor/outcome.json (development_system.md step 9) -
+    .openvisor/outcome.json (development_system.md step 10) -
     {"outcome": "changed"|"no_change_needed"|"blocked", "summary": str}.
     None when missing or malformed: the verdict then rests on artifacts alone
     (report.md, the diff), exactly as before the contract existed - the matrix
@@ -5168,7 +5183,7 @@ def _agent_outcome(project: Project) -> dict | None:
 
 def _agent_report(project: Project) -> str | None:
     """§investigation runs: the findings a run wrote to .openvisor/report.md when
-    the honest outcome was "nothing to change" (development_system.md step 8).
+    the honest outcome was "nothing to change" (development_system.md step 9).
     Same artifact channel and the same defensive pass as the PR description -
     this text is posted straight into the customer's thread, so PEM material
     drops it wholesale and platform secrets are redacted."""

@@ -34,6 +34,44 @@ OPENVISOR = Path("/workspace/.openvisor")
 TOOL_CONCURRENCY = int(os.environ.get("DEV_TOOL_CONCURRENCY") or 3)
 
 
+# §observation budget: how much text ONE tool result may keep in the conversation.
+# The SDK clips at 50 000 chars (DEFAULT_TEXT_CONTENT_LIMIT) and throws the
+# overflow away, which on a real run is a browser page snapshot: a metered
+# production build carried three ~50 kB snapshots - ~37 k tokens - re-sent on 85
+# subsequent calls, and with the widened condenser window they never aged out.
+# Clipping smaller costs nothing here because the SDK was already truncating;
+# what changes is that the FULL text is written to a file the agent is told about,
+# so a clipped table stays greppable instead of being lost mid-page. The dir is
+# per-container scratch, never the workspace: nothing here is a deliverable and
+# nothing here may reach a commit. 0 restores the SDK default.
+OBS_TEXT_LIMIT = int(os.environ.get("DEV_OBS_TEXT_LIMIT") or 20000)
+OBS_OVERFLOW_DIR = "/tmp/tool_output"
+
+
+def _tuned_observation_limit() -> None:
+    """Clip oversized tool results harder, but persist the full text and point
+    the agent at it. Best-effort: on any SDK drift leave the stock behaviour."""
+    if OBS_TEXT_LIMIT <= 0:
+        return
+    try:
+        from openhands.sdk.llm import message as oh_message
+        from openhands.sdk.utils import maybe_truncate
+
+        limit = OBS_TEXT_LIMIT
+
+        def _truncate(self, text: str) -> str:
+            if not text or len(text) <= limit:
+                return text
+            return maybe_truncate(text, limit, save_dir=OBS_OVERFLOW_DIR,
+                                  tool_prefix="tool")
+
+        oh_message.Message._maybe_truncate_tool_text = _truncate
+        print(f"driver: tool-result window {oh_message.DEFAULT_TEXT_CONTENT_LIMIT} "
+              f"-> {limit} (overflow persisted to {OBS_OVERFLOW_DIR})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: tool-result window untouched: {exc}", file=sys.stderr)
+
+
 class RetryingCondenser(LLMSummarizingCondenser):
     """The condensation call is the ONE chat-completions request in a build (agent
     steps ride the Responses API for gpt-5-family models) and litellm never retries
@@ -252,6 +290,7 @@ def main() -> int:
                                       Tool(name=TaskToolSet.name)],
         "tool_concurrency_limit": max(1, TOOL_CONCURRENCY)})
     agent = _tuned_condenser(agent)
+    _tuned_observation_limit()
 
     # Attach the project's MCP servers if present (best-effort - never fail the
     # build because an MCP server is unavailable).
