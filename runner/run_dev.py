@@ -72,6 +72,65 @@ def _tuned_observation_limit() -> None:
         print(f"driver: tool-result window untouched: {exc}", file=sys.stderr)
 
 
+# §delegated page reading: the sub-agent roster the Task tool delegates TO.
+# `task_tool_set` ships with an EMPTY roster (`get_factory_info()` returns "No
+# user-registered agents yet"), so enabling the tool alone gave the agent a
+# delegation tool with nothing to delegate to. A third-party page is the read
+# that pays for delegation: one pricing-page snapshot came back at ~50 kB and
+# rode every later call of the run, for two numbers. The researcher browses in
+# ITS OWN context and returns the facts. It gets the web-reading MCP servers and
+# NO local tools - it cannot read, edit or run anything in the workspace, so a
+# page it opened can never reach a commit. The SDK ships a worked example keyed
+# on this exact name, which lands in the tool description for free.
+WEB_AGENT = "web researcher"
+WEB_MCP_PREFIXES = ("browser", "websearch")
+WEB_AGENT_ITERATIONS = int(os.environ.get("DEV_WEB_AGENT_ITERATIONS") or 30)
+WEB_AGENT_DESCRIPTION = (
+    "Reads pages on the public web (browser + web search) and returns the facts "
+    "asked for. Use it for every third-party page you need a value off - pricing "
+    "tables, API docs, changelogs, status pages - so the page itself never enters "
+    "this conversation. It has no access to the workspace, cannot run commands and "
+    "cannot see the app you are building."
+)
+WEB_AGENT_PROMPT = (
+    "You read pages so that someone else does not have to. Navigate to the page, "
+    "find what was asked for, and answer with the values and the URL you read them "
+    "off - a short list or table, never the page. Report a figure ONLY if you read "
+    "it on the page: if the page did not load, hid the value behind JavaScript you "
+    "could not reach, or shows something other than what was asked, say exactly "
+    "that instead of filling the gap from memory or from a search-result snippet. "
+    "Note anything adjacent that changes what the value means - a tier or threshold "
+    "above the quoted rate, a different currency, a promotional or committed-use "
+    "price next to the list price - because the caller cannot see the page."
+)
+
+
+def _register_web_researcher(mcp_cfg: dict) -> None:
+    """Register the page-reading sub-agent with the web MCP servers this run
+    actually has. Best-effort: on any SDK drift the main agent keeps browsing
+    itself, exactly as before."""
+    servers = {name: spec
+               for name, spec in (mcp_cfg.get("mcpServers") or {}).items()
+               if name.startswith(WEB_MCP_PREFIXES)}
+    if not servers:
+        return
+    try:
+        from openhands.sdk import agent_definition_to_factory, register_agent
+        from openhands.sdk.subagent import AgentDefinition
+
+        definition = AgentDefinition(
+            name=WEB_AGENT,
+            description=WEB_AGENT_DESCRIPTION,
+            system_prompt=WEB_AGENT_PROMPT,
+            mcp_servers=servers,
+            max_iteration_per_run=WEB_AGENT_ITERATIONS,
+        )
+        register_agent(WEB_AGENT, agent_definition_to_factory(definition), definition)
+        print(f"driver: sub-agent {WEB_AGENT!r} registered ({', '.join(sorted(servers))})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: web sub-agent not registered: {exc}", file=sys.stderr)
+
+
 class RetryingCondenser(LLMSummarizingCondenser):
     """The condensation call is the ONE chat-completions request in a build (agent
     steps ride the Responses API for gpt-5-family models) and litellm never retries
@@ -284,7 +343,8 @@ def main() -> int:
     # which is why every file a run ever opened stayed in the one main context and was
     # re-uploaded on every later step - the dominant input-token line on a real build.
     # A subagent reads in its own context and returns a summary, so the transcript
-    # carries the conclusion instead of the corpus.
+    # carries the conclusion instead of the corpus. The tool is only as good as its
+    # roster, which ships EMPTY - `_register_web_researcher` below fills it.
     agent = agent.model_copy(update={
         "tools": list(agent.tools) + [Tool(name=GrepTool.name), Tool(name=GlobTool.name),
                                       Tool(name=TaskToolSet.name)],
@@ -300,6 +360,10 @@ def main() -> int:
             cfg = json.loads(mcp_path.read_text())
             if cfg.get("mcpServers"):  # empty config makes the SDK raise
                 agent = agent.model_copy(update={"mcp_config": cfg})
+                # Before the Conversation: the Task tool renders its roster into
+                # the tool description at creation time, so an agent registered
+                # afterwards is invisible to the model.
+                _register_web_researcher(cfg)
         except Exception as exc:  # noqa: BLE001
             print(f"driver: MCP config skipped: {exc}", file=sys.stderr)
 
