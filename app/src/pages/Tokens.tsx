@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { adminApi, mcpApi, tokensApi } from "../lib/endpoints";
 import { useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
@@ -28,6 +28,13 @@ const PAGE_SIZE = 10;
 // table and nothing else, and one mixed list made it easy to paste the wrong one.
 type Tab = "mcp" | "hub";
 
+// `?tab=` is the single source of truth, so /settings/tokens?tab=hub can be linked,
+// bookmarked and sent to someone enrolling a spoke. Anything else - including a
+// non-admin asking for the admin-only hub tab - falls back to the MCP tab.
+function tabFromParam(value: string | null, isAdmin: boolean): Tab {
+  return value === "hub" && isAdmin ? "hub" : "mcp";
+}
+
 export default function Tokens() {
   const toast = useToast();
   const { config, settings, isAdmin } = useAuth();
@@ -40,7 +47,16 @@ export default function Tokens() {
     ? `${config.landing_base_url.replace("://", "://mcp.")}/mcp`
     : `https://mcp.${config?.deploy_domain ?? "openvisor.example.com"}/mcp`;
 
-  const [tab, setTab] = useState<Tab>("mcp");
+  const [params, setParams] = useSearchParams();
+  const tab = tabFromParam(params.get("tab"), isAdmin);
+  const setTab = (t: Tab) => {
+    // Replace rather than push: back should leave the page, not walk the tabs.
+    // Other query params survive - this owns `tab` and nothing else.
+    const next = new URLSearchParams(params);
+    if (t === "mcp") next.delete("tab");
+    else next.set("tab", t);
+    setParams(next, { replace: true });
+  };
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
   const [projectTokens, setProjectTokens] = useState<McpProjectToken[] | null>(null);
   const [error, setError] = useState<string | null>(null);
