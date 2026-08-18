@@ -84,6 +84,15 @@ def provision_project(project_id: str, customer_email: str) -> None:
         if project is None:
             return
         Path(project.workspace_path).mkdir(parents=True, exist_ok=True)
+        # §hub shared repo: a project born with a connected push-target repo builds
+        # THERE - provisioning a platform GitLab repo too would create a second,
+        # empty "deliverable" nobody uses (the auto_dev precedent, which skips this
+        # task entirely; hub projects still need the workspace mkdir above).
+        has_push_target = db.query(ProjectRepo).filter(
+            ProjectRepo.project_id == project.id,
+            ProjectRepo.is_push_target.is_(True)).first() is not None
+        if has_push_target:
+            return
         try:
             uuid_prefix = project.id.split("-")[0]
             gl_project = gitlab.create_project(uuid_prefix, project.name)
@@ -3305,6 +3314,17 @@ def _save_run(project: Project, state: str, logs: str | None = None,
                                          "project_id": project.id,
                                          "run_id": _row.id if _row else None,
                                          "request_id": _row.request_id if _row else None})
+        # §pass-through: the hub mirror folds dev_run_state off "demo" events, and
+        # without this a failed build is invisible to the hub customer - their
+        # engagement board shows a slice quietly running forever. Only state
+        # CHANGES are shipped (this branch), so a long build isn't an event storm.
+        # Guarded like the shadow ledger below: some callers hand in bare stubs.
+        try:
+            _db = object_session(project)
+            if _db is not None:
+                hub_events.record(_db, project, "demo", {"dev_run_state": state})
+        except Exception:
+            pass
     project.dev_run_state = state
     if logs is not None:
         project.dev_run_log = logs[-16000:]

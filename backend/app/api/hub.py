@@ -25,14 +25,14 @@ from app.core.deps import rate_limit, require_hub_token
 from app.core.encryption import encrypt
 from app.version import get_version
 from app.models import (
-    CreditTransaction, HubCreditGrant, Message, Organization, Project, StatusChange,
-    User, utcnow,
+    CreditTransaction, HubCreditGrant, Message, Organization, Project, ProjectRepo,
+    StatusChange, User, utcnow,
 )
 from app.schemas.schemas import (
     HubEvalIn, HubGrantIn, HubOrgCreateIn, HubProjectActionIn, HubProjectCreateIn,
     HubProjectMessageIn, HubRequestIn, MemoryIn,
 )
-from app.services import app_settings, devfeed, kb_audit, naming, project_actions, speciality as speciality_svc, sshkeys
+from app.services import app_settings, devfeed, kb_audit, naming, project_actions, repos as repolib, speciality as speciality_svc, sshkeys
 from app.services.pricing import load_static
 from app.workers.celery_app import celery
 
@@ -341,6 +341,15 @@ async def create_hub_project(body: HubProjectCreateIn, request: Request,
         raise HTTPException(
             402, f"This account has an unpaid balance of {abs(org.credit_balance):.0f} "
                  "credits from earlier work. Settle it (top up) before starting a new project.")
+    # Connected repos (§hub shared repo): same gates as the customer create.
+    if not body.from_scratch and not body.repos:
+        raise HTTPException(400, "Provide at least one repository SSH URI, or start from scratch")
+    if body.kind != "ai" and body.repos:
+        raise HTTPException(400, "Only AI-built hub projects take repositories")
+    for repo in body.repos:
+        if not repolib.is_ssh_uri(repo.ssh_uri):
+            raise HTTPException(400, f"Repository {repo.ssh_uri!r} is not an SSH remote "
+                                     "(git@host:path or ssh://git@host/path)")
     flags = await app_settings.get_deposit_pause(db)
     if app_settings.is_kind_paused(flags, body.kind):
         raise HTTPException(403, "deposits_paused")
@@ -350,13 +359,12 @@ async def create_hub_project(body: HubProjectCreateIn, request: Request,
             raise HTTPException(400, "Unknown speciality")
     elif body.speciality is not None and body.speciality not in specs:
         raise HTTPException(400, "Unknown speciality")
-    if not body.from_scratch:
-        raise HTTPException(400, "Connected repositories are not supported for hub projects yet")
 
     project = Project(
         org_id=org.id, name=naming.name_from_description(body.description),
         kind=body.kind, speciality=body.speciality,
-        description=body.description, from_scratch=True,
+        description=body.description,
+        from_scratch=body.from_scratch or not body.repos,
         sovereign=body.sovereign, sovereign_comment=body.sovereign_comment,
         block_auto_development=(body.kind in ("direct_quote", "chat")),
         source="hub", hub_ref=body.hub_ref,
@@ -374,6 +382,15 @@ async def create_hub_project(body: HubProjectCreateIn, request: Request,
         project.demo_basic_auth_pass_enc = encrypt(_secrets.token_urlsafe(12))
         # §threads Request #0: same contract as the customer create path.
         await project_actions.create_mvp_request(db, project)
+        # Connected repos, first one the push target (the customer-create shape).
+        # auto_merge is the hub's call: it feeds the PAT that makes it work, and an
+        # invalid or missing token degrades to the customer-merge path at merge time.
+        for i, repo in enumerate(body.repos):
+            db.add(ProjectRepo(project_id=project.id, ssh_uri=repo.ssh_uri,
+                               role="primary" if i == 0 else "secondary",
+                               provider=repolib.detect_provider(repo.ssh_uri),
+                               is_push_target=(i == 0),
+                               auto_merge=(i == 0 and body.auto_merge)))
     if body.kind == "chat":
         # §chat kind: same immediate-start contract as the customer route - the
         # opening fee is debited in the create transaction and the chat is live in
@@ -412,6 +429,30 @@ async def get_hub_project(project_id: str, request: Request, org_id: str | None 
     project = await _hub_project(db, project_id, org_id)
     await db.refresh(project, ["repos"])
     return project_out(project)
+
+
+@router.post("/projects/{project_id}/repos/check")
+async def check_hub_project_repo(project_id: str, request: Request,
+                                 org_id: str | None = None,
+                                 db: AsyncSession = Depends(get_db),
+                                 user: User = Depends(require_hub_token)):
+    """SSH reachability of the push-target repo, over THIS project's deploy key
+    (§hub shared repo) - the customer verify-ssh check, hub-scoped. The hub calls it
+    before it funds work into a customer-provided repository, so a key the customer
+    never installed surfaces as an actionable answer instead of a failed dev run.
+    Returns {ok, detail}; a project with no connected push target says so."""
+    await _hub_read_limit(request, user)
+    project = await _hub_project(db, project_id, org_id)
+    from app.core.encryption import decrypt
+    repo = (await db.execute(select(ProjectRepo).where(
+        ProjectRepo.project_id == project.id,
+        ProjectRepo.is_push_target.is_(True)))).scalar_one_or_none()
+    if repo is None:
+        return {"ok": False, "detail": "No connected push-target repository - the "
+                                       "platform repo is managed and needs no check."}
+    key = decrypt(project.ssh_private_key_enc) if project.ssh_private_key_enc else ""
+    ok, detail = await run_in_threadpool(repolib.check_ssh, repo.ssh_uri, key)
+    return {"ok": ok, "detail": detail}
 
 
 @router.get("/projects/{project_id}/evaluation")
