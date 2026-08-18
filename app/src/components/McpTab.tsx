@@ -70,6 +70,13 @@ export default function McpTab({
   if (!tokens || !usage) return <Loading />;
 
   const mcpUrl = `https://mcp.${config?.deploy_domain ?? "openvisor.local"}/mcp`;
+  // `claude mcp add` defaults to a stdio server: without --transport http it takes the
+  // URL as a command to exec. A freshly minted token is inlined so the line runs as-is,
+  // and the server name carries the project so a second project never collides with it.
+  const serverName = `${settings?.brand_slug ?? "openvisor"}-${projectId.slice(0, 8)}`;
+  const claudeCommand =
+    `claude mcp add --transport http ${serverName} ${mcpUrl} ` +
+    `--header "Authorization: Bearer ${minted?.token ?? "<your-token>"}"`;
 
   return (
     <div className="stack">
@@ -108,10 +115,7 @@ export default function McpTab({
         <label className="field-label">MCP endpoint</label>
         <CopyField value={mcpUrl} block />
         <label className="field-label mt">Claude Code</label>
-        <CopyField
-          block
-          value={`claude mcp add ${settings?.brand_slug ?? "openvisor"} ${mcpUrl} --header "Authorization: Bearer <your-token>"`}
-        />
+        <CopyField block value={claudeCommand} />
       </div>
 
       {minted && (
