@@ -568,6 +568,22 @@ def customer_branch_exists(base_url: str, token: str, path: str, branch: str) ->
         return True
 
 
+def customer_branch_ahead(base_url: str, token: str, path: str, branch: str,
+                          base: str) -> bool:
+    """Whether `branch` carries commits `base` does not, on a customer GitLab
+    (§14 resume-publish) - the github.branch_ahead_of_base sibling. A 404 with
+    the branch known to exist means the base was never born (uninitialized
+    repo), which makes everything on the branch unpublished: True."""
+    with _customer_client(base_url, token) as c:
+        r = c.get(f"/projects/{quote(path, safe='')}/repository/compare",
+                  params={"from": base, "to": branch})
+        if r.status_code == 404:
+            return True
+        if r.status_code != 200:
+            raise GitLabError(f"branch compare failed: {r.status_code} {r.text[:200]}")
+        return bool(r.json().get("commits"))
+
+
 def customer_mr_diff(base_url: str, token: str, path: str, mr_iid: int) -> str:
     """Unified diff of the MR (per-file diffs with +++ headers) for the §14.7
     security review - the GitLab sibling of github.pr_diff. The deterministic

@@ -262,3 +262,80 @@ def test_declared_change_found_by_backticked_branch_and_pr_number(
         assert p.dev_pr_url == "https://github.com/acme/infra/pull/68"
         assert p.dev_branch == "f/#67-bump-proxy"
         assert p.dev_run_state == "awaiting_merge"
+
+
+# ---- §14 resume-publish (probe 3, the no-changes path) ----------------------
+
+def _resume_probe(monkeypatch, *, token="tok", branch=True, open_pr=False, ahead=True):
+    monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: token)
+    monkeypatch.setattr(tasks.github, "branch_exists",
+                        lambda owner, repo, b, token=None: branch)
+    monkeypatch.setattr(
+        tasks.github, "find_open_pr",
+        lambda owner, repo, head, token=None:
+        {"number": 7, "html_url": "https://github.com/acme/app/pull/7"}
+        if open_pr else None)
+    monkeypatch.setattr(tasks.github, "branch_ahead_of_base",
+                        lambda owner, repo, b, base, token=None: ahead)
+
+
+def test_resume_publish_probe_matches_the_pushed_unopened_branch(
+        org_id, tmp_path, quiet, monkeypatch):
+    """The first live shared-repo engagement's shape: the branch holds the whole
+    change from an earlier attempt, no PR exists, the resume verified and exited
+    empty - the probe says publish, not fail."""
+    with SyncSession() as db:
+        p, _ = _project(db, org_id, tmp_path)
+        _resume_probe(monkeypatch)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is True
+
+
+def test_resume_publish_probe_declines_every_other_shape(
+        org_id, tmp_path, quiet, monkeypatch):
+    with SyncSession() as db:
+        p, _ = _project(db, org_id, tmp_path)
+        # no token to open a change with
+        _resume_probe(monkeypatch, token=None)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is False
+        # the branch never landed
+        _resume_probe(monkeypatch, branch=False)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is False
+        # an OPEN change on an empty run stays probe-1 territory: never relabel
+        _resume_probe(monkeypatch, open_pr=True)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is False
+        # branch equals base: a genuinely empty run
+        _resume_probe(monkeypatch, ahead=False)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is False
+        # no bound target / other host
+        assert tasks._resume_publishable_branch(db, p, None) is False
+        assert tasks._resume_publishable_branch(db, p, {"provider": "other"}) is False
+
+
+def test_resume_publish_probe_swallows_provider_errors(
+        org_id, tmp_path, quiet, monkeypatch):
+    with SyncSession() as db:
+        p, _ = _project(db, org_id, tmp_path)
+        _resume_probe(monkeypatch)
+        def boom(*a, **k):
+            raise RuntimeError("api down")
+        monkeypatch.setattr(tasks.github, "branch_exists", boom)
+        assert tasks._resume_publishable_branch(db, p, TARGET) is False
+
+
+def test_resume_publish_probe_gitlab_side(org_id, tmp_path, quiet, monkeypatch):
+    with SyncSession() as db:
+        p, _ = _project(db, org_id, tmp_path)
+        target = {"provider": "gitlab", "base_url": "https://gl.example.com",
+                  "path": "eng/e-1", "base_branch": "main", "customer": True}
+        monkeypatch.setattr(tasks, "_project_repo_token",
+                            lambda db, p, prov, uri=None: "tok")
+        monkeypatch.setattr(tasks.gitlab, "customer_branch_exists",
+                            lambda base, tok, path, b: True)
+        monkeypatch.setattr(tasks.gitlab, "customer_find_open_mr",
+                            lambda base, tok, path, b: None)
+        monkeypatch.setattr(tasks.gitlab, "customer_branch_ahead",
+                            lambda base, tok, path, b, bb: True)
+        assert tasks._resume_publishable_branch(db, p, target) is True
+        monkeypatch.setattr(tasks.gitlab, "customer_find_open_mr",
+                            lambda base, tok, path, b: {"iid": 3})
+        assert tasks._resume_publishable_branch(db, p, target) is False
