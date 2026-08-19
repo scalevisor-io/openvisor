@@ -56,10 +56,12 @@
     var(--gradient-speed, linear-gradient(135deg, #22d3ee, #7c3aed)) border-box;
   animation: st-pulse-ring 2.4s ease-out infinite;
 }
+/* The ring's inner box is 16px (the 20px node less its 2px border), so the dot
+   must be EVEN: an odd one leaves half a pixel per side and paints off-centre. */
 .status-timeline .t-active .t-node::after {
   content: "";
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--gradient-speed, linear-gradient(135deg, #22d3ee, #7c3aed));
 }
@@ -91,6 +93,11 @@
 .status-timeline.compact .t-node svg {
   width: 9px;
   height: 9px;
+}
+.status-timeline.compact .t-active .t-node::after {
+  /* 12px inner box here - 6px keeps the remainder even, and the dot off the ring. */
+  width: 6px;
+  height: 6px;
 }
 .status-timeline.compact li:not(:first-child)::before {
   top: 8px;
