@@ -1080,6 +1080,52 @@ def _chat_memory_block(db: Session, project: Project) -> str:
     return "\n".join(lines)
 
 
+# A KB id prefixed onto a chunk's stored path. It identifies the knowledge base to us
+# and says nothing at all to the person reading the answer, so it is stripped for
+# display only - the stored path is untouched.
+_KB_ID_PREFIX = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/", re.I)
+
+
+def _source_label(chunk) -> str:
+    """What one retrieved chunk should be CALLED in the sources line."""
+    raw = str((chunk.meta or {}).get("file") or chunk.path or "").strip()
+    return _KB_ID_PREFIX.sub("", raw)
+
+
+def _sources_line(answer: str, chunks) -> str:
+    """The `Sources:` trailer for an answer, or "" when there is nothing to credit.
+
+    Three things the naive version got wrong, all of them visible at once when a KB
+    answer drew six chunks out of a single README:
+
+    - It listed every RETRIEVED chunk, not the ones the answer actually cited, so an
+      answer resting on two sources advertised six.
+    - It never deduplicated, so those six chunks printed the same filename six times.
+    - It printed the stored path verbatim, KB id and all, so the customer read
+      `cdc7e227-d31a-4d93-8142-b25f704e72b5/README.md` six times over.
+
+    The `[n]` markers are positions in `chunks` and the model has written them into its
+    prose, so they cannot be renumbered - a marker that no longer matched its source
+    would be worse than a repetitive list. Instead the markers are GROUPED onto one
+    entry per distinct file, ordered by that file's lowest cited marker, which leaves
+    every citation resolvable and the list as short as the truth allows.
+    """
+    cited = {int(n) for n in re.findall(r"\[(\d+)\]", answer)}
+    if not cited:
+        return ""
+    markers: dict[str, list[int]] = {}
+    for position, chunk in enumerate(chunks or [], start=1):
+        if position not in cited:
+            continue
+        label = _source_label(chunk)
+        if not label:
+            continue
+        markers.setdefault(label, []).append(position)
+    return " · ".join(f"{''.join(f'[{n}]' for n in positions)} {label}"
+                      for label, positions in markers.items())
+
+
 def _llm_unavailable_copy(exc: Exception, retry_verb: str) -> str:
     """Customer-facing copy for an answer that got no completion. A budget
     exhaustion ("empty completion (finish_reason=length)") is NOT a provider
@@ -1234,9 +1280,8 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
                 return
 
             _bill_chat_usages(db, project, usages, "Chat answer")
-            if chunks and re.search(r"\[\d+\]", answer):
-                refs = " · ".join(f"[{i + 1}] {(c.meta or {}).get('file') or c.path}"
-                                  for i, c in enumerate(chunks))
+            refs = _sources_line(answer, chunks)
+            if refs:
                 answer = f"{answer}\n\nSources: {refs}"
             _post_message(db, project_id, "main", "agent", answer,
                           meta={"answers": target.id})

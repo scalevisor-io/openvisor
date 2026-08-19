@@ -183,6 +183,55 @@ def test_answer_only_in_development_and_backs_off_for_admin(org, fake_redis, mon
         assert db.query(Message).filter_by(project_id=active, author="agent").count() == 0
 
 
+def test_sources_credit_only_what_the_answer_cited(org, fake_redis, monkeypatch):
+    """Six chunks out of one README used to print six identical lines. The answer
+    cites two of them, so the trailer names one file and carries both markers."""
+    pid = _chat_project(org)
+    mid = _msg(pid)
+    kb = "cdc7e227-d31a-4d93-8142-b25f704e72b5"
+    _wire_llm(monkeypatch,
+              answer="Buy the book [2] or sponsor the author [4].",
+              chunks=[_chunk(f"part {i}", file=f"{kb}/README.md") for i in range(6)])
+
+    tasks.answer_chat_message(pid, mid)
+    with SyncSession() as db:
+        body = db.query(Message).filter_by(project_id=pid, author="agent").one().body
+    assert "Sources: [2][4] README.md" in body
+    # the repetition is gone, and so is the identifier that meant nothing to a reader
+    assert body.count("README.md") == 1
+    assert kb not in body
+
+
+def test_sources_keep_distinct_files_apart(org, fake_redis, monkeypatch):
+    """Grouping must not merge two different files, and the markers stay attached to
+    the positions the model actually wrote into its prose."""
+    pid = _chat_project(org)
+    mid = _msg(pid)
+    _wire_llm(monkeypatch,
+              answer="Setup is here [1], and the licence is here [3].",
+              chunks=[_chunk("a", file="README.md"), _chunk("b", file="README.md"),
+                      _chunk("c", file="LICENCE.md")])
+
+    tasks.answer_chat_message(pid, mid)
+    with SyncSession() as db:
+        body = db.query(Message).filter_by(project_id=pid, author="agent").one().body
+    assert "Sources: [1] README.md · [3] LICENCE.md" in body
+
+
+def test_an_answer_that_cites_nothing_gets_no_sources_trailer(org, fake_redis, monkeypatch):
+    """Chunks were retrieved but the model leaned on none of them: crediting sources
+    it did not use would put words in the answer's mouth."""
+    pid = _chat_project(org)
+    mid = _msg(pid)
+    _wire_llm(monkeypatch, answer="I do not have anything on that yet.",
+              chunks=[_chunk("unused", file="README.md")])
+
+    tasks.answer_chat_message(pid, mid)
+    with SyncSession() as db:
+        body = db.query(Message).filter_by(project_id=pid, author="agent").one().body
+    assert "Sources:" not in body
+
+
 def test_answer_verbatim_guard_redacts(org, fake_redis, monkeypatch):
     secret = ("alpha bravo charlie delta echo foxtrot golf hotel india juliett "
               "kilo lima mike november oscar")
