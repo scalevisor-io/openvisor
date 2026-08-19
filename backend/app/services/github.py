@@ -149,6 +149,24 @@ def branch_exists(owner: str, repo: str, branch: str, token: str | None = None) 
         return True
 
 
+def branch_ahead_of_base(owner: str, repo: str, branch: str, base: str,
+                         token: str | None = None) -> bool:
+    """Whether `branch` carries commits `base` does not (§14 resume-publish):
+    the signal that a pushed branch still holds UNPUBLISHED work. A 404 means
+    the compare has no base to stand on (an uninitialized repo whose default
+    branch was never born) - with the branch itself already checked to exist,
+    that too means everything on it is unpublished, so it answers True."""
+    import urllib.parse
+    with _client(token) as c:
+        r = c.get(f"/repos/{owner}/{repo}/compare/"
+                  f"{urllib.parse.quote(base, safe='')}..."
+                  f"{urllib.parse.quote(branch, safe='')}")
+        if r.status_code == 404:
+            return True
+        r.raise_for_status()
+        return int(r.json().get("ahead_by") or 0) > 0
+
+
 def list_open_issues(owner: str, repo: str, token: str | None = None) -> list[dict]:
     """Open issues normalized for the §auto_dev sweep: {iid, url, title, body,
     labels, assignees, author}. GitHub's issues API returns PRs too - filtered out."""

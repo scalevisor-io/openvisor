@@ -4134,6 +4134,54 @@ def _adopt_landed_work(db: Session, project: Project, target: dict | None,
     return _adopt_declared_change(db, project, thread, logs)
 
 
+def _resume_publishable_branch(db: Session, project: Project,
+                               target: dict | None) -> bool:
+    """§14 resume-publish (probe 3, no-changes path only): the run produced
+    nothing NEW, but an EARLIER attempt already pushed the complete change to the
+    bound repo and died before a PR/MR existed - a boot-check failure after the
+    push, or a publish-bookkeeping error. Verifying that work and exiting empty
+    is not a failure; it is the moment to PUBLISH what is already there.
+
+    True only on the strict signature of that story: a token to open a change
+    with, the run's branch present on the bound github/gitlab repo, NO open
+    PR/MR for it (an open change on an empty run stays probe-1 territory, which
+    the no-changes path deliberately skips - an old open PR must never relabel a
+    genuinely empty run), and the branch AHEAD of the base (or the base never
+    born - an uninitialized repo's first push is all unpublished work). The
+    caller then falls through to the boot gate and the ordinary publish path,
+    so the branch still earns its PR/MR the same way a fresh build does.
+
+    Best-effort like every adopt probe: any error answers False and the normal
+    no-changes park proceeds."""
+    if target is None or target.get("provider") not in ("github", "gitlab"):
+        return False
+    token = _project_repo_token(db, project, target["provider"], target.get("remote"))
+    if not token:
+        return False
+    branch, base = _project_branch(project), target["base_branch"]
+    try:
+        if target["provider"] == "github":
+            if not github.branch_exists(target["owner"], target["repo"], branch,
+                                        token=token):
+                return False
+            if github.find_open_pr(target["owner"], target["repo"], branch,
+                                   token=token):
+                return False
+            return github.branch_ahead_of_base(target["owner"], target["repo"],
+                                               branch, base, token=token)
+        if not gitlab.customer_branch_exists(target["base_url"], token,
+                                             target["path"], branch):
+            return False
+        if gitlab.customer_find_open_mr(target["base_url"], token,
+                                        target["path"], branch):
+            return False
+        return gitlab.customer_branch_ahead(target["base_url"], token,
+                                            target["path"], branch, base)
+    except Exception as exc:  # noqa: BLE001 - a probe error must not mask the park
+        log.warning("resume-publish probe failed for %s: %s", project.id, exc)
+        return False
+
+
 def _adopt_bound_branch(db: Session, project: Project, target: dict | None,
                         thread: str, logs: str) -> bool:
     """Probe 1: the run's branch on its bound target repo, with an open PR/MR."""
@@ -4427,6 +4475,7 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
             _fail_push(db, project, logs)
             db.commit()
             raise _DevRunHandled
+        resume_publish = False
         if _no_changes(result):
             # §14 don't-lose-landed-work: "no changes" judges only /workspace -
             # the request's change may already be MERGED (probe 0: a resume of a
@@ -4438,9 +4487,18 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
             if (_adopt_merged_change(db, project, thread, logs)
                     or _adopt_declared_change(db, project, thread, logs)):
                 raise _DevRunHandled
-            _fail_no_changes(db, project, logs)
-            db.commit()
-            raise _DevRunHandled
+            # §14 resume-publish (probe 3): the branch already carries the whole
+            # change from an earlier attempt with no PR/MR opened for it - the
+            # first live shared-repo engagement died exactly here, three resumes
+            # in a row concluding "no changes" over a finished, pushed build.
+            # Fall through to the boot gate and the ordinary publish path.
+            resume_publish = _resume_publishable_branch(db, project, target)
+            if not resume_publish:
+                _fail_no_changes(db, project, logs)
+                db.commit()
+                raise _DevRunHandled
+            devfeed.append_event(project, "scan",
+                                 "Branch already carries the change - publishing it")
         if result.get("timed_out"):
             _post_message(db, project.id, thread, "agent",
                           f"The build ran past its {settings.dev_run_timeout_minutes}-minute "
@@ -4453,8 +4511,10 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
 
         # A crashed runner must not fall through to the boot gate / publish as if
         # it had built: the workspace may hold a stale previous build that still
-        # boots, and the branch was likely never pushed.
-        if str((result or {}).get("exit_code", "0")) != "0":
+        # boots, and the branch was likely never pushed. The resume-publish case
+        # is the deliberate exception - its exit code IS the no-changes sentinel
+        # (5), and its branch is verifiably pushed and ahead.
+        if not resume_publish and str((result or {}).get("exit_code", "0")) != "0":
             if _stop_requested(project.id, dev_concurrency.bound_run(project)):
                 _park_stopped(db, project, logs=logs)
                 db.commit()
