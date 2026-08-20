@@ -138,6 +138,25 @@ cmd_add() {
   echo "  cd $wt && make dev    # app at http://app.${FAM_DOMAIN}${slot}.local:$((8070 + 10 * slot)), mail at http://mail.${FAM_DOMAIN}${slot}.local:$((8070 + 10 * slot))"
 }
 
+# Give the invoking user back the files a container created as root inside `dir`.
+# Only a root process can do it, so it runs in a throwaway container on the same
+# mount - the same reason the files exist in the first place.
+reclaim_root_owned() {
+  local dir=$1 stray
+  # A recursive chown deserves a guard of its own: only ever inside WT_PARENT.
+  case "$dir" in
+    "$WT_PARENT"/?*) ;;
+    *) die "refusing to reclaim outside $WT_PARENT: $dir" ;;
+  esac
+  # No pipe to grep here: the teardown above documents how a short-circuiting
+  # reader can SIGPIPE its producer, and that would read as "nothing to do".
+  stray=$(find "$dir" ! -user "$(id -u)" -print -quit 2>/dev/null || true)
+  [ -n "$stray" ] || return 0
+  echo "note: reclaiming container-created files in $dir"
+  docker run --rm -v "$dir:/wt" alpine:3 chown -R "$(id -u):$(id -g)" /wt \
+    || echo "warning: could not reclaim container-created files; removal may fail"
+}
+
 cmd_rm() {
   local name="" purge=0
   while [ $# -gt 0 ]; do
@@ -172,6 +191,13 @@ cmd_rm() {
   else
     echo "warning: no COMPOSE_PROJECT_NAME in $wt/.env; skipping docker teardown (stop any leftover stack with: docker compose -p <project> down)."
   fi
+
+  # Containers write into the worktree through bind mounts AS ROOT (node_modules,
+  # __pycache__, landing/.astro, the materialized static_data json), and those files
+  # are not ours to unlink - which is what makes the removal below fail with
+  # "Permission denied" and strand the directory. Hand them back first, after the
+  # teardown above so nothing is still writing.
+  reclaim_root_owned "$wt"
 
   # Clear the files this script generated (they read as "dirty" to git); real
   # uncommitted work still blocks removal below.
