@@ -15,7 +15,8 @@ from app.core.security import new_api_token
 from app.main import app
 from app.models import (
     ApiToken, CreditTransaction, HubCreditGrant, HubProjectEvent, Message,
-    Organization, Project, ProjectMemory, ProjectRepo, Request, StatusChange, User,
+    Organization, Project, ProjectMemory, ProjectRepo, Quote, Request, StatusChange,
+    User,
 )
 
 
@@ -179,6 +180,57 @@ def test_save_run_ships_dev_state_to_the_outbox(client, env, monkeypatch):
         assert len(db.execute(select(HubProjectEvent).where(
             HubProjectEvent.project_id == pid,
             HubProjectEvent.etype == "demo")).scalars().all()) == 1
+
+
+def test_a_consultants_quote_ships_to_the_hub(client, env, monkeypatch):
+    """A direct_quote project's evaluation deliberately estimates nothing, so this
+    price is the only one the hub will ever have. Without the event it waits forever
+    for a figure only a person can give."""
+    from app.services import hub_events
+    pid = _create(client, env, monkeypatch, kind="direct_quote").json()["id"]
+    with SyncSession() as db:
+        db.execute(delete(HubProjectEvent).where(HubProjectEvent.project_id == pid))
+        project = db.get(Project, pid)
+        quote = Quote(project_id=pid, title="Playtesting pass", amount=140.0,
+                      currency="credits", price_credits=140.0, status="sent")
+        db.add(quote)
+        db.flush()
+        hub_events.record(db, project, "quote", hub_events.quote_payload(quote))
+        db.commit()
+        events = db.execute(select(HubProjectEvent).where(
+            HubProjectEvent.project_id == pid,
+            HubProjectEvent.etype == "quote")).scalars().all()
+    assert len(events) == 1
+    assert events[0].payload["price_credits"] == 140.0
+    assert events[0].payload["status"] == "sent"
+    assert events[0].payload["title"] == "Playtesting pass"
+    with SyncSession() as db:      # module teardown drops projects; quotes FK them
+        db.execute(delete(Quote).where(Quote.project_id == pid))
+        db.commit()
+
+
+def test_a_quote_on_a_direct_customers_project_ships_nothing(client, env, monkeypatch):
+    """`record` is a no-op off hub projects, so the call site stays unconditional and a
+    direct customer's pricing never leaves this system."""
+    from app.services import hub_events
+    with SyncSession() as db:
+        org = db.execute(select(Organization)).scalars().first()
+        own = Project(org_id=org.id, kind="direct_quote", status="draft",
+                      name="Sold directly",
+                      description="A project this consultant sold directly")
+        db.add(own)
+        db.flush()
+        quote = Quote(project_id=own.id, title="Direct", amount=10.0,
+                      currency="credits", price_credits=10.0, status="sent")
+        db.add(quote)
+        db.flush()
+        hub_events.record(db, own, "quote", hub_events.quote_payload(quote))
+        db.commit()
+        assert db.execute(select(HubProjectEvent).where(
+            HubProjectEvent.project_id == own.id)).scalars().all() == []
+        db.execute(delete(Quote).where(Quote.project_id == own.id))
+        db.execute(delete(Project).where(Project.id == own.id))
+        db.commit()
 
 
 def test_repo_check_route(client, env, monkeypatch):

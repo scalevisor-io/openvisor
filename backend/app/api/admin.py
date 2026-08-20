@@ -20,8 +20,8 @@ from app.schemas.schemas import (
     ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, dev_concurrency, egress, routines as routines_svc,
-    speciality as speciality_svc, stripe_svc, vision,
+    app_settings, brand, dev_concurrency, egress, hub_events,
+    routines as routines_svc, speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
 from app.services.lifecycle import TransitionError, transition_async
@@ -330,7 +330,11 @@ async def create_credit_quote(project_id: str, body: QuoteCreateIn,
                               db: AsyncSession = Depends(get_db)):
     """Credit-priced quote for the Quotes tab: the customer accepts (charged
     from the org wallet, commits the consultant to deliver to the customer repo) or
-    denies it. Distinct from the Stripe payment-link quotes above."""
+    denies it. Distinct from the Stripe payment-link quotes above.
+
+    On a HUB project this price is also the only one the hub will ever have: a
+    direct_quote evaluation deliberately estimates nothing, so without the outbox
+    event below the hub waits forever for a figure only a person can give."""
     project = await _get_project(db, project_id)
     quote = Quote(project_id=project.id, title=body.title, details=body.details,
                   amount=body.price_credits, currency="credits",
@@ -341,6 +345,8 @@ async def create_credit_quote(project_id: str, body: QuoteCreateIn,
         db, project.id,
         f"{settings.consultant_first_name} sent a new quote: {quote.title} ({quote.price_credits:g} credits). "
         f"Review it in the Quotes tab.")
+    # Same session as the row it mirrors, so the event cannot outlive a rollback.
+    hub_events.record(db, project, "quote", hub_events.quote_payload(quote))
     await db.commit()
     await db.refresh(quote, ["attachments"])
     return quote_out(quote)
@@ -360,6 +366,9 @@ async def patch_quote(quote_id: str, body: QuotePatchIn,
             raise HTTPException(409, "The price can no longer change once the quote is decided")
         quote.price_credits = body.price_credits
         quote.amount = body.price_credits
+        # A reprice has to travel too, or the hub funds against the first figure.
+        hub_events.record(db, await db.get(Project, quote.project_id), "quote",
+                          hub_events.quote_payload(quote))
     await db.commit()
     return quote_out(quote)
 
