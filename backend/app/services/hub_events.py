@@ -16,6 +16,13 @@ def record(db, project: Project | None, etype: str, payload: dict) -> None:
                            etype=etype, payload=payload))
 
 
+def quote_payload(quote) -> dict:
+    """A consultant's hand-set price, for a hub project whose evaluation never
+    produces one. `price_credits` is what the hub funds against."""
+    return {"id": quote.id, "title": (quote.title or "")[:255],
+            "price_credits": quote.price_credits, "status": quote.status}
+
+
 def message_payload(msg: Message) -> dict:
     return {"id": msg.id, "thread": msg.thread, "author": msg.author,
             "body": (msg.body or "")[:_BODY_CAP], "meta": msg.meta,
