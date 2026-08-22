@@ -2,7 +2,7 @@
 
 Instance-admin-level (the spoke owner's, not per customer org): one global list of
 reusable OpenAI-compatible endpoints + credentials that a project's Model config
-modal selects from. `provider` is a preset hint (openai|anthropic|mistral|custom)
+modal selects from. `provider` is a preset hint (openai|anthropic|mistral|openrouter|eurouter|carouter|custom)
 for the UI badge + base-URL prefill. The API key is envelope-encrypted at rest and
 NEVER returned (only `has_api_key: bool`), so no secret is readable back out of the
 API. Deleting an endpoint still referenced by a project, a program or a program
