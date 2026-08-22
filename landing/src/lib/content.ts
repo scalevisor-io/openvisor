@@ -96,6 +96,9 @@ export interface SiteContent {
   };
   legal: {
     entity: string;
+    // Optional: the operating company's registered address. The admin Settings
+    // page overrides both this and `entity` at runtime (see layouts/Base.astro).
+    address?: string;
     consultant: string;
     contactEmail: string;
     privacyUpdated: string;

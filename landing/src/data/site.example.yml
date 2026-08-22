@@ -32,6 +32,9 @@ seo:
 
 legal:
   entity: "Your Company"
+  # Registered address of the operating company, printed in the legal pages. Leave
+  # empty to omit the sentence; the admin Settings page can set it at runtime.
+  address: ""
   consultant: "{{CONSULTANT_NAME}}"
   contactEmail: "contact@openvisor.example.com"
   privacyUpdated: "7 July 2026"

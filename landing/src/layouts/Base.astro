@@ -115,7 +115,7 @@ const colorOverride =
       document.documentElement.classList.add('js');
     </script>
     <slot />
-    <script define:vars={{ siteHost, appHost }}>
+    <script define:vars={{ siteHost, appHost, appUrl }}>
       // Repoint the canonical app links at the domain this page is actually
       // served from (app.openvisor.local in dev, app.<domain> wherever it's
       // deployed). Hardcoded hrefs stay as the no-JS/SEO fallback.
@@ -135,6 +135,45 @@ const colorOverride =
             /* leave non-URL hrefs untouched */
           }
         });
+      })();
+
+      // §legal identity: the operating company's legal name and registered address
+      // are admin-editable (Admin Settings -> Business legal identity) but this
+      // page is a static build, so the site.yml values render first - that is what
+      // crawlers and no-JS visitors read - and the admin's values are swapped in
+      // here. Any failure (API down, field never set) keeps the built-in text.
+      (() => {
+        if (!document.querySelector('[data-legal-entity], [data-legal-address]')) return;
+        const apex = location.hostname.replace(/^www\./, '');
+        const sameHost =
+          apex === siteHost || apex === 'localhost' || !apex.includes('.') || /^[\d.]+$/.test(apex);
+        const origin = sameHost
+          ? appUrl
+          : location.protocol + '//app.' + apex + (location.port ? ':' + location.port : '');
+        fetch(origin + '/api/meta/legal')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!d) return;
+            const name = (d.legal_name || '').trim();
+            // The admin types an address over several lines; it reads inline here.
+            const address = (d.legal_address || '').trim().replace(/\s*\n\s*/g, ', ');
+            if (name) {
+              document.querySelectorAll('[data-legal-entity]').forEach((el) => {
+                el.textContent = name;
+              });
+            }
+            if (address) {
+              document.querySelectorAll('[data-legal-address]').forEach((el) => {
+                el.textContent = address;
+              });
+              document.querySelectorAll('[data-legal-address-line]').forEach((el) => {
+                el.hidden = false;
+              });
+            }
+          })
+          .catch(() => {
+            /* keep the values this page was built with */
+          });
       })();
     </script>
   </body>

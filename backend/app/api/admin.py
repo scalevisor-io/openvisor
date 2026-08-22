@@ -90,11 +90,9 @@ async def _fees_out(db: AsyncSession) -> list[dict]:
     return rows
 
 
-@router.get("/settings")
-async def get_settings(db: AsyncSession = Depends(get_db)):
-    """Runtime, admin-editable global settings: the deposit-pause flags, the
-    instance-default model's image-support declaration (§chat images) and the
-    dev-sandbox egress lockdown (§egress)."""
+async def _settings_out(db: AsyncSession) -> dict:
+    """The admin Settings payload, shared by the read and the write so the page
+    always renders what was just stored."""
     out = await app_settings.get_deposit_pause(db)
     out["default_model_supports_images"] = await app_settings.get_flag(
         db, vision.DEFAULT_MODEL_IMAGES_KEY)
@@ -103,7 +101,17 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     out["default_model"] = settings.openai_model
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
+    out.update(await app_settings.get_legal_identity(db))
     return out
+
+
+@router.get("/settings")
+async def get_settings(db: AsyncSession = Depends(get_db)):
+    """Runtime, admin-editable global settings: the deposit-pause flags, the
+    instance-default model's image-support declaration (§chat images), the
+    dev-sandbox egress lockdown (§egress) and the legal identity the landing's
+    legal pages print (§legal identity)."""
+    return await _settings_out(db)
 
 
 @router.put("/settings")
@@ -141,16 +149,12 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
                 raise HTTPException(422, f"Invalid fee for {sid}: a non-negative number of credits")
             cleaned[sid] = val
         await app_settings.set_value(db, speciality_svc.FEE_OVERRIDES_KEY, cleaned)
+    # §legal identity: what the landing's Privacy policy and Terms of service name
+    # as the operating company. "" clears the override back to the built-in value.
+    await app_settings.set_legal_identity(
+        db, name=body.legal_name, address=body.legal_address)
     await db.commit()
-    out = await app_settings.get_deposit_pause(db)
-    out["default_model_supports_images"] = await app_settings.get_flag(
-        db, vision.DEFAULT_MODEL_IMAGES_KEY)
-    out["routines_disabled"] = await app_settings.get_flag(
-        db, routines_svc.ROUTINES_DISABLED)
-    out["default_model"] = settings.openai_model
-    out.update(await _egress_out(db))
-    out["speciality_fees"] = await _fees_out(db)
-    return out
+    return await _settings_out(db)
 
 
 @router.post("/knowledge/reindex")
