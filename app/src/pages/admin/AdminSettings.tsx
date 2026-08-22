@@ -144,9 +144,82 @@ export default function AdminSettings() {
         </div>
       </div>
 
+      <LegalIdentityCard settings={settings} busy={busy} update={update} />
+
       <FeesCard settings={settings} busy={busy} update={update} />
 
       <EgressCard settings={settings} busy={busy} update={update} />
+    </div>
+  );
+}
+
+// §legal identity: who the Privacy policy and Terms of service on the public
+// landing name as the operating company. The landing is a static build, so those
+// pages ship with the value baked in at build time and read this one at runtime -
+// leaving both fields empty keeps the built-in value.
+function LegalIdentityCard({
+  settings,
+  busy,
+  update,
+}: {
+  settings: AdminSettingsT;
+  busy: string | null;
+  update: (patch: Partial<AdminSettingsT>, field: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(settings.legal_name ?? "");
+  const [address, setAddress] = useState(settings.legal_address ?? "");
+
+  // Re-sync when the server answers with the stored (trimmed) values.
+  useEffect(() => {
+    setName(settings.legal_name ?? "");
+    setAddress(settings.legal_address ?? "");
+  }, [settings.legal_name, settings.legal_address]);
+
+  const dirty =
+    name.trim() !== (settings.legal_name ?? "") || address.trim() !== (settings.legal_address ?? "");
+
+  return (
+    <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
+      <h3 style={{ marginTop: 0 }}>Business legal identity</h3>
+      <Alert kind="info">
+        The company that legally operates this instance. It is what the public Privacy policy and
+        Terms of service name as the data controller and service operator, and it appears in the
+        landing footer. Leave a field empty to keep the value the landing was built with.
+      </Alert>
+
+      <div style={{ marginTop: "1rem" }}>
+        <label className="field">
+          <span>Legal name</span>
+          <input
+            type="text"
+            value={name}
+            maxLength={200}
+            placeholder="Example Consulting Ltd"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span>Registered address</span>
+          <textarea
+            value={address}
+            maxLength={500}
+            rows={3}
+            placeholder={"12 Example Street\n75001 Paris\nFrance"}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        </label>
+        <div className="row gap-sm">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={busy !== null || !dirty}
+            onClick={() => update({ legal_name: name.trim(), legal_address: address.trim() }, "legal")}
+          >
+            Save legal identity
+          </button>
+          {dirty && <span className="muted small">Unsaved changes</span>}
+        </div>
+      </div>
     </div>
   );
 }

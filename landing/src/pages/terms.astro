@@ -1,5 +1,7 @@
 ---
 import Legal from '../layouts/Legal.astro';
+import LegalAddress from '../components/LegalAddress.astro';
+import LegalEntity from '../components/LegalEntity.astro';
 import { brandName } from '../lib/site';
 import content from '../lib/content';
 
@@ -15,8 +17,8 @@ const { entity, consultant, contactEmail, termsUpdated } = content.legal;
 >
   <p>
     These terms govern your use of <strong>{brandName}</strong> (the "Platform"), a service
-    operated by <strong>{entity}</strong>, represented by {consultant} ("we", "us"). By
-    creating an account or using the Platform you accept these terms. If you use the Platform on
+    operated by <strong><LegalEntity /></strong>, represented by {consultant} ("we", "us").<LegalAddress
+    /> By creating an account or using the Platform you accept these terms. If you use the Platform on
     behalf of a company, you confirm you are authorized to bind it.
   </p>
 
@@ -36,18 +38,18 @@ const { entity, consultant, contactEmail, termsUpdated } = content.legal;
   <div class="legal-callout">
     <p>
       <strong>AI-curated works are experimental and delivered "as is".</strong> Any work produced
-      by AI agents through the Platform does not engage {entity} in any liability, to the
+      by AI agents through the Platform does not engage <LegalEntity /> in any liability, to the
       maximum extent permitted by applicable law. This is an experimental product: you are solely
       responsible for reviewing, testing, and validating every AI-curated deliverable before any
       use, and for any consequence of using it.
     </p>
   </div>
   <p>
-    {entity} gives no warranty, express or implied, that AI-curated works are free of defects,
+    <LegalEntity /> gives no warranty, express or implied, that AI-curated works are free of defects,
     secure, fit for a particular purpose, or compliant with regulations applicable to your
     activity. Human review by {consultant} is a quality practice, not a guarantee of the
     output. Where applicable law does not allow a full exclusion of liability (in particular in
-    case of gross negligence, willful misconduct, or mandatory consumer rights), {entity}'s
+    case of gross negligence, willful misconduct, or mandatory consumer rights), <LegalEntity />'s
     total liability is capped at the amounts you paid for the project concerned in the 12 months
     preceding the claim.
   </p>
@@ -69,7 +71,7 @@ const { entity, consultant, contactEmail, termsUpdated } = content.legal;
   <p>
     If you nonetheless choose to use an AI-curated work in production or against production
     systems, you do so entirely at your own risk and against our express advice, and you release
-    {entity} from any resulting claim to the maximum extent permitted by law.
+    <LegalEntity /> from any resulting claim to the maximum extent permitted by law.
   </p>
 
   <h2>4. Accounts</h2>
@@ -98,7 +100,7 @@ const { entity, consultant, contactEmail, termsUpdated } = content.legal;
   <h2>7. Intellectual property</h2>
   <ul>
     <li>Upon full payment, the code delivered to your repository for your project is yours.</li>
-    <li>{entity} retains all rights to the Platform itself, its knowledge base, prompts, tooling, and pre-existing know-how, which are licensed to no one through a delivery.</li>
+    <li><LegalEntity /> retains all rights to the Platform itself, its knowledge base, prompts, tooling, and pre-existing know-how, which are licensed to no one through a delivery.</li>
     <li>Deliverables may include open-source components, which remain governed by their own licenses.</li>
   </ul>
 
@@ -125,7 +127,7 @@ const { entity, consultant, contactEmail, termsUpdated } = content.legal;
 
   <h2>11. Governing law and jurisdiction</h2>
   <p>
-    These terms are governed by the law of the country where {entity} is established. Any dispute
+    These terms are governed by the law of the country where <LegalEntity /> is established. Any dispute
     that cannot be resolved amicably is submitted to the competent courts of that country, without
     prejudice to mandatory jurisdiction rules protecting consumers.
   </p>

@@ -1,5 +1,6 @@
 ---
 import { appUrl, signupUrl, brandName, wordmarkHead, wordmarkTail } from '../lib/site';
+import LegalEntity from './LegalEntity.astro';
 import Mark from './Mark.astro';
 import content from '../lib/content';
 
@@ -40,7 +41,7 @@ const year = new Date().getFullYear();
 
   <div class="container footer-bottom">
     <div class="footer-legal">
-      <span>© {year} {brandName} - a {content.legal.entity} service.</span>
+      <span>© {year} {brandName} - a <LegalEntity /> service.</span>
       <a href="/privacy">Privacy</a>
       <a href="/terms">Terms</a>
     </div>

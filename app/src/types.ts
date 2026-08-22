@@ -537,6 +537,10 @@ export interface AdminSettings {
   // speciality_fee_overrides ({id: credits}, null clears back to the default).
   speciality_fees?: SpecialityFeeRow[];
   speciality_fee_overrides?: Record<string, number | null>;
+  // §legal identity: the operating company the landing's Privacy policy and Terms
+  // of service name. Empty = the landing keeps the value it was built with.
+  legal_name: string;
+  legal_address: string;
 }
 
 export interface SpecialityFeeRow {

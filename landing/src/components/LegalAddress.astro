@@ -1,0 +1,10 @@
+---
+// §legal identity: the registered-address sentence that follows the operating
+// company's name. Hidden when neither the build nor the admin provides an address
+// - the runtime swap in layouts/Base.astro fills it in and reveals it.
+import content from '../lib/content';
+
+const address = (content.legal.address ?? '').trim();
+---
+
+<span data-legal-address-line hidden={!address}> Its registered address is <span data-legal-address>{address}</span>.</span>

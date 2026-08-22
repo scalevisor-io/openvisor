@@ -1,0 +1,8 @@
+---
+// §legal identity: the operating company's legal name. Rendered from the build's
+// site.yml so crawlers and no-JS visitors read a real name; the script in
+// layouts/Base.astro swaps in the admin's value (Admin Settings) when there is one.
+import content from '../lib/content';
+---
+
+<span data-legal-entity>{content.legal.entity}</span>

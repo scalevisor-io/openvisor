@@ -1,9 +1,11 @@
 ---
 import Legal from '../layouts/Legal.astro';
+import LegalAddress from '../components/LegalAddress.astro';
+import LegalEntity from '../components/LegalEntity.astro';
 import { brandName } from '../lib/site';
 import content from '../lib/content';
 
-const { entity, consultant, contactEmail, privacyUpdated } = content.legal;
+const { consultant, contactEmail, privacyUpdated } = content.legal;
 ---
 
 <Legal
@@ -15,15 +17,15 @@ const { entity, consultant, contactEmail, privacyUpdated } = content.legal;
 >
   <p>
     This policy explains what personal data <strong>{brandName}</strong>, a service operated by
-    <strong>{entity}</strong> ("we", "us"), collects, why we collect it, and the rights you have
+    <strong><LegalEntity /></strong> ("we", "us"), collects, why we collect it, and the rights you have
     over it. It is written to comply with Regulation (EU) 2016/679 (the <strong>GDPR</strong>)
     and applicable national data-protection law.
   </p>
 
   <h2>1. Data controller</h2>
   <p>
-    The data controller is <strong>{entity}</strong>, represented by {consultant}. For any
-    question about this policy or your data, contact us at
+    The data controller is <strong><LegalEntity /></strong>, represented by {consultant}.<LegalAddress
+    /> For any question about this policy or your data, contact us at
     <a href={`mailto:${contactEmail}`}>{contactEmail}</a>.
   </p>
 
@@ -155,7 +157,7 @@ const { entity, consultant, contactEmail, privacyUpdated } = content.legal;
     To exercise any of these rights, write to
     <a href={`mailto:${contactEmail}`}>{contactEmail}</a>. We answer within one month. If you
     believe your rights are not respected, you can lodge a complaint with the supervisory
-    authority of the country where {entity} is established, or with the supervisory
+    authority of the country where <LegalEntity /> is established, or with the supervisory
     authority of your country of residence.
   </p>
 
