@@ -8,8 +8,18 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
+# Floor for a credit top-up, in `settings.credit_currency`. Stripe's own minimum
+# charge (~0.50 EUR) is lower, but a top-up smaller than this costs more in card
+# fees than it is worth, so the amount is rejected before a Checkout session is
+# ever created. The SPA reads it from GET /billing/balance so both sides agree.
+MIN_TOPUP = 2.0
+
 
 class StripeUnavailable(Exception):
+    pass
+
+
+class TopupTooSmall(Exception):
     pass
 
 
@@ -17,12 +27,18 @@ def _configured() -> bool:
     return settings.stripe_secret_key.startswith("sk_") and "placeholder" not in settings.stripe_secret_key
 
 
-def create_topup_checkout(org_id: str, amount_eur: float) -> str:
+def create_topup_checkout(org_id: str, amount_eur: float, email: str) -> str:
+    if amount_eur < MIN_TOPUP:
+        raise TopupTooSmall(f"The minimum top-up is {MIN_TOPUP:g} "
+                            f"{settings.credit_currency}")
     if not _configured():
         raise StripeUnavailable("Stripe is not configured")
     stripe_lib.api_key = settings.stripe_secret_key
     session = stripe_lib.checkout.Session.create(
         mode="payment",
+        # Prefills Stripe's Contact field with the account that is paying (still
+        # editable there) - the receipt then reaches the customer by default.
+        customer_email=email,
         line_items=[{
             "price_data": {
                 "currency": settings.credit_currency.lower(),

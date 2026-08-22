@@ -24,7 +24,10 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
 async def balance(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     org = await db.get(Organization, user.org_id)
     return {"credit_balance": round(org.credit_balance or 0.0, 4),
-            "currency": settings.credit_currency}
+            "currency": settings.credit_currency,
+            # The top-up floor travels with the balance so the SPA's amount field
+            # can't offer an amount the checkout call would reject.
+            "min_topup": stripe_svc.MIN_TOPUP}
 
 
 @router.get("/transactions")
@@ -41,7 +44,9 @@ async def transactions(user: User = Depends(get_current_user),
 @router.post("/topup")
 async def topup(body: TopupIn, user: User = Depends(get_current_user)):
     try:
-        url = stripe_svc.create_topup_checkout(user.org_id, body.amount)
+        url = stripe_svc.create_topup_checkout(user.org_id, body.amount, user.email)
+    except stripe_svc.TopupTooSmall as exc:
+        raise HTTPException(400, str(exc))
     except stripe_svc.StripeUnavailable:
         raise HTTPException(503, "Stripe is not configured on this deployment")
     return {"checkout_url": url}

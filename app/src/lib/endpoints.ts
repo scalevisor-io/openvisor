@@ -356,7 +356,10 @@ export const quotesApi = {
 
 // --- Billing ---
 export const billingApi = {
-  balance: () => api.get<{ credit_balance: number; currency: string }>("/billing/balance"),
+  balance: () =>
+    api.get<{ credit_balance: number; currency: string; min_topup: number }>(
+      "/billing/balance",
+    ),
   transactions: () => api.get<Transaction[]>("/billing/transactions"),
   topup: (amount: number) => api.post<{ checkout_url: string }>("/billing/topup", { amount }),
   quotes: (id: string) => api.get<Quote[]>(`/projects/${id}/quotes`),
