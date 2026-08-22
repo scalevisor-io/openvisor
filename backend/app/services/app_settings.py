@@ -11,6 +11,13 @@ from sqlalchemy.orm import Session
 
 from app.models import AppSetting
 
+# §legal identity: the operating company's legal name and registered address,
+# admin-editable so a deployment can name itself correctly in its Privacy policy
+# and Terms of service without rebuilding the landing image. Empty (the default)
+# means "use whatever the landing was built with" (site.yml `legal.entity`).
+LEGAL_NAME = "legal_business_name"
+LEGAL_ADDRESS = "legal_business_address"
+
 PAUSE_AI = "pause_ai_deposits"
 PAUSE_DIRECT = "pause_direct_deposits"
 PAUSE_AUTO_DEV = "pause_auto_dev_deposits"
@@ -108,3 +115,23 @@ async def set_value(db: AsyncSession, key: str, value) -> None:
         db.add(AppSetting(key=key, value=value))
     else:
         row.value = value
+
+
+# ---- §legal identity ----
+
+async def get_legal_identity(db: AsyncSession) -> dict[str, str]:
+    """The legal name/address pair, both empty strings when never set."""
+    return {
+        "legal_name": str(await get_value(db, LEGAL_NAME, "") or ""),
+        "legal_address": str(await get_value(db, LEGAL_ADDRESS, "") or ""),
+    }
+
+
+async def set_legal_identity(db: AsyncSession, *, name: str | None = None,
+                             address: str | None = None) -> None:
+    """Partial update, trimmed; an empty string clears the field back to the
+    landing's built-in value. Caller commits."""
+    if name is not None:
+        await set_value(db, LEGAL_NAME, name.strip())
+    if address is not None:
+        await set_value(db, LEGAL_ADDRESS, address.strip())

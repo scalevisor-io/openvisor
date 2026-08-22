@@ -277,6 +277,11 @@ class AppSettingsIn(BaseModel):
     # when sent - {speciality_id: credits}; null clears an id back to the
     # specialities.json default.
     speciality_fee_overrides: dict[str, float | None] | None = None
+    # §legal identity: the operating company named in the landing's Privacy policy
+    # and Terms of service. "" clears the override (the landing's built-in value
+    # applies again); omitted leaves the stored value alone.
+    legal_name: str | None = Field(default=None, max_length=200)
+    legal_address: str | None = Field(default=None, max_length=500)
 
 
 # ---- knowledge bases (§KB, admin) ----
