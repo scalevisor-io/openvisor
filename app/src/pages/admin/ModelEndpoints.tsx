@@ -15,6 +15,11 @@ const PRESETS: { id: ModelProvider; label: string; base_url: string; keyHint: st
   { id: "openai", label: "OpenAI", base_url: "https://api.openai.com/v1", keyHint: "sk-…" },
   { id: "anthropic", label: "Anthropic", base_url: "https://api.anthropic.com/v1", keyHint: "sk-ant-…" },
   { id: "mistral", label: "Mistral", base_url: "https://api.mistral.ai/v1", keyHint: "…" },
+  // OpenAI-compatible gateways: one key, many models. EURouter and CARouter keep
+  // the request inside the EU / Canada, which is what a sovereign track needs.
+  { id: "openrouter", label: "OpenRouter", base_url: "https://openrouter.ai/api/v1", keyHint: "sk-or-v1-…" },
+  { id: "eurouter", label: "EURouter", base_url: "https://api.eurouter.ai/v1", keyHint: "sk-eurouter-…" },
+  { id: "carouter", label: "CARouter", base_url: "https://carouter.ai/v1", keyHint: "…" },
   { id: "custom", label: "Custom", base_url: "", keyHint: "API key" },
 ];
 
@@ -22,6 +27,9 @@ const PROVIDER_LABEL: Record<ModelProvider, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   mistral: "Mistral",
+  openrouter: "OpenRouter",
+  eurouter: "EURouter",
+  carouter: "CARouter",
   custom: "Custom",
 };
 

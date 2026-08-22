@@ -278,7 +278,7 @@ class ModelEndpoint(Base):
     """An instance-admin-level saved LLM API endpoint + credential the admin reuses
     across projects (§model config). Global (spoke-wide, the owner's - not per
     customer org, no org_id), like KnowledgeBase. `provider` is a preset hint
-    (openai|anthropic|mistral|custom) for the UI badge + base-URL prefill; `base_url`
+    (openai|anthropic|mistral|openrouter|eurouter|carouter|custom) for the UI badge + base-URL prefill; `base_url`
     is the OpenAI-compatible endpoint the runner routes through LiteLLM; `api_key_enc`
     is the envelope-encrypted key, NEVER returned by the API (only has_api_key). A
     project's ProjectModelConfig points at one of these by endpoint_id; the model
@@ -286,7 +286,7 @@ class ModelEndpoint(Base):
     __tablename__ = "model_endpoint"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     label: Mapped[str] = mapped_column(String(128))
-    provider: Mapped[str] = mapped_column(String(16), default="custom")  # openai|anthropic|mistral|custom
+    provider: Mapped[str] = mapped_column(String(16), default="custom")  # openai|anthropic|mistral|openrouter|eurouter|carouter|custom
     base_url: Mapped[str] = mapped_column(String(512))
     api_key_enc: Mapped[str] = mapped_column(Text)
     # §effort: reasoning-effort override for calls through this endpoint

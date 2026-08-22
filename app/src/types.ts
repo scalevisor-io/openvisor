@@ -670,7 +670,15 @@ export interface Evaluation {
 
 // A saved, reusable LLM API endpoint + credential (admin-managed, instance-wide).
 // The API key is never returned - only whether one is set.
-export type ModelProvider = "openai" | "anthropic" | "mistral" | "custom";
+export type ModelProvider =
+  | "openai"
+  | "anthropic"
+  | "mistral"
+  // OpenAI-compatible gateways; the EU/CA ones keep the request in-region.
+  | "openrouter"
+  | "eurouter"
+  | "carouter"
+  | "custom";
 
 export interface ModelEndpoint {
   id: string;

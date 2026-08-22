@@ -371,9 +371,16 @@ class ProjectPatchIn(BaseModel):
     dev_mem_request: str | None = Field(default=None, pattern=_RESOURCE_RE)
 
 
+# A saved endpoint's provider preset: an auth + base-URL shape, not a capability.
+# openrouter/eurouter/carouter are OpenAI-compatible gateways (the EU and CA ones
+# keep the request inside their region, which is what §sovereign tracks promise).
+ModelProviderName = Literal["openai", "anthropic", "mistral", "openrouter", "eurouter",
+                            "carouter", "custom"]
+
+
 class ModelEndpointIn(BaseModel):
     label: str = Field(min_length=1, max_length=128)
-    provider: Literal["openai", "anthropic", "mistral", "custom"] = "custom"
+    provider: ModelProviderName = "custom"
     base_url: str = Field(min_length=1, max_length=512)
     api_key: str = Field(min_length=1)
     model_name: str = Field(min_length=1, max_length=128)
@@ -394,7 +401,7 @@ class ModelEndpointIn(BaseModel):
 
 class ModelEndpointPatchIn(BaseModel):
     label: str | None = Field(default=None, max_length=128)
-    provider: Literal["openai", "anthropic", "mistral", "custom"] | None = None
+    provider: ModelProviderName | None = None
     base_url: str | None = Field(default=None, max_length=512)
     api_key: str | None = None  # blank/None → keep the existing key
     model_name: str | None = Field(default=None, max_length=128)
@@ -408,7 +415,7 @@ class ModelEndpointPatchIn(BaseModel):
 
 
 class ModelCatalogIn(BaseModel):
-    provider: Literal["openai", "anthropic", "mistral", "custom"] = "custom"
+    provider: ModelProviderName = "custom"
     base_url: str = Field(min_length=1, max_length=512)
     # The key typed into the form, else fall back to endpoint_id's stored key
     # (editing never re-exposes a saved key).
