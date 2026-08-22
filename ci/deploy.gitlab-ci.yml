@@ -1,4 +1,5 @@
-# §CI deploy: auto-redeploy a Kubernetes instance when the default branch moves.
+# §CI deploy: test every push, and auto-redeploy a Kubernetes instance when the
+# default branch moves.
 #
 # Include this from the instance repository's root `.gitlab-ci.yml`:
 #
@@ -14,6 +15,8 @@
 #     NAMESPACE: openvisor
 #     BRAND_NAME: ...                                  # landing build args (compose
 #     CONSULTANT_NAME: ...                             # reads them from the env)
+#     KUBECTL_IMAGE: alpine/k8s:1.36.2                 # pin within one minor of
+#                                                      # YOUR cluster's server version
 #
 # CI/CD variables to add on the project (Settings → CI/CD → Variables):
 #   KUBECONFIG                type File, Protected - kubeconfig of the target
@@ -22,13 +25,23 @@
 #                             File variables cannot be Masked (multiline).
 #   <your registry secret>    Masked + Protected, mapped to IMAGE_REGISTRY_PASSWORD
 #                             in the variables block above.
+# Both are Protected, so the default branch must be a protected branch or the
+# build and deploy jobs never see them (and, with KUBECONFIG unset, their rules
+# match nothing and GitLab creates NO pipeline at all on the default branch).
 #
-# What this pipeline does on the default branch: build every platform image via
-# compose.prod.yml (the exact `make prod-build` artifacts - parity by
-# construction) tagged with the commit SHA (plus `latest`, so the manual
-# `make helm-bpdr` path stays fresh), push them, then `helm upgrade
-# --reuse-values --set imageTag=<sha>` - the per-commit tag guarantees a real
-# rollout and keeps helm history rollback-able (`helm rollback`).
+# What this pipeline does:
+#   - test, on every branch and merge request: the backend suite against a real
+#     Postgres + Redis (the same services compose runs, so `make test` and CI
+#     exercise one code path), and the SPA's `npm run build` - which runs
+#     `tsc --noEmit` first, so it is the typecheck AND the proof that the bundle
+#     the app image builds actually builds;
+#   - on the default branch only: build every platform image via compose.prod.yml
+#     (the exact `make prod-build` artifacts - parity by construction) tagged with
+#     the commit SHA (plus `latest`, so the manual `make helm-bpdr` path stays
+#     fresh), push them, then `helm upgrade --reuse-values --set imageTag=<sha>` -
+#     the per-commit tag guarantees a real rollout and keeps helm history
+#     rollback-able (`helm rollback`), with readiness asserted per Deployment by
+#     `kubectl rollout status` rather than by helm's own --wait.
 #
 # What it deliberately does NOT do (these stay on the manual `make helm-bpdr`
 # path, which renders values from .env.deploy and syncs the env Secret):
@@ -40,21 +53,151 @@
 #     (--reuse-values keeps the stored ones), or apply Gateway/Traefik CRDs.
 #     A release that introduces NEW chart values needs one manual deploy.
 #
-# The runner needs a docker daemon (socket-bound docker executor or dind) for
-# the build job; the deploy job only needs network reach to the cluster API.
+# Runner requirements: none beyond a working executor. The build job brings its
+# own daemon as a `docker:dind` service rather than expecting a host docker
+# socket, so it runs unchanged on a docker executor and on a Kubernetes runner
+# (which has no socket to bind); the deploy job only needs network reach to the
+# cluster API.
 
-stages: [build, deploy]
+stages: [test, build, deploy]
+
+# One automatic retry, everywhere: the observed failures on a reused build
+# directory are environmental races (a shallow fetch during concurrent
+# pipelines, a half-extracted node_modules) that pass untouched on retry. A real
+# failure fails twice.
+default:
+  retry: 1
+
+variables:
+  # Override in the including file to match your cluster: kubectl refuses to
+  # support more than one minor of skew from the API server.
+  KUBECTL_IMAGE: alpine/k8s:1.36.2
+
+# Tests gate every branch and merge request; the `$CI_OPEN_MERGE_REQUESTS`
+# clause keeps a branch push from duplicating its merge-request pipeline.
+.test-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS == null
 
 .deploy-rules:
   rules:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $KUBECONFIG'
 
+# --- Test --------------------------------------------------------------------
+# The suite runs against a real Postgres (pgvector - the initial migration
+# creates the extension) and a real Redis, mirroring what `make test` execs
+# inside the api container. Migrations and the admin seed run first because that
+# is what the api entrypoint does before the container serves, so the database
+# the tests meet is the one the application meets. Every value below is a
+# throwaway for the job's ephemeral services - nothing here is a secret, which
+# is why they can live in a committed file.
+
+test-backend:
+  stage: test
+  extends: .test-rules
+  image: python:3.12-slim
+  services:
+    - name: pgvector/pgvector:pg16
+      alias: postgres
+    - name: redis:7-alpine
+      alias: redis
+  variables:
+    POSTGRES_USER: openvisor
+    POSTGRES_PASSWORD: ci-throwaway
+    POSTGRES_DB: openvisor
+    DATABASE_URL: postgresql+asyncpg://openvisor:ci-throwaway@postgres:5432/openvisor
+    REDIS_URL: redis://redis:6379/0
+    SECRET_KEY: ci-only-secret-key-not-production
+    MASTER_ENCRYPTION_KEY: ci-only-encryption-key-not-production
+    ADMIN_EMAIL: admin@example.org
+    ADMIN_PASSWORD: ci-only-admin-password
+    APP_BASE_URL: http://localhost:5173
+    LANDING_BASE_URL: http://localhost:4321
+    # local: the TestClient speaks plain http, and production mode marks the
+    # session cookie Secure - which the client then never sends back.
+    DEPLOY_ENV: local
+    OPENAI_BASE_URL: http://localhost:1/v1
+    OPENAI_API_KEY: ci-throwaway
+    OPENAI_MODEL: ci-model
+    EMBEDDING_BASE_URL: http://localhost:1/v1
+    EMBEDDING_API_KEY: ci-throwaway
+    EMBEDDING_MODEL: ci-embedding-model
+    RERANKER_BASE_URL: http://localhost:1/v1
+    RERANKER_API_KEY: ci-throwaway
+    RERANKER_MODEL: ci-reranker-model
+    # No Meilisearch service: the KB unit tests drive services/meili.py through
+    # an in-memory httpx transport, and the two live-Meili integration tests
+    # skip themselves when nothing answers at MEILI_URL.
+    MEILI_MASTER_KEY: ci-throwaway
+    CONTEXT7_MCP_URL: http://localhost:1/mcp
+    GITLAB_URL: http://localhost:1
+    GITLAB_TOKEN: ci-throwaway
+    GITLAB_GROUP: ci
+    STRIPE_SECRET_KEY: ""
+    STRIPE_WEBHOOK_SECRET: ""
+    SMTP_HOST: localhost
+    SMTP_FROM: Openvisor CI <ci@example.org>
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths: [.cache/pip]
+  before_script:
+    # the same packages backend/Dockerfile installs - the git transport and
+    # leak-scan tests shell out to a real git
+    - apt-get update && apt-get install -y --no-install-recommends git openssh-client curl
+    - mkdir -p /workspaces
+  script:
+    - pip install -r backend/requirements.txt
+    - cd backend
+    # entrypoint.sh materializes static_data from the committed templates on
+    # every container start; the live *.json files are gitignored, so CI has to
+    # do it too or the price table and the forbidden-actions floor are missing
+    - |
+      for tpl in app/static_data/*.example.json; do
+        dst="${tpl%.example.json}.json"
+        [ -f "$dst" ] || cp "$tpl" "$dst"
+      done
+    - alembic upgrade head
+    - python -m app.seed
+    - pytest -q
+
+test-frontend:
+  stage: test
+  extends: .test-rules
+  image: node:20-alpine
+  variables:
+    npm_config_cache: $CI_PROJECT_DIR/.cache/npm
+  cache:
+    key: npm-$CI_COMMIT_REF_SLUG
+    paths: [.cache/npm]
+  script:
+    # `build` runs tsc --noEmit first, so this is the typecheck AND the proof
+    # that the bundle actually builds - the same command the app image build runs.
+    - cd app
+    - npm ci
+    - npm run build
+
+# --- Build (default branch only) ---------------------------------------------
+
 build-push:
   stage: build
   extends: .deploy-rules
+  needs: [test-backend, test-frontend]
   image: docker:27
+  services:
+    - name: docker:27-dind
+      alias: docker
   variables:
     GIT_DEPTH: "20"
+    # Bring the daemon with the job instead of expecting a host socket: a
+    # Kubernetes runner has none to bind. dind publishes its client certificates
+    # into DOCKER_TLS_CERTDIR/client, which both containers share.
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
     # compose interpolates the WHOLE file even for `build`, and the OCPA
     # required-var convention (`${VAR:?...}`) has no defaults for runtime
     # secrets. This value never enters an image - it only satisfies
@@ -75,12 +218,20 @@ build-push:
         docker push "$IMAGE_REGISTRY/$img:latest"
       done
 
+# --- Deploy (default branch only) --------------------------------------------
+
 deploy:
   stage: deploy
   extends: .deploy-rules
-  image: dtzar/helm-kubectl:3.16.1
+  needs: [build-push]
+  image: $KUBECTL_IMAGE
   timeout: 90m
+  # One deploy at a time: two pipelines racing helm would interleave two image
+  # tags across the release.
   resource_group: production
+  environment:
+    name: production
+    url: https://app.$DEPLOY_DOMAIN
   script:
     - kubectl version >/dev/null  # fail fast on an unreachable cluster/bad kubeconfig
     - |
@@ -103,5 +254,17 @@ deploy:
         sleep 30
       done
       [ "${active:-0}" = "0" ] || { echo "deploy gate held for 45 minutes - retry the job"; exit 1; }
-    - helm upgrade "$RELEASE_NAME" ./k8s --namespace "$NAMESPACE" --reuse-values --set-string imageTag="$CI_COMMIT_SHORT_SHA" --wait --timeout 20m
+    # No --wait: helm's watch-based waits are what hung this job for 20 minutes
+    # at a time on a Kubernetes runner (twice, with nothing applied in between),
+    # and helm's readiness verdict is not the one that matters here anyway. The
+    # apply is bounded by --timeout (the migrate hook's own activeDeadlineSeconds
+    # is 600s, so 12m covers it and fails fast instead of hanging), and readiness
+    # is then asserted per Deployment by kubectl - the same two-step `make
+    # helm-bpdr` runs by hand. --debug keeps the phase log in the job output, so
+    # a stall names its own step instead of being a silent 20 minutes.
+    - helm upgrade "$RELEASE_NAME" ./k8s --namespace "$NAMESPACE" --reuse-values --set-string imageTag="$CI_COMMIT_SHORT_SHA" --timeout 12m --debug
+    - |
+      for d in $(kubectl -n "$NAMESPACE" get deploy -o name); do
+        kubectl -n "$NAMESPACE" rollout status "$d" --timeout=300s
+      done
     - kubectl -n "$NAMESPACE" get pods
