@@ -31,7 +31,11 @@ export default function Billing() {
   const consultant = settings?.consultant_first_name ?? "Consultant";
   const [params, setParams] = useSearchParams();
   const checkoutStatus = useRef(params.get("status")).current;
-  const [balance, setBalance] = useState<{ credit_balance: number; currency: string } | null>(null);
+  const [balance, setBalance] = useState<{
+    credit_balance: number;
+    currency: string;
+    min_topup: number;
+  } | null>(null);
   const [txns, setTxns] = useState<Transaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState("50");
@@ -104,9 +108,13 @@ export default function Billing() {
 
   async function topup(e: React.FormEvent) {
     e.preventDefault();
+    if (!balance) return;
     const val = Number(amount);
-    if (!Number.isFinite(val) || val <= 0) {
-      toast.push("Enter a valid amount", "err");
+    if (!Number.isFinite(val) || val < balance.min_topup) {
+      toast.push(
+        `Enter an amount of at least ${formatCreditsExact(balance.min_topup)} ${balance.currency}`,
+        "err",
+      );
       return;
     }
     setBusy(true);
@@ -157,10 +165,13 @@ export default function Billing() {
               <label>Amount ({balance.currency})</label>
               <input
                 type="number"
-                min={1}
+                min={balance.min_topup}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
+              <div className="muted small">
+                Minimum {formatCreditsExact(balance.min_topup)} {balance.currency}.
+              </div>
             </div>
             <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
               {busy ? <Spinner /> : "Continue to checkout"}

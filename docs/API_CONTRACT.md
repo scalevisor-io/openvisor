@@ -254,9 +254,9 @@ Protections: before output/log become visible or the webhook fires, the worker s
 
 ## Billing
 
-- `GET /billing/balance` → `{credit_balance, currency}`
+- `GET /billing/balance` → `{credit_balance, currency, min_topup}` (`min_topup` is the smallest accepted top-up, in `currency`)
 - `GET /billing/transactions` → `[{id, project_id, amount, kind, created_at}]`
-- `POST /billing/topup` `{amount}` → `{checkout_url}` (Stripe; may 503 locally)
+- `POST /billing/topup` `{amount}` → `{checkout_url}` (Stripe; 400 below `min_topup`, may 503 locally). The Checkout session is created with the signed-in user's email, so Stripe's Contact field arrives prefilled.
 
 ## Quotes (project Quotes tab)
 
