@@ -315,6 +315,39 @@ def test_model_catalog_anthropic_auth_and_stored_key(client, admin, fake_http):
                        ).status_code == 400
 
 
+def test_gateway_presets_save_and_authenticate_with_bearer(client, admin, fake_http):
+    """§model config presets: the OpenAI-compatible gateways (OpenRouter and the
+    in-region EURouter / CARouter). The schema's provider list is what the admin
+    form's preset buttons post, so an id missing from it 422s the save; and only
+    Anthropic takes x-api-key - a gateway keyed that way would authenticate against
+    nothing. A gateway model id also carries its own prices (it is not in the
+    static table), which is the normal unpriced-model path."""
+    gateways = [("openrouter", "https://openrouter.ai/api/v1"),
+                ("eurouter", "https://api.eurouter.ai/v1"),
+                ("carouter", "https://carouter.ai/v1")]
+    for provider, base in gateways:
+        r = client.post("/api/admin/model-endpoints", headers=admin, json=_mk(
+            label=provider, provider=provider, base_url=base, api_key=f"sk-{provider}",
+            model_name="openai/gpt-5", input_price=1.0, output_price=2.0))
+        assert r.status_code == 200, r.text
+        ep = r.json()
+        assert ep["provider"] == provider and ep["model_priced"] is False
+
+        fake_http.calls.clear()
+        fake_http.respond = staticmethod(
+            lambda m, u, h, j: _FakeResponse(payload={"data": [{"id": "openai/gpt-5"}]}))
+        assert client.post("/api/admin/model-endpoints/models", headers=admin,
+                           json={"provider": provider, "base_url": base,
+                                 "endpoint_id": ep["id"]}).status_code == 200
+        method, url, headers, _ = fake_http.calls[0]
+        assert (method, url) == ("GET", f"{base}/models")
+        assert headers["Authorization"] == f"Bearer sk-{provider}"
+        assert "x-api-key" not in headers
+
+    assert client.post("/api/admin/model-endpoints", headers=admin,
+                       json=_mk(provider="nosuchrouter")).status_code == 422
+
+
 def test_model_catalog_soft_fails_and_redacts(client, admin, fake_http):
     fake_http.respond = staticmethod(
         lambda m, u, h, j: _FakeResponse(status_code=401, text="bad key sk-leak used"))
