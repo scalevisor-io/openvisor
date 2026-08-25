@@ -61,8 +61,8 @@ specs:
   - "Self-hostable"
   - "Sandboxed builds"
   - "Paid knowledge access"
-  - "MCP for your coding agent"
-  - "CVE-aware from day one"
+  - "MCP"
+  - "Best security practices"
 
 stageLabels:
   - "Review"
