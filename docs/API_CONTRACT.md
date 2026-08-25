@@ -24,11 +24,12 @@ Datetimes are ISO-8601 UTC strings. Money/credits are numbers (float, 1 credit =
 - `GET /auth/me` → `{user: User, org: Org}` or 401.
 
 `User = {id, email, full_name (string|null), role: "customer"|"admin", email_verified: bool, created_at}`
-`Org = {id, name, type, company_name, vat_id, address_line1, address_line2, postal_code, city, country (all string|null), credit_balance: number}`
+`Org = {id, name, type, company_name, vat_id, address_line1, address_line2, postal_code, city, country (ISO 3166-1 alpha-2), province (all string|null), billing_address_missing: string[], stripe_customer: boolean, credit_balance: number}`. `billing_address_missing` names the address parts we do not hold, in Stripe's own field names (`line1|city|state|postal_code|country`), and is empty when the address is usable: an incomplete address is withheld from Stripe **whole** rather than sent partial, because a partial one resolves to the wrong tax rate instead of to an error, and nothing else on screen distinguishes it from a complete one. `stripe_customer` is whether a payment has ever been taken, which is what decides if there is an invoice history to open.
 
 ## Account
 
-- `PATCH /account` `{account_type: "individual"|"organization", full_name, company_name?, vat_id?, address_line1?, address_line2?, postal_code?, city?, country?}` → `{user: User, org: Org}`. Edits the signed-in user's account. `full_name` is always required. When `account_type` is `organization`, `company_name`, `address_line1`, `postal_code`, `city` and `country` are required too (400 listing what's missing); `vat_id` and `address_line2` stay optional. Switching back to `individual` keeps the stored company fields (nothing is wiped). `org.name` follows the type: the company name for organizations, the person's full name for individuals.
+- `GET /account/countries` → `{countries: [{code, name, subdivisions: [{code, name}], tax_id_label, tax_id_hint}]}`. The countries an account may be billed from (EU 27 + GB, CH, NO, US, CA), served so the form and the validator cannot disagree. `subdivisions` is empty where the tax rate is national (every EU member) and populated where it is not (US states, Canadian provinces); `tax_id_label` is what a tax number is called there ("VAT number", "EIN", "Business number (GST-HST or QST)").
+- `PATCH /account` `{account_type: "individual"|"organization", full_name, company_name?, vat_id?, address_line1?, address_line2?, postal_code?, city?, country?, province?}` → `{user: User, org: Org}`. Edits the signed-in user's account. `full_name` is always required. `country` is an ISO 3166-1 alpha-2 code from `/account/countries` (400 for anything else - a country name is not billable, Stripe Tax resolves a rate from the code); `province` is checked against the country being saved and is cleared automatically on a move to a country billed at a national rate. When `account_type` is `organization`, `company_name`, `address_line1`, `postal_code`, `city`, `country` - and `province` where the country has subdivisions - are required (400 listing what's missing); `vat_id` and `address_line2` stay optional. An **individual** may fill the same address in and is not made to. Switching back to `individual` keeps the stored company fields (nothing is wiped), but neither the company name nor `vat_id` is then sent to Stripe: the invoice follows the account type, and in the EU a customer VAT number would move a personal invoice to reverse charge and zero its tax. `org.name` follows the type: the company name for organizations, the person's full name for individuals.
 
 ## Meta
 
@@ -256,8 +257,9 @@ Protections: before output/log become visible or the webhook fires, the worker s
 ## Billing
 
 - `GET /billing/balance` → `{credit_balance, currency, min_topup}` (`min_topup` is the smallest accepted top-up, in `currency`)
-- `GET /billing/transactions` → `[{id, project_id, amount, kind, created_at}]`
-- `POST /billing/topup` `{amount}` → `{checkout_url}` (Stripe; 400 below `min_topup`, may 503 locally). The Checkout session is created with the signed-in user's email, so Stripe's Contact field arrives prefilled.
+- `GET /billing/transactions` → `[{id, project_id, amount, kind, detail, created_at, invoice_number, invoice_url, invoice_pdf, tax_amount}]`. The four invoice fields are set on a top-up once Stripe has issued the document (a separate, later webhook than the one that credited the wallet) and are null on every other row. `tax_amount` is what the card was charged ON TOP of `amount`: tax is exclusive, so the wallet is credited the pre-tax figure.
+- `POST /billing/topup` `{amount}` → `{checkout_url}` (Stripe; 400 below `min_topup`, may 503 locally). Before the session is created the org's billing profile is pushed onto a Stripe **customer** (legal name, address, and - for an organization - its tax number), because the invoice renders from the customer and not from the session. The session runs with `automatic_tax`, exclusive tax behaviour and `invoice_creation`, so every top-up produces a real invoice rather than a bare receipt.
+- `POST /billing/portal` → `{portal_url}` - a short-lived, single-use Stripe-hosted link to this account's full invoice history. 404 when no payment has ever been taken (`org.stripe_customer` is false, and the SPA should not offer the button); 503 when Stripe is not configured. The portal configuration is created by us and is read-only: invoice history and nothing else.
 
 ## Quotes (project Quotes tab)
 
@@ -269,7 +271,7 @@ Two payment paths share the model: **Stripe quotes** (`price_credits` null; `amo
 - `POST /projects/{id}/quotes/{quote_id}/accept` `{comment?}` → `Quote` - credit quotes in status `sent` only (409 otherwise); 402 if the org balance doesn't cover `price_credits`. Deducts the credits (ledger kind `quote`), posts a system chat message, emails the admin.
 - `POST /projects/{id}/quotes/{quote_id}/deny` `{comment?}` → `Quote` - same gating; posts a system chat message and emails the admin.
 - `GET /projects/{id}/quotes/{quote_id}/attachments/{attachment_id}` → file download (Content-Disposition attachment).
-- `POST /billing/stripe/webhook` - Stripe only (no CSRF). Local dev: `stripe listen --forward-to <api>/api/billing/stripe/webhook`.
+- `POST /billing/stripe/webhook` - Stripe only (no CSRF). Local dev: `stripe listen --forward-to <api>/api/billing/stripe/webhook`. Handles `checkout.session.completed` (credits the wallet once, keyed on the session id so a redelivery is a no-op; adopts the address the cardholder typed at Checkout when it is in a country we bill in) and `invoice.paid` (stitches the invoice number, URL, PDF and tax total onto the ledger row by `topup_ref`). The endpoint must exist in the Stripe dashboard: without it a card is charged and nothing is ever credited - see `docs/stripe-billing.md`.
 
 ## API tokens (MCP)
 
