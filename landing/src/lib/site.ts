@@ -10,6 +10,15 @@ export const appUrl = env.APP_URL || 'https://app.openvisor.example.com';
 export const signupUrl = `${appUrl}/signup`;
 export const aiIntakeUrl = `${appUrl}/ai`;
 export const programsUrl = `${appUrl}/programs`;
+export const tokensUrl = `${appUrl}/settings/tokens`;
+
+// The MCP server is the `mcp.` sibling of the app host (Traefik routes
+// `mcp.<domain>` next to `app.<domain>`, same port), serving at `/mcp`.
+const appOrigin = new URL(appUrl);
+const mcpHost = appOrigin.hostname.startsWith('app.')
+  ? appOrigin.hostname.replace(/^app\./, 'mcp.')
+  : `mcp.${appOrigin.hostname}`;
+export const mcpUrl = `${appOrigin.protocol}//${mcpHost}${appOrigin.port ? `:${appOrigin.port}` : ''}/mcp`;
 
 // Brand identity. BRAND_NAME/CONSULTANT_NAME also feed the {{BRAND_NAME}} /
 // {{CONSULTANT_NAME}} substitution in the content loader (see content.ts).
