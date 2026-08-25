@@ -52,7 +52,7 @@ hero:
   titleAccent: "at the AI age"
   lede: "Senior engineering knowledge and experience shaping the code pushed to your repo. Chat with the consultant's agent team on the platform, or call it straight from your own coding agent over MCP."
   ctaPrimary: "Deposit your project"
-  ctaSecondary: "Compare the two ways"
+  ctaSecondary: "See the three ways"
   note: "Every project is personally reviewed and prompt improved before we start."
   visualName: "CRM pilot"
   visualCaption: "Your project dashboard - from first brief to delivery."
@@ -132,54 +132,29 @@ featureRequests:
     body: "Add a dark-mode toggle to the dashboard."
     meta: "You · just now"
 
-twoWays:
-  eyebrow: "The choice"
-  title: "Two ways to deliver. One standard."
-  intro: "AI-curated is neither cheap nor unattended. Either way, {{CONSULTANT_NAME}} scopes your request and stays accountable for what ships. The only question: should agents under the consultant's direction write the code, or should the consultant?"
-  primary:
-    tag: "Curated AI · supervised by {{CONSULTANT_NAME}}"
-    title: "Curated AI MVP"
-    lede: "{{CONSULTANT_NAME}} scopes the project, sets the guardrails, and directs AI agents that build your MVP - with everything they do visible to you and reviewable by the consultant."
+# §23 ways to work: the Curated AI path's two doors (the web app, or the
+# customer's own coding agent over MCP - §19) side by side, and the hand-built
+# Direct quote as a full-width card under them. The strips reuse the
+# projects.points `ps-*` classes; list items may carry inline <code>.
+# {{MCP_URL}} / {{TOKENS_URL}} are filled from APP_URL at build.
+channels:
+  eyebrow: "Ways to work together"
+  title: "Three ways to work with {{CONSULTANT_NAME}}. One standard."
+  platform:
+    tag: "Curated AI · on the platform"
+    title: "On the platform"
+    lede: "Describe the project in a short guided intake. {{CONSULTANT_NAME}} scopes it, sets the guardrails and directs the agents that build it - with everything they do visible to you on one page: the thread, the live build, the demo, the pull requests."
+    surface: '<span class="ps-row"><span class="ps-who">you</span>can we ship the CSV export first?</span><span class="ps-row"><span class="ps-who ps-who--agent">agent</span>plan ready - awaiting review</span>'
     list:
       - "Reviewed and estimated by {{CONSULTANT_NAME}} before a single line is written - never on autopilot."
-      - "The agent works inside the consultant's knowledge base and senior project structures (OCPA), with CVE and threat-model awareness from the first commit."
-      - "You watch the build live, read the code, and approve the result yourself."
+      - "The agent works inside the consultant's knowledge base and senior project structures (OCPA), CVE- and threat-model-aware from the first commit."
+      - "Watch the build, open the demo, merge the pull request - all from the project page."
       - "Faster and more affordable because of how it is made - not because less care goes in."
     forLabel: "Best for"
     forText: "putting a serious MVP in front of users in days, with senior oversight built in."
     cta: "Start an AI-curated build"
-  secondary:
-    tag: "Hand-built · quoted by {{CONSULTANT_NAME}}"
-    title: "Direct quote"
-    lede: "Some work should be done by hand. Describe it, {{CONSULTANT_NAME}} reviews it personally and returns a bespoke quote - classic senior consulting, tracked on the same platform."
-    list:
-      - "Infrastructure refactoring, migration, and deep architecture work."
-      - "Regulated programmes and sensitive environments."
-      - "Same visibility as the AI path: live status, one secure thread, full history - no email black hole."
-    forLabel: "Best for"
-    forText: "heavier or more sensitive work that calls for a senior human's hands rather than an agent's."
-    cta: "Request a direct quote"
-  note: "Not sure which fits? Submit it as a direct quote - it costs nothing, and {{CONSULTANT_NAME}} will tell you honestly if the AI-curated path would serve you better."
-
-# §23 ways to work: the web app, or the customer's own coding agent over MCP
-# (§19). The strips reuse the projects.points `ps-*` classes; list items may
-# carry inline <code>. {{MCP_URL}} / {{TOKENS_URL}} are filled from APP_URL at build.
-channels:
-  eyebrow: "Ways to work together"
-  title: "Work with {{CONSULTANT_NAME}} where you already work."
-  intro: "One desk, two doors. Brief the consultant on the platform, or plug the consultant's knowledge base and build pipeline straight into the coding agent you already run. Either way your project passes {{CONSULTANT_NAME}}'s review first, the same pipeline builds, and the same prepaid credits pay."
-  platform:
-    tag: "Web app · in your browser"
-    title: "On the platform"
-    lede: "Describe the project in a short guided intake, then follow it from one page: the thread with {{CONSULTANT_NAME}} and the agent, the live build, the demo, the pull requests."
-    surface: '<span class="ps-row"><span class="ps-who">you</span>can we ship the CSV export first?</span><span class="ps-row"><span class="ps-who ps-who--agent">agent</span>plan ready - awaiting review</span>'
-    list:
-      - "Plain-language intake - no spec document, no call to book."
-      - "One secure thread with {{CONSULTANT_NAME}} and the agent; every message kept."
-      - "Watch the build, open the demo, merge the pull request - all from the project page."
-    cta: "Start on the platform"
   agent:
-    tag: "MCP · Claude Code, Codex, OpenCode…"
+    tag: "Curated AI · MCP"
     title: "From your own coding agent"
     lede: "Point Claude Code, Codex, OpenCode or any MCP client at the {{BRAND_NAME}} server and work with {{CONSULTANT_NAME}} without leaving your terminal: the knowledge base, a senior read of your codebase and the build pipeline become tools your agent can call."
     surface: '<span class="ps-row"><span class="ps-dim">mcp</span>{{MCP_URL}}</span><span class="ps-row"><span class="ps-ok">✓</span>connected<span class="ps-tag">project token</span></span><span class="ps-row"><span class="ps-run">▸</span>delegate_development "add CSV export" → PR #4</span>'
@@ -188,8 +163,22 @@ channels:
       - "<code>consult_codebase</code> - the agent reads your repositories and answers to the consultant's standards; nothing edited, nothing pushed."
       - "<code>delegate_development</code> - hand over a piece of work; it comes back as a pull request through the same pipeline, guardrails included."
       - "Knowledge queries are counted, not recorded: how many and what they cost, never the question or the answer."
+    forLabel: "Best for"
+    forText: "teams who already live in a coding agent and want the consultant's knowledge and pipeline one tool call away."
     cta: "Connect your coding agent"
-  note: "Same project, same ledger. Work delegated from the terminal shows up on the project page like any other request and spends the same prepaid credits - an account-wide token can even create the project from the terminal."
+  quote:
+    tag: "Manual quote (the traditional way)"
+    title: "Direct quote"
+    lede: "Some work should be done by hand. Describe it, {{CONSULTANT_NAME}} reviews it personally and returns a bespoke quote - classic senior consulting, tracked on the same platform with the same visibility: live status, one secure thread, full history."
+    list:
+      - "Constrained environments and sensitive systems."
+      - "Infrastructure refactoring, migration, and deep architecture work."
+      - "Regulated programmes."
+      - "Production review and deployment of what the agents built."
+    forLabel: "Best for"
+    forText: "heavier or more sensitive work that calls for a senior human's hands rather than an agent's."
+    cta: "Request a direct quote"
+  note: "Not sure which fits - submit it as a direct quote, it costs nothing and {{CONSULTANT_NAME}} will tell you honestly if the AI-curated path would serve you better."
 
 projects:
   eyebrow: "Projects"
@@ -285,7 +274,7 @@ programs:
 how:
   eyebrow: "How the Curated AI MVP works"
   title: "From an idea to a live demo, in full view."
-  intro: 'This is the Curated AI path. A human decides what gets built; the agent does the building; you see everything in between. (Prefer a bespoke quote? <a href="#two-ways">See the direct-quote option.</a>)'
+  intro: 'This is the Curated AI path. A human decides what gets built; the agent does the building; you see everything in between. (Prefer a bespoke quote? <a href="#work-with-me">See the direct-quote option.</a>)'
   steps:
     - n: "01"
       title: "Describe your project"
