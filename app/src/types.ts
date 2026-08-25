@@ -22,8 +22,24 @@ export interface Org {
   address_line2: string | null;
   postal_code: string | null;
   city: string | null;
+  /** ISO 3166-1 alpha-2, never a country name. */
   country: string | null;
+  /** State or province, only where the tax rate depends on one. */
+  province: string | null;
+  /** Stripe's names for the address parts we do not hold; empty when usable. */
+  billing_address_missing: string[];
+  /** Whether a payment has ever been taken, so there is an invoice history. */
+  stripe_customer: boolean;
   credit_balance: number;
+}
+
+/** A country an account may be billed from (GET /account/countries). */
+export interface BillingCountry {
+  code: string;
+  name: string;
+  subdivisions: { code: string; name: string }[];
+  tax_id_label: string;
+  tax_id_hint: string;
 }
 
 export interface Me {
@@ -377,6 +393,12 @@ export interface Transaction {
   amount: number;
   kind: string;
   created_at: string;
+  /** Set on a top-up once Stripe has issued the invoice; null everywhere else. */
+  invoice_number: string | null;
+  invoice_url: string | null;
+  invoice_pdf: string | null;
+  /** Tax paid ON TOP of `amount` - the wallet is credited the pre-tax figure. */
+  tax_amount: number | null;
 }
 
 // Informational cost/time estimate for a request being drafted - never a quote.

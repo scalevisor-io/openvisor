@@ -286,8 +286,10 @@ async def quote_request(request_id: str, body: QuoteIn, db: AsyncSession = Depen
     db.add(quote)
     await db.flush()
     try:
+        legal = await app_settings.get_legal_identity(db)
         link = stripe_svc.create_quote_payment_link(
-            quote.id, body.amount, f"{settings.brand_name} quote - {req.title}")
+            quote.id, body.amount, f"{settings.brand_name} quote - {req.title}",
+            legal["legal_name"])
         quote.stripe_payment_link = link
         quote.status = "sent"
     except stripe_svc.StripeUnavailable:
@@ -309,8 +311,10 @@ async def quote_project(project_id: str, body: QuoteIn,
     db.add(quote)
     await db.flush()
     try:
+        legal = await app_settings.get_legal_identity(db)
         link = stripe_svc.create_quote_payment_link(
-            quote.id, body.amount, f"{settings.brand_name} quote - {project.name}")
+            quote.id, body.amount, f"{settings.brand_name} quote - {project.name}",
+            legal["legal_name"])
         quote.stripe_payment_link = link
         quote.status = "sent"
     except stripe_svc.StripeUnavailable:
