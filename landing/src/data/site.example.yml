@@ -13,7 +13,7 @@
 
 seo:
   title: "{{BRAND_NAME}} - senior consulting you can follow live"
-  description: "{{BRAND_NAME}} runs your whole engagement on one secure platform: live project status, one thread with consultant and agent, demo and code in view. Two ways to deliver the same senior standard: an AI build curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote."
+  description: "{{BRAND_NAME}} runs your whole engagement on one secure platform: live project status, one thread with consultant and agent, demo and code in view. Two ways to deliver the same senior standard: an AI build curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote. Work from the web app, or from your own coding agent over MCP."
   themeColor: "#090b11"
   ogSiteName: "{{BRAND_NAME}}"
   orgName: "{{BRAND_NAME}}"
@@ -50,7 +50,7 @@ hero:
     - "Alpha"
   titleLead: "Collaborating"
   titleAccent: "at the AI age"
-  lede: "Senior engineering knowledge and experience shaping the code pushed to your repo. Chat directly with the consultant's agent team."
+  lede: "Senior engineering knowledge and experience shaping the code pushed to your repo. Chat with the consultant's agent team on the platform, or call it straight from your own coding agent over MCP."
   ctaPrimary: "Deposit your project"
   ctaSecondary: "Compare the two ways"
   note: "Every project is personally reviewed and prompt improved before we start."
@@ -61,7 +61,7 @@ specs:
   - "Self-hostable"
   - "Sandboxed builds"
   - "Paid knowledge access"
-  - "MCP"
+  - "MCP for your coding agent"
   - "CVE-aware from day one"
 
 stageLabels:
@@ -160,6 +160,36 @@ twoWays:
     forText: "heavier or more sensitive work that calls for a senior human's hands rather than an agent's."
     cta: "Request a direct quote"
   note: "Not sure which fits? Submit it as a direct quote - it costs nothing, and {{CONSULTANT_NAME}} will tell you honestly if the AI-curated path would serve you better."
+
+# §23 ways to work: the web app, or the customer's own coding agent over MCP
+# (§19). The strips reuse the projects.points `ps-*` classes; list items may
+# carry inline <code>. {{MCP_URL}} / {{TOKENS_URL}} are filled from APP_URL at build.
+channels:
+  eyebrow: "Ways to work together"
+  title: "Work with {{CONSULTANT_NAME}} where you already work."
+  intro: "One desk, two doors. Brief the consultant on the platform, or plug the consultant's knowledge base and build pipeline straight into the coding agent you already run. Either way your project passes {{CONSULTANT_NAME}}'s review first, the same pipeline builds, and the same prepaid credits pay."
+  platform:
+    tag: "Web app · in your browser"
+    title: "On the platform"
+    lede: "Describe the project in a short guided intake, then follow it from one page: the thread with {{CONSULTANT_NAME}} and the agent, the live build, the demo, the pull requests."
+    surface: '<span class="ps-row"><span class="ps-who">you</span>can we ship the CSV export first?</span><span class="ps-row"><span class="ps-who ps-who--agent">agent</span>plan ready - awaiting review</span>'
+    list:
+      - "Plain-language intake - no spec document, no call to book."
+      - "One secure thread with {{CONSULTANT_NAME}} and the agent; every message kept."
+      - "Watch the build, open the demo, merge the pull request - all from the project page."
+    cta: "Start on the platform"
+  agent:
+    tag: "MCP · Claude Code, Codex, OpenCode…"
+    title: "From your own coding agent"
+    lede: "Point Claude Code, Codex, OpenCode or any MCP client at the {{BRAND_NAME}} server and work with {{CONSULTANT_NAME}} without leaving your terminal: the knowledge base, a senior read of your codebase and the build pipeline become tools your agent can call."
+    surface: '<span class="ps-row"><span class="ps-dim">mcp</span>{{MCP_URL}}</span><span class="ps-row"><span class="ps-ok">✓</span>connected<span class="ps-tag">project token</span></span><span class="ps-row"><span class="ps-run">▸</span>delegate_development "add CSV export" → PR #4</span>'
+    list:
+      - "<code>search_knowledge</code> - a cited answer from the consultant's knowledge base, on your project's own model and knowledge selection."
+      - "<code>consult_codebase</code> - the agent reads your repositories and answers to the consultant's standards; nothing edited, nothing pushed."
+      - "<code>delegate_development</code> - hand over a piece of work; it comes back as a pull request through the same pipeline, guardrails included."
+      - "Knowledge queries are counted, not recorded: how many and what they cost, never the question or the answer."
+    cta: "Connect your coding agent"
+  note: "Same project, same ledger. Work delegated from the terminal shows up on the project page like any other request and spends the same prepaid credits - an account-wide token can even create the project from the terminal."
 
 projects:
   eyebrow: "Projects"
@@ -354,6 +384,15 @@ llms: |
      - Tracked on the same platform with the same visibility: live status, one secure thread, full history.
      - Best for work that calls for a senior human's hands rather than an agent's.
 
+  ## Where you work with {{BRAND_NAME}}: the web app, or your own coding agent (MCP)
+
+  Both delivery modes run through the platform ({{APP_URL}}). The Curated AI path can also be driven from the customer's own coding agent: {{BRAND_NAME}} exposes an MCP server ({{MCP_URL}}, streamable HTTP, bearer token minted in the app at {{TOKENS_URL}}) that Claude Code, Codex, OpenCode, Hermes, OpenClaw or any MCP-capable client can connect to.
+
+  - A project-scoped token works on ONE project and exposes three billable tools: `search_knowledge` (a cited answer from {{CONSULTANT_NAME}}'s knowledge base, using that project's own model and knowledge-base selection), `consult_codebase` (the build agent reads the project's repositories and answers - nothing edited, committed or pushed) and `delegate_development` (a specification filed as a request on the project; the same pipeline builds it and opens a pull request the customer reviews and merges; `get_delegation` polls it).
+  - An account-wide token lists the customer's projects, reads their status and can create a project; it cannot query the knowledge base.
+  - Knowledge queries are counted, never recorded: the platform keeps the number of queries and their cost, not the questions or the answers.
+  - Every call is metered on the same prepaid credits and billed to the project it belongs to; delegated work goes through the same pipeline and guardrails as a request filed on the platform.
+
   ## How the Curated AI MVP works
 
   1. Describe the project through a short guided intake (plain language, no spec document required).
@@ -389,6 +428,7 @@ llms: |
 
   - Marketing site: {{SITE_URL}}
   - Application (sign up / sign in): {{APP_URL}}
+  - MCP server (streamable HTTP, bearer token from {{TOKENS_URL}}): {{MCP_URL}}
 
   ## Contact
 

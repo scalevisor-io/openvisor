@@ -1,13 +1,14 @@
 // Build-time content loader for the white-label landing. Reads the committed
 // site.example.yml (neutral template copy) or a gitignored site.yml override when
 // present (wholesale replacement, no merge), applies {{BRAND_NAME}} /
-// {{CONSULTANT_NAME}} substitution from build-time env, and returns a typed,
-// validated SiteContent. Node-only: it touches the filesystem, so it must never
+// {{CONSULTANT_NAME}} substitution from build-time env plus the {{APP_URL}} /
+// {{MCP_URL}} / {{TOKENS_URL}} app links, and returns a typed, validated
+// SiteContent. Node-only: it touches the filesystem, so it must never
 // be imported into client-side code. Missing required keys fail the build loudly.
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { brandName, consultantName } from './site';
+import { appUrl, brandName, consultantName, mcpUrl, tokensUrl } from './site';
 
 export interface Offer {
   name: string;
@@ -74,6 +75,18 @@ export interface WayCard {
   cta: string;
 }
 
+// One door onto the platform (the web app, or the customer's own coding agent
+// over MCP). `surface` is a mono product strip in HTML using the same `ps-*`
+// classes as projects.points; `list` items may carry inline <code>.
+export interface ChannelCard {
+  tag: string;
+  title: string;
+  lede: string;
+  surface: string;
+  list: string[];
+  cta: string;
+}
+
 export interface PriceCard {
   tag: string;
   title: string;
@@ -130,6 +143,14 @@ export interface SiteContent {
     secondary: WayCard;
     note: string;
   };
+  channels: {
+    eyebrow: string;
+    title: string;
+    intro: string;
+    platform: ChannelCard;
+    agent: ChannelCard;
+    note: string;
+  };
   projects: {
     eyebrow: string;
     title: string;
@@ -171,8 +192,8 @@ export interface SiteContent {
     ctaSecondaryLabel: string;
     ctaSecondaryHref: string;
   };
-  // The /llms.txt body. Brand + consultant are already substituted; the
-  // {{SITE_URL}} / {{APP_URL}} markers are filled by the llms.txt endpoint.
+  // The /llms.txt body. Brand, consultant and app links are already
+  // substituted; the {{SITE_URL}} marker is filled by the llms.txt endpoint.
   llms: string;
 }
 
@@ -187,7 +208,10 @@ const sourcePath = fs.existsSync(overridePath) ? overridePath : examplePath;
 let raw = fs.readFileSync(sourcePath, 'utf8');
 raw = raw
   .replaceAll('{{BRAND_NAME}}', brandName)
-  .replaceAll('{{CONSULTANT_NAME}}', consultantName);
+  .replaceAll('{{CONSULTANT_NAME}}', consultantName)
+  .replaceAll('{{APP_URL}}', appUrl)
+  .replaceAll('{{MCP_URL}}', mcpUrl)
+  .replaceAll('{{TOKENS_URL}}', tokensUrl);
 
 const data = yaml.load(raw) as SiteContent;
 
@@ -203,6 +227,7 @@ const required: (keyof SiteContent)[] = [
   'phases',
   'featureRequests',
   'twoWays',
+  'channels',
   'projects',
   'programs',
   'how',
