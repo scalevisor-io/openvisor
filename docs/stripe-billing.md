@@ -43,7 +43,7 @@ The configuration is found by `metadata.openvisor`, for the same reason nothing 
 
 None of these live in this repo, because they are account identity rather than code, and **test and live accounts hold them separately**. Configuring the sandbox proves nothing about live.
 
-1. **`Tax > Registrations`** - one per jurisdiction the operator must collect in. **Without any, nothing fails.** Checkout answers 200 and the tax line reads zero. The liability accrues silently until a filing, so the noise has to be ours: `stripe_svc.tax_registrations()` logs an error when the account has none, and `warn_if_not_registered_for` warns per sale when the buyer's country is not covered. Grep the api logs for those two before believing a quiet deployment is a correct one.
+1. **`Tax > Registrations`** - one per jurisdiction the operator must collect in. **Without any, nothing fails.** Checkout answers 200 and the tax line reads zero. The liability accrues silently until a filing, so the noise has to be ours: `stripe_svc.tax_registrations()` logs an error when the account has none, and `warn_if_not_registered_for` warns per sale when the buyer's country is not covered. Grep the api logs for those two before believing a quiet deployment is a correct one. A **One Stop Shop** registration counts as covering all 27 members rather than only the one it is filed in - `_covers()` - because otherwise every ordinary EU sale warns, and a log that cries wolf on the common case is one nobody reads when it is finally right.
 2. **`Settings > Business > Tax details`** - the operator's own registration numbers, as *account* tax IDs. `stripe_svc.account_tax_ids()` reads them and stamps them on every invoice. Read with `owner={"type": "self"}` - **not** `"account"`, which is for Connect and returns a 400. Missing them logs a warning on every call, because an invoice without a supplier number is one the customer cannot reclaim against.
 3. **`Settings > Business > Customer emails > Successful payments`** - the toggle that actually mails the invoice. Test mode never sends these automatically; judge a test run by the Invoice object. Live does not send them either until this is on.
 4. **`Developers > Webhooks` - an endpoint at `https://<app host>/api/billing/stripe/webhook`**, subscribed to `checkout.session.completed` and `invoice.paid`, with its signing secret in `STRIPE_WEBHOOK_SECRET`, followed by an api restart. **Without it, nothing fails.** Checkout answers 200, the card is charged, the customer is redirected to a success page, and no credit is ever granted: the wallet moves from the webhook and nowhere else. The sandbox never needs this step, because the `stripe-cli` sidecar relays every event - which is exactly why it is the step live does not get. Check with `stripe.WebhookEndpoint.list()` from the api pod, or on the dashboard; an empty list is this.
@@ -54,9 +54,22 @@ Also required for `automatic_tax`: a head office address under `Tax > Settings`.
 
 Read `taxability_reason` off a real invoice rather than assuming. `standard_rated`, `reverse_charge` and `not_collecting` all look like a number on a balance sheet and mean entirely different things.
 
+`stripe.tax.Calculation.create` prices a hypothetical sale against the live account without charging anyone, which is the only way to answer "what would this customer actually be billed" without a card. Measured that way on 2026-08-25, against an Estonian account holding a single `oss_union` registration, on a 100 EUR top-up:
+
+| Buyer | Tax | `taxability_reason` |
+| --- | --- | --- |
+| Consumer in the country of establishment | +24.00 | `standard_rated` |
+| Business with a VAT number, same country | +24.00 | `standard_rated` - domestic B2B is **not** reverse charge |
+| Consumer in another member state (FR) | +20.00 | `standard_rated` - OSS, at the buyer's national rate |
+| Consumer in another member state (DE) | +19.00 | `standard_rated` |
+| Business with a VAT number, another member state | +0.00 | `reverse_charge` |
+| Consumer in GB, US or CA | +0.00 | `not_collecting` |
+
+The one that surprises people is the second row: a domestic sale to a VAT-registered business is charged normally, because reverse charge is a cross-border mechanism. The one to watch is the last: those countries are **accepted for billing** and covered by no registration, so a sale into them collects nothing. That is correct for the US and Canada until an economic-nexus threshold is crossed, and it is a genuine gap for the UK, which has no threshold for a non-established supplier of digital services.
+
 **European Union.** B2B is nearly free: a customer VAT number triggers `reverse_charge`, no VAT is charged, and the customer self-accounts. B2C is the expensive half - digital services sold to EU consumers owe VAT at the customer's national rate, filed through OSS. An EU-established seller also owes domestic VAT on domestic sales from its own registration.
 
-**United Kingdom.** Its own registration post-Brexit, and the domestic threshold does not apply to a non-established seller.
+**United Kingdom.** Its own registration post-Brexit, and the domestic threshold does not apply to a non-established seller - so a UK B2C sale owes VAT from the first pound. An EU OSS registration does not reach it.
 
 **Switzerland and Norway.** Each has its own registration and its own threshold for foreign suppliers of digital services; neither is covered by an EU one.
 
