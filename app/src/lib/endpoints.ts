@@ -66,8 +66,8 @@ import type {
 export const authApi = {
   me: () => api.get<Me>("/auth/me", { redirectOn401: false }),
   altcha: () => api.get<Record<string, unknown>>("/auth/altcha"),
-  login: (email: string, password: string) =>
-    api.post<{ user: Me["user"] }>("/auth/login", { email, password }),
+  login: (email: string, password: string, altcha?: string | null) =>
+    api.post<{ user: Me["user"] }>("/auth/login", { email, password, altcha }),
   logout: () => api.post<{ ok: boolean }>("/auth/logout"),
   signup: (body: {
     email: string;
@@ -75,7 +75,7 @@ export const authApi = {
     account_type: string;
     company_name?: string;
     full_name?: string;
-    altcha: string;
+    altcha?: string | null;
     accept_terms: boolean;
   }) => api.post<{ ok: boolean }>("/auth/signup", body),
   verifyEmail: (token: string) => api.post<{ ok: boolean }>("/auth/verify-email", { token }),

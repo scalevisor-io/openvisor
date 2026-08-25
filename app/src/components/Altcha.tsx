@@ -33,7 +33,14 @@ export default function Altcha({
   if (!challenge) return null;
 
   return (
-    <div className="field">
+    // Keyed on the challenge so a fresh one REPLACES the widget rather than
+    // reusing it. The widget latches "verified" and will not re-solve in place,
+    // so after a failed submit (which burns the solved challenge server-side)
+    // the same element would sit there looking verified while holding a payload
+    // the server now rejects as a replay - and a submit button that never
+    // re-enables. The key goes on the wrapper because the altcha package's own
+    // JSX typing for <altcha-widget> does not accept one.
+    <div className="field" key={String(challenge.challenge ?? "")}>
       <altcha-widget
         ref={ref as never}
         challengejson={JSON.stringify(challenge)}
