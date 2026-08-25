@@ -286,6 +286,57 @@ def test_below_the_floor_never_reaches_stripe(stripe):
     assert stripe.sessions == []
 
 
+# --- which countries a registration actually covers -------------------------
+
+def _registration(country, kind):
+    return SimpleNamespace(country=country,
+                           country_options={country.lower(): {"type": kind}})
+
+
+def test_a_one_stop_shop_registration_covers_the_whole_eu(stripe, monkeypatch, caplog):
+    """OSS is filed in ONE member state and collects across all 27 at each
+    buyer's national rate. Reading its `country` alone reported twenty-six
+    countries as uncovered that are covered, so every ordinary EU sale warned -
+    and a log that cries wolf on the common case is one nobody reads when it is
+    finally right. Verified against a live account: an EE oss_union registration
+    charges a French consumer 20% and a German one 19%."""
+    monkeypatch.setattr(
+        stripe_svc.stripe_lib.tax.Registration, "list",
+        lambda **k: SimpleNamespace(data=[_registration("EE", "oss_union")]),
+        raising=False)
+    covered = stripe_svc.tax_registrations()
+    assert "EE" in covered and "FR" in covered and "DE" in covered
+    assert set(countries.EU_MEMBERS) <= set(covered)
+    # ...and it stops there. The UK left the EU, so an OSS registration says
+    # nothing about it.
+    assert "GB" not in covered
+
+    with caplog.at_level("WARNING"):
+        stripe_svc.warn_if_not_registered_for("FR")
+    assert not caplog.records
+    with caplog.at_level("WARNING"):
+        stripe_svc.warn_if_not_registered_for("GB")
+    assert any("selling into GB" in r.getMessage() for r in caplog.records)
+
+
+def test_a_plain_registration_covers_only_its_own_country(stripe, monkeypatch):
+    monkeypatch.setattr(
+        stripe_svc.stripe_lib.tax.Registration, "list",
+        lambda **k: SimpleNamespace(data=[_registration("CA", "standard")]),
+        raising=False)
+    assert stripe_svc.tax_registrations() == ["CA"]
+
+
+def test_no_registrations_is_reported_not_shrugged_off(stripe, monkeypatch, caplog):
+    """An account with none does not fail: it sells at zero tax and the
+    liability accrues silently until a filing."""
+    monkeypatch.setattr(stripe_svc.stripe_lib.tax.Registration, "list",
+                        lambda **k: SimpleNamespace(data=[]), raising=False)
+    with caplog.at_level("ERROR"):
+        assert stripe_svc.tax_registrations() == []
+    assert any("NO active tax registrations" in r.getMessage() for r in caplog.records)
+
+
 def test_the_tax_total_is_summed_over_stacked_rates():
     """`total_taxes` is a list because rates stack - Quebec returns GST beside
     QST - so it is summed, never sampled. The flat `tax` field reads as null on a

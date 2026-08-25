@@ -79,6 +79,44 @@ def _invoice_footer(legal_name: str | None = None) -> str:
             f"the rates published on {settings.app_base_url}/billing.")
 
 
+def _registration_types(registration) -> list[str]:
+    """The registration types on one `tax.Registration`, whatever shape it is in.
+
+    `country_options` is a StripeObject from the API and a plain dict in tests,
+    and its values are the same story one level down.
+    """
+    options = getattr(registration, "country_options", None)
+    if options is None:
+        return []
+    if not isinstance(options, dict):
+        options = options.to_dict() if hasattr(options, "to_dict") else {}
+    types = []
+    for value in options.values():
+        kind = value.get("type") if isinstance(value, dict) else getattr(value, "type", None)
+        if kind:
+            types.append(str(kind))
+    return types
+
+
+def _covers(registration) -> set[str]:
+    """Which countries one registration lets us collect in.
+
+    Usually just its own. A One Stop Shop registration is the exception that
+    makes this function necessary: it is filed in ONE member state and collects
+    across the whole EU at each buyer's national rate, so reading its `country`
+    alone would report twenty-six countries as uncovered that are, in fact,
+    covered. Verified against the live account on 2026-08-25 - an EE `oss_union`
+    registration charges a French consumer 20% and a German one 19%, and it
+    charges the domestic Estonian rate too.
+    """
+    country = ((getattr(registration, "country", "") or "")).upper()
+    covered = {country} if country else set()
+    if any(kind.startswith("oss") or kind == "ioss"
+           for kind in _registration_types(registration)):
+        covered |= set(countries.EU_MEMBERS)
+    return covered
+
+
 def tax_registrations() -> list[str] | None:
     """Country codes the Stripe account is actually registered to collect in.
 
@@ -98,9 +136,10 @@ def tax_registrations() -> list[str] | None:
         return _tax_registration_cache
     s = _api()
     try:
-        found = sorted({(r.country or "").upper()
-                        for r in s.tax.Registration.list(status="active", limit=100).data
-                        if getattr(r, "country", None)})
+        found: set[str] = set()
+        for r in s.tax.Registration.list(status="active", limit=100).data:
+            found |= _covers(r)
+        found = sorted(found)
     except AttributeError:
         # An older stripe library has no tax.Registration resource. Unknown, not
         # empty: reporting "no registrations" because we cannot see them would
