@@ -497,6 +497,9 @@ export interface PublicSettings {
   consultant_name: string;
   consultant_first_name: string;
   credit_currency: string;
+  // §captcha: false lets the auth forms skip the Altcha widget entirely. The
+  // gate itself is server-side, so this only decides what is rendered.
+  altcha_enabled: boolean;
   specialities: { id: string; label: string; description: string }[];
   // §routines: false hides the Routines tab. Advisory only - every routine
   // write re-checks the flag server-side.

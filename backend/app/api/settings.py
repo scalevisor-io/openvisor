@@ -26,6 +26,9 @@ async def public_settings(db: AsyncSession = Depends(get_db)):
         "consultant_name": settings.consultant_name,
         "consultant_first_name": settings.consultant_first_name,
         "credit_currency": settings.credit_currency,
+        # Lets the auth forms skip the widget (and the wait for a challenge) on
+        # a deployment that has the captcha switched off.
+        "altcha_enabled": settings.altcha_enabled,
         # What this instance offers the hub network (development and/or
         # project_management); absent on older spokes, so hub readers fail soft.
         "capabilities": settings.capabilities_list,

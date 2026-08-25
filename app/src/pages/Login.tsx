@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AuthShell from "../components/AuthShell";
+import Altcha from "../components/Altcha";
 import { Alert, Spinner } from "../components/ui";
 import { authApi } from "../lib/endpoints";
 import { resetCsrf } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useAltcha } from "../lib/useAltcha";
 import { ApiError } from "../lib/api";
 
 export default function Login() {
@@ -13,6 +15,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { refresh } = useAuth();
+  const captcha = useAltcha();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = params.get("next") || "/";
@@ -22,7 +25,7 @@ export default function Login() {
     setError(null);
     setBusy(true);
     try {
-      await authApi.login(email, password);
+      await authApi.login(email, password, captcha.payload);
       resetCsrf(); // session rotated → refetch CSRF on next mutation
       await refresh();
       navigate(next, { replace: true });
@@ -34,6 +37,8 @@ export default function Login() {
             ? err.message
             : "Login failed.",
       );
+      // The solved challenge is burned; a retry needs a fresh one.
+      captcha.reset();
     } finally {
       setBusy(false);
     }
@@ -42,6 +47,9 @@ export default function Login() {
   return (
     <AuthShell title="Sign in" subtitle="Access your projects and demos.">
       {error && <Alert kind="error">{error}</Alert>}
+      {captcha.error && (
+        <Alert kind="error">Could not load the captcha challenge. Reload to retry.</Alert>
+      )}
       <form onSubmit={submit}>
         <div className="field">
           <label htmlFor="email">Email</label>
@@ -65,7 +73,13 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
+        <Altcha challenge={captcha.challenge} onVerified={captcha.setPayload} />
+
+        <button
+          type="submit"
+          className="btn btn-primary btn-block"
+          disabled={busy || !captcha.ready}
+        >
           {busy ? <Spinner /> : "Sign in"}
         </button>
       </form>
