@@ -77,7 +77,7 @@ const glyphs: Record<string, string> = {
 // the markup. The hero card is the customer project dashboard, cycled through
 // the §8 lifecycle so a visitor watches a project move Review → Delivery;
 // PHASE_START renders server-side so the first paint shows the signature build.
-const { hero, twoWays, channels, projects, programs, how, pricing, sovereign, finalCta } = content;
+const { hero, channels, projects, programs, how, pricing, sovereign, finalCta } = content;
 
 const stageLabels = content.stageLabels;
 const phases = content.phases.map((phase) => ({
@@ -121,7 +121,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
           </p>
           <div class="hero-cta rise r4">
             <a href={aiIntakeUrl} class="btn btn-primary">{hero.ctaPrimary}</a>
-            <a href="#two-ways" class="btn btn-ghost">{hero.ctaSecondary}</a>
+            <a href="#work-with-me" class="btn btn-ghost">{hero.ctaSecondary}</a>
           </div>
           <p class="hero-note rise r5">
             {hero.note}
@@ -184,70 +184,25 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
       </div>
     </div>
 
-    <!-- THE CHOICE ------------------------------------------------- -->
-    <section id="two-ways" class="section two-ways">
-      <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">01</span>{twoWays.eyebrow}</p>
-        <h2 class="section-title" data-reveal style="--d: 60ms">{twoWays.title}</h2>
-        <p class="section-intro" data-reveal style="--d: 120ms">
-          {twoWays.intro}
-        </p>
-
-        <div class="ways-grid">
-          <!-- Primary: Curated AI MVP -->
-          <article class="way-card way-card--primary" data-reveal>
-            <span class="way-glyph" set:html={icons.shieldNode} />
-            <span class="way-tag">{twoWays.primary.tag}</span>
-            <h3 class="way-title">{twoWays.primary.title}</h3>
-            <p class="way-lede">
-              {twoWays.primary.lede}
-            </p>
-            <ul class="way-list">
-              {twoWays.primary.list.map((item) => <li>{item}</li>)}
-            </ul>
-            <p class="way-for">
-              <span>{twoWays.primary.forLabel}</span> {twoWays.primary.forText}
-            </p>
-            <a href={signupUrl} class="btn btn-primary way-cta">{twoWays.primary.cta}</a>
-          </article>
-
-          <!-- Secondary: Direct quote -->
-          <article class="way-card" data-reveal style="--d: 120ms">
-            <span class="way-glyph way-glyph--muted" set:html={icons.pen} />
-            <span class="way-tag way-tag--muted">{twoWays.secondary.tag}</span>
-            <h3 class="way-title">{twoWays.secondary.title}</h3>
-            <p class="way-lede">
-              {twoWays.secondary.lede}
-            </p>
-            <ul class="way-list">
-              {twoWays.secondary.list.map((item) => <li>{item}</li>)}
-            </ul>
-            <p class="way-for">
-              <span>{twoWays.secondary.forLabel}</span> {twoWays.secondary.forText}
-            </p>
-            <a href={signupUrl} class="btn btn-ghost way-cta">{twoWays.secondary.cta}</a>
-          </article>
-        </div>
-        <p class="ways-note" data-reveal>
-          {twoWays.note}
-        </p>
-      </div>
-    </section>
-
-    <!-- WAYS TO WORK: the platform, or the customer's own coding agent ------ -->
+    <!-- WAYS TO WORK: the Curated AI path's two doors (web app / the customer's
+         own coding agent over MCP) and the hand-built Direct quote ------------ -->
     <section id="work-with-me" class="section channels">
       <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">02</span>{channels.eyebrow}</p>
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">01</span>{channels.eyebrow}</p>
         <h2 class="section-title" data-reveal style="--d: 60ms">{channels.title}</h2>
-        <p class="section-intro" data-reveal style="--d: 120ms">
-          {channels.intro}
-        </p>
+        {
+          channels.intro && (
+            <p class="section-intro" data-reveal style="--d: 120ms">
+              {channels.intro}
+            </p>
+          )
+        }
 
         <div class="ways-grid">
-          <!-- The web app -->
-          <article class="way-card" data-reveal>
-            <span class="way-glyph way-glyph--muted" set:html={icons.thread} />
-            <span class="way-tag way-tag--muted">{channels.platform.tag}</span>
+          <!-- Curated AI, from the web app -->
+          <article class="way-card way-card--primary" data-reveal>
+            <span class="way-glyph" set:html={icons.shieldNode} />
+            <span class="way-tag">{channels.platform.tag}</span>
             <h3 class="way-title">{channels.platform.title}</h3>
             <p class="way-lede">
               {channels.platform.lede}
@@ -256,10 +211,13 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
             <ul class="way-list">
               {channels.platform.list.map((item) => <li set:html={item} />)}
             </ul>
-            <a href={signupUrl} class="btn btn-ghost way-cta">{channels.platform.cta}</a>
+            <p class="way-for">
+              <span>{channels.platform.forLabel}</span> {channels.platform.forText}
+            </p>
+            <a href={signupUrl} class="btn btn-primary way-cta">{channels.platform.cta}</a>
           </article>
 
-          <!-- The customer's own coding agent, over MCP -->
+          <!-- Curated AI, from the customer's own coding agent over MCP -->
           <article class="way-card way-card--primary" data-reveal style="--d: 120ms">
             <span class="way-glyph" set:html={icons.terminal} />
             <span class="way-tag">{channels.agent.tag}</span>
@@ -271,7 +229,29 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
             <ul class="way-list">
               {channels.agent.list.map((item) => <li set:html={item} />)}
             </ul>
-            <a href={tokensUrl} class="btn btn-primary way-cta">{channels.agent.cta}</a>
+            <p class="way-for">
+              <span>{channels.agent.forLabel}</span> {channels.agent.forText}
+            </p>
+            <a href={tokensUrl} class="btn btn-ghost way-cta">{channels.agent.cta}</a>
+          </article>
+
+          <!-- Hand-built, on a direct quote: full width -->
+          <article class="way-card way-card--wide" data-reveal style="--d: 180ms">
+            <div class="wide-main">
+              <span class="way-glyph way-glyph--muted" set:html={icons.pen} />
+              <span class="way-tag way-tag--muted">{channels.quote.tag}</span>
+              <h3 class="way-title">{channels.quote.title}</h3>
+              <p class="way-lede">
+                {channels.quote.lede}
+              </p>
+              <p class="way-for">
+                <span>{channels.quote.forLabel}</span> {channels.quote.forText}
+              </p>
+            </div>
+            <ul class="way-list wide-list">
+              {channels.quote.list.map((item) => <li>{item}</li>)}
+            </ul>
+            <a href={signupUrl} class="btn btn-ghost way-cta wide-cta">{channels.quote.cta}</a>
           </article>
         </div>
         <p class="ways-note" data-reveal>
@@ -283,7 +263,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     <!-- PROJECTS ---------------------------------------------------- -->
     <section id="projects" class="section platform">
       <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">03</span>{projects.eyebrow}</p>
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">02</span>{projects.eyebrow}</p>
         <h2 class="section-title" data-reveal style="--d: 60ms">{projects.title}</h2>
         <p class="section-intro" data-reveal style="--d: 120ms">
           {projects.intro}
@@ -310,7 +290,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     <!-- PROGRAMS ---------------------------------------------------- -->
     <section id="programs" class="section programs">
       <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">04</span>{programs.eyebrow}</p>
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">03</span>{programs.eyebrow}</p>
         <h2 class="section-title" data-reveal style="--d: 60ms">{programs.title}</h2>
         <p class="section-intro" data-reveal style="--d: 120ms">
           {programs.intro}
@@ -376,7 +356,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     <!-- HOW IT WORKS ---------------------------------------------- -->
     <section id="how-it-works" class="section">
       <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">05</span>{how.eyebrow}</p>
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">04</span>{how.eyebrow}</p>
         <h2 class="section-title" data-reveal style="--d: 60ms">{how.title}</h2>
         <p class="section-intro" data-reveal style="--d: 120ms" set:html={how.intro} />
 
@@ -402,7 +382,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     <!-- PRICING TEASER -------------------------------------------- -->
     <section id="pricing" class="section pricing">
       <div class="container">
-        <p class="eyebrow" data-reveal><span class="eyebrow-i">06</span>{pricing.eyebrow}</p>
+        <p class="eyebrow" data-reveal><span class="eyebrow-i">05</span>{pricing.eyebrow}</p>
         <h2 class="section-title" data-reveal style="--d: 60ms">{pricing.title}</h2>
         <p class="section-intro" data-reveal style="--d: 120ms">
           {pricing.intro}
@@ -434,7 +414,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     <section id="sovereign" class="section sovereign">
       <div class="container sovereign-inner">
         <div data-reveal>
-          <p class="eyebrow"><span class="eyebrow-i">07</span>{sovereign.eyebrow}</p>
+          <p class="eyebrow"><span class="eyebrow-i">06</span>{sovereign.eyebrow}</p>
           <h2 class="section-title">{sovereign.title}</h2>
           <p class="section-intro">
             {sovereign.intro}
@@ -1389,9 +1369,55 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     margin: 0 0 1.25rem;
   }
 
-  /* Both doors end on their CTA, whatever the list length. */
-  .channels .way-cta {
-    margin-top: auto;
+  /* The full-width Direct-quote card: pitch on the left, its use cases on the
+     right, one column again on phones. */
+  .way-card--wide {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: 3rem;
+    align-items: start;
+  }
+
+  .wide-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .wide-main .way-for {
+    margin-top: 0.25rem;
+    margin-bottom: 0;
+  }
+
+  .wide-cta {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    margin-top: 1.5rem;
+  }
+
+  /* The list starts level with the title, clear of the top-right glyph. */
+  .wide-list {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin: 0;
+    padding-top: 2.75rem;
+  }
+
+  @media (max-width: 760px) {
+    .way-card--wide {
+      display: flex;
+      flex-direction: column;
+    }
+    .wide-list {
+      padding-top: 0;
+      margin: 1.5rem 0;
+    }
+    .wide-cta {
+      margin-top: 0;
+    }
   }
 
   .chan-surface :global(.ps-row) {
