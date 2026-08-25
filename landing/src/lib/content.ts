@@ -75,16 +75,11 @@ export interface WayCard {
   cta: string;
 }
 
-// One door onto the platform (the web app, or the customer's own coding agent
-// over MCP). `surface` is a mono product strip in HTML using the same `ps-*`
-// classes as projects.points; `list` items may carry inline <code>.
-export interface ChannelCard {
-  tag: string;
-  title: string;
-  lede: string;
+// One door onto the Curated AI path (the web app, or the customer's own coding
+// agent over MCP). `surface` is a mono product strip in HTML using the same
+// `ps-*` classes as projects.points; `list` items may carry inline <code>.
+export interface ChannelCard extends WayCard {
   surface: string;
-  list: string[];
-  cta: string;
 }
 
 export interface PriceCard {
@@ -135,20 +130,15 @@ export interface SiteContent {
   stageLabels: string[];
   phases: Phase[];
   featureRequests: FeatureRequest[];
-  twoWays: {
-    eyebrow: string;
-    title: string;
-    intro: string;
-    primary: WayCard;
-    secondary: WayCard;
-    note: string;
-  };
+  // The ways-to-work section: the Curated AI path's two doors side by side and
+  // the hand-built Direct quote as a full-width card under them.
   channels: {
     eyebrow: string;
     title: string;
-    intro: string;
+    intro?: string;
     platform: ChannelCard;
     agent: ChannelCard;
+    quote: WayCard;
     note: string;
   };
   projects: {
@@ -226,7 +216,6 @@ const required: (keyof SiteContent)[] = [
   'stageLabels',
   'phases',
   'featureRequests',
-  'twoWays',
   'channels',
   'projects',
   'programs',
