@@ -208,6 +208,18 @@ class Settings(BaseSettings):
     # Stripe
     stripe_secret_key: str
     stripe_webhook_secret: str
+    # Stripe Tax computes VAT (or GST/HST, or a US state rate) from the
+    # customer's billing address against the registrations configured in the
+    # Stripe dashboard. On by default because the failure this guards is
+    # silent: an account with no registration does not error, it sells at zero
+    # tax and accrues a liability nobody sees until a filing. Since Stripe will
+    # not make that noise, `stripe_svc.tax_registrations()` does.
+    stripe_automatic_tax: bool = True
+    # Stripe product tax code for the credits line. "General - Electronically
+    # Supplied Services" suits prepaid platform credits; the operator's
+    # accountant owns this value, and changing it changes what every future
+    # invoice charges.
+    stripe_tax_code: str = "txcd_10000000"
 
     # SMTP
     smtp_host: str

@@ -1,10 +1,11 @@
-"""Credit top-up checkout: the paying account's email and the amount floor.
+"""Credit top-up checkout: who Stripe bills, and the amount floor.
 
-Two things the customer sees on Stripe's page come from here: the Contact field
-must arrive prefilled with the account that is paying (an empty field asks the
-customer to retype what we already know, and a typo sends the receipt nowhere),
-and an amount below the floor must be refused BEFORE a session exists - card
-fees eat a tiny top-up, and Stripe's own minimum charge is lower than ours.
+Two things must be true before a Checkout session exists. The paying account has
+to arrive as a Stripe CUSTOMER carrying its email and billing profile - the
+invoice is rendered from the customer, so an anonymous session produces a
+document addressed to nobody. And an amount below the floor has to be refused
+BEFORE anything is created: card fees eat a tiny top-up, and Stripe's own
+minimum charge is lower than ours.
 """
 import uuid
 from types import SimpleNamespace
@@ -17,28 +18,64 @@ from app.core.config import settings
 from app.core.db import SyncSession
 from app.core.security import hash_password
 from app.main import app
-from app.models import Organization, User
+from app.models import CreditTransaction, Organization, User
 from app.services import stripe_svc
 
 
-class _FakeSessions:
-    """Stands in for stripe.checkout.Session - records what we asked Stripe for."""
+class _FakeStripe:
+    """Stands in for the stripe module - records what we asked Stripe for."""
 
     def __init__(self):
-        self.calls = []
+        self.sessions = []
+        self.customers_created = []
+        self.customers_modified = []
 
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        return SimpleNamespace(url="https://checkout.stripe.test/c/pay/cs_test_1")
+    def module(self):
+        rec = self
+
+        class _Customer:
+            @staticmethod
+            def create(**kwargs):
+                rec.customers_created.append(kwargs)
+                return SimpleNamespace(id="cus_test_1")
+
+            @staticmethod
+            def retrieve(customer_id):
+                return SimpleNamespace(id=customer_id, deleted=False)
+
+            @staticmethod
+            def modify(customer_id, **kwargs):
+                rec.customers_modified.append((customer_id, kwargs))
+                return SimpleNamespace(id=customer_id)
+
+        class _TaxId:
+            @staticmethod
+            def list(**kwargs):
+                return SimpleNamespace(data=[])
+
+        def create_session(**kwargs):
+            rec.sessions.append(kwargs)
+            return SimpleNamespace(url="https://checkout.stripe.test/c/pay/cs_test_1")
+
+        return SimpleNamespace(
+            api_key=None,
+            error=SimpleNamespace(StripeError=Exception),
+            checkout=SimpleNamespace(Session=SimpleNamespace(create=create_session)),
+            Customer=_Customer,
+            TaxId=_TaxId,
+            tax=SimpleNamespace(Registration=SimpleNamespace(
+                list=lambda **k: SimpleNamespace(data=[]))),
+        )
 
 
 @pytest.fixture
-def stripe_calls(monkeypatch):
-    sessions = _FakeSessions()
-    monkeypatch.setattr(stripe_svc, "stripe_lib", SimpleNamespace(
-        api_key=None, checkout=SimpleNamespace(Session=sessions)))
+def stripe(monkeypatch):
+    rec = _FakeStripe()
+    monkeypatch.setattr(stripe_svc, "stripe_lib", rec.module())
     monkeypatch.setattr(settings, "stripe_secret_key", "sk_test_billing_topup")
-    return sessions.calls
+    monkeypatch.setattr(stripe_svc, "_account_tax_id_cache", [])
+    monkeypatch.setattr(stripe_svc, "_tax_registration_cache", None)
+    return rec
 
 
 @pytest.fixture
@@ -57,6 +94,7 @@ def customer():
         yield org_id, email, pwd
     finally:
         with SyncSession() as db:
+            db.execute(delete(CreditTransaction).where(CreditTransaction.org_id == org_id))
             db.execute(delete(User).where(User.org_id == org_id))
             db.execute(delete(Organization).where(Organization.id == org_id))
             db.commit()
@@ -74,26 +112,25 @@ def client():
         yield c
 
 
-def test_checkout_prefills_the_paying_account_email(stripe_calls):
-    stripe_svc.create_topup_checkout("org-1", 20.0, "jean.dupont@example.com")
-    assert stripe_calls[0]["customer_email"] == "jean.dupont@example.com"
+def test_the_session_bills_a_customer_not_an_anonymous_email(stripe):
+    stripe_svc.create_topup_checkout("org-1", "cus_test_1", 20.0, "ref-1")
+    assert stripe.sessions[0]["customer"] == "cus_test_1"
 
 
-def test_below_the_floor_never_reaches_stripe(stripe_calls):
+def test_below_the_floor_never_reaches_stripe(stripe):
     with pytest.raises(stripe_svc.TopupTooSmall):
-        stripe_svc.create_topup_checkout("org-1", stripe_svc.MIN_TOPUP - 0.5,
-                                         "jean.dupont@example.com")
-    assert stripe_calls == []
+        stripe_svc.create_topup_checkout("org-1", "cus_test_1",
+                                         stripe_svc.MIN_TOPUP - 0.5, "ref-1")
+    assert stripe.sessions == []
     # The floor itself is payable - it is a minimum, not an exclusive bound.
-    stripe_svc.create_topup_checkout("org-1", stripe_svc.MIN_TOPUP,
-                                     "jean.dupont@example.com")
-    assert len(stripe_calls) == 1
+    stripe_svc.create_topup_checkout("org-1", "cus_test_1", stripe_svc.MIN_TOPUP, "ref-1")
+    assert len(stripe.sessions) == 1
 
 
-def test_topup_route_publishes_the_floor_and_bills_the_signed_in_email(
-        client, customer, stripe_calls):
+def test_topup_route_publishes_the_floor_and_bills_the_signed_in_account(
+        client, customer, stripe):
     """One login covers both halves (the login limiter is per test-client IP)."""
-    _, email, pwd = customer
+    org_id, email, pwd = customer
     tok = client.get("/api/auth/csrf").json()["csrf_token"]
     r = client.post("/api/auth/login", json={"email": email, "password": pwd},
                     headers={"X-CSRF-Token": tok})
@@ -107,9 +144,20 @@ def test_topup_route_publishes_the_floor_and_bills_the_signed_in_email(
     r = client.post("/api/billing/topup", json={"amount": stripe_svc.MIN_TOPUP - 1},
                     headers=h)
     assert r.status_code == 400, r.text
-    assert stripe_calls == []
+    assert stripe.sessions == []
 
     r = client.post("/api/billing/topup", json={"amount": 25}, headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["checkout_url"].startswith("https://checkout.stripe.test/")
-    assert stripe_calls[0]["customer_email"] == email
+    # The customer is created once and carries the signed-in email, so Stripe's
+    # Contact field arrives prefilled and the receipt reaches the right inbox.
+    assert stripe.customers_created[0]["email"] == email
+    assert stripe.customers_created[0]["metadata"] == {"org_id": org_id}
+    # ...and the profile is pushed across BEFORE the session is created.
+    assert stripe.customers_modified[0][1]["email"] == email
+    assert stripe.sessions[0]["customer"] == "cus_test_1"
+
+    # The id survives on the org, so the next top-up reuses the same customer
+    # and the invoice history stays in one place.
+    with SyncSession() as db:
+        assert db.get(Organization, org_id).stripe_customer_id == "cus_test_1"

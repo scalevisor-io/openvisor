@@ -8,6 +8,7 @@ from app.core.encryption import decrypt
 from app.models import (
     DevRun, Message, Organization, Project, ProjectShare, Quote, Request, User,
 )
+from app.services import countries
 from app.services import repos as repolib
 
 
@@ -149,10 +150,18 @@ def user_out(u: User) -> dict:
 
 
 def org_out(o: Organization) -> dict:
+    # `billing_address_missing` is the one field the customer cannot work out
+    # for themselves: an address that is only PARTIALLY filled in renders as a
+    # complete-looking block on screen while Stripe receives nothing at all (it
+    # is withheld whole rather than sent incomplete, because a partial address
+    # resolves to the wrong tax rate instead of to an error). Nothing said so
+    # until an invoice came out addressed to nobody.
     return {"id": o.id, "name": o.name, "type": o.type, "company_name": o.company_name,
             "vat_id": o.vat_id, "address_line1": o.address_line1,
             "address_line2": o.address_line2, "postal_code": o.postal_code,
-            "city": o.city, "country": o.country,
+            "city": o.city, "country": o.country, "province": o.province,
+            "billing_address_missing": countries.missing_address_fields(o),
+            "stripe_customer": bool(o.stripe_customer_id),
             "credit_balance": round(o.credit_balance or 0.0, 4)}
 
 

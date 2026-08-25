@@ -30,7 +30,12 @@ class AccountUpdateIn(BaseModel):
     address_line2: str | None = Field(default=None, max_length=255)
     postal_code: str | None = Field(default=None, max_length=32)
     city: str | None = Field(default=None, max_length=128)
-    country: str | None = Field(default=None, max_length=128)
+    # ISO 3166-1 alpha-2, checked against services/countries.SUPPORTED by the
+    # route - a country name is not billable, Stripe Tax resolves a rate from
+    # the code.
+    country: str | None = Field(default=None, max_length=2)
+    # State or province, and only where the rate depends on one.
+    province: str | None = Field(default=None, max_length=2)
 
 
 class LoginIn(BaseModel):
@@ -72,6 +77,13 @@ class OrgOut(BaseModel):
     postal_code: str | None
     city: str | None
     country: str | None
+    province: str | None
+    # Stripe's names for the address parts we do not hold, empty when the
+    # address is usable (services/countries.missing_address_fields).
+    billing_address_missing: list[str]
+    # Whether a payment has ever been taken, which is what decides if there is
+    # an invoice history to open.
+    stripe_customer: bool
     credit_balance: float
 
 

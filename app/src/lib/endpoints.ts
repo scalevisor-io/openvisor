@@ -7,6 +7,7 @@ import type {
   KnowledgeBase,
   AdminUser,
   Answer,
+  BillingCountry,
   ApiToken,
   DevActivityChunk,
   DevRunSummary,
@@ -98,7 +99,11 @@ export const accountApi = {
     postal_code?: string;
     city?: string;
     country?: string;
+    province?: string;
   }) => api.patch<Me>("/account", body),
+  // Served rather than restated here, so the dropdown and the server-side
+  // validator cannot disagree about what is billable.
+  countries: () => api.get<{ countries: BillingCountry[] }>("/account/countries"),
 };
 
 // --- Meta ---
@@ -362,6 +367,7 @@ export const billingApi = {
     ),
   transactions: () => api.get<Transaction[]>("/billing/transactions"),
   topup: (amount: number) => api.post<{ checkout_url: string }>("/billing/topup", { amount }),
+  portal: () => api.post<{ portal_url: string }>("/billing/portal", {}),
   quotes: (id: string) => api.get<Quote[]>(`/projects/${id}/quotes`),
 };
 

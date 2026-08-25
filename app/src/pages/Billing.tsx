@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth";
 import { useToast } from "../lib/toast";
 import { Alert, Loading, Pager, Spinner, formatCredits, formatCreditsExact, relTime, usePager } from "../components/ui";
 import TopupThanks from "../components/TopupThanks";
+import BillingDetails from "../components/BillingDetails";
 import type { Transaction } from "../types";
 
 // A topup counts as "just paid" when it landed within this window; Stripe's
@@ -27,7 +28,7 @@ function recentTopup(txns: Transaction[]): Transaction | undefined {
 
 export default function Billing() {
   const toast = useToast();
-  const { settings } = useAuth();
+  const { me, settings } = useAuth();
   const consultant = settings?.consultant_first_name ?? "Consultant";
   const [params, setParams] = useSearchParams();
   const checkoutStatus = useRef(params.get("status")).current;
@@ -41,6 +42,7 @@ export default function Billing() {
   const [amount, setAmount] = useState("50");
   const [busy, setBusy] = useState(false);
   const [stripeDown, setStripeDown] = useState(false);
+  const [portalBusy, setPortalBusy] = useState(false);
   const [thanks, setThanks] = useState<{
     amount: number;
     balance: number;
@@ -133,6 +135,21 @@ export default function Billing() {
     }
   }
 
+  // Stripe hosts the invoice history on purpose: a document corrected or
+  // credited after it was issued stays correct there, which a copy of ours
+  // could not be. The link is single-use and does not exist until the API
+  // answers, so it is followed in this tab exactly like Checkout is.
+  async function openInvoices() {
+    setPortalBusy(true);
+    try {
+      const { portal_url } = await billingApi.portal();
+      window.location.assign(portal_url);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Could not open your invoices", "err");
+      setPortalBusy(false);
+    }
+  }
+
   if (error) return <Alert kind="error">{error}</Alert>;
   if (!balance || !txns) return <Loading />;
 
@@ -150,6 +167,19 @@ export default function Billing() {
             {formatCredits(balance.credit_balance)}
           </div>
           <div className="muted small">credits ({balance.currency})</div>
+          {/* Offered only once a payment has been taken: with no Stripe customer
+              there is no portal to open, and a button that 404s is worse than
+              no button. */}
+          {me?.org.stripe_customer && (
+            <button
+              type="button"
+              className="btn mt"
+              onClick={openInvoices}
+              disabled={portalBusy}
+            >
+              {portalBusy ? <Spinner /> : "All invoices"}
+            </button>
+          )}
         </div>
 
         <div className="card">
@@ -180,6 +210,8 @@ export default function Billing() {
         </div>
       </div>
 
+      <BillingDetails />
+
       <div className="card mt">
         <div className="section-title">Transactions</div>
         {txns.length === 0 ? (
@@ -192,6 +224,7 @@ export default function Billing() {
                   <th>Date</th>
                   <th>Kind</th>
                   <th>Project</th>
+                  <th>Invoice</th>
                   <th style={{ textAlign: "right" }}>Amount</th>
                 </tr>
               </thead>
@@ -210,6 +243,21 @@ export default function Billing() {
                       ) : (
                         "-"
                       )}
+                    </td>
+                    <td className="tiny">
+                      {t.invoice_url ? (
+                        <a href={t.invoice_url} target="_blank" rel="noreferrer"
+                           title="Open this invoice on Stripe">
+                          {t.invoice_number ?? "Invoice"}
+                        </a>
+                      ) : (
+                        <span className="faint">-</span>
+                      )}
+                      {t.tax_amount ? (
+                        <div className="faint" style={{ marginTop: 2 }}>
+                          + {formatCreditsExact(t.tax_amount)} tax
+                        </div>
+                      ) : null}
                     </td>
                     <td
                       style={{

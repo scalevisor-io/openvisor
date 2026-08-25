@@ -35,14 +35,27 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(255))
     type: Mapped[str] = mapped_column(String(20), default="individual")  # individual|organization
     company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The customer's own tax number, whatever the country calls it (§18 billing
+    # details): an EU or UK VAT number, a US EIN, a Canadian GST/HST account.
+    # `services/countries.tax_id_for` is what turns it into something Stripe
+    # accepts; an unrecognisable one is withheld, never guessed.
     vat_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # billing address - required (except line2) while type='organization', kept when
-    # switching back to individual so nothing is lost on a round-trip
+    # switching back to individual so nothing is lost on a round-trip. An
+    # individual may fill it in too: it is what the invoice is addressed to and
+    # what Stripe Tax computes the rate from, and neither of those is a company
+    # thing.
     address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
     address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     city: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # ISO 3166-1 alpha-2, not a country name: Stripe Tax resolves a rate from
+    # the code, and a free-text "France" resolves to nothing at all.
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # State or province, ONLY where the rate depends on one (Canada, the US).
+    # Sending a subdivision to a country with a national rate is at best ignored
+    # and at worst a rejected address, so it is cleared on a move to one.
+    province: Mapped[str | None] = mapped_column(String(2), nullable=True)
     credit_balance: Mapped[float] = mapped_column(Float, default=0.0)
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Whether the org's global Memory (OrgMemory) applies to a project by default.
@@ -555,6 +568,23 @@ class CreditTransaction(Base):
     # usage report carried none.
     tokens_cached: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stripe_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # §18 invoicing: our own id for one top-up, carried on both the Checkout
+    # session and the invoice Stripe issues afterwards. `stripe_ref` cannot do
+    # this job - the session and the invoice are different objects with
+    # different ids, and the invoice arrives in a LATER webhook than the one
+    # that credited the wallet, so this is the only thing tying them together.
+    topup_ref: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # The invoice this payment produced: null on every row that is not a payment
+    # (consumption, quote, grant...) and on a payment whose invoice webhook has
+    # not landed yet. A row without one still shows the payment; it just has no
+    # document to link.
+    invoice_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invoice_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    invoice_pdf: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Tax the customer paid ON TOP of `amount`. Stored rather than derived,
+    # because the wallet is credited the pre-tax figure and nothing in the
+    # ledger would otherwise remember what the card was actually charged.
+    tax_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
     detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Indexed for the §usage graph's per-day window over the ledger. The index
     # exists in every database already (created by migration a3c4d5e6f7b8), so
