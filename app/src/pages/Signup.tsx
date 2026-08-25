@@ -5,6 +5,7 @@ import Altcha from "../components/Altcha";
 import { Alert, Spinner } from "../components/ui";
 import { useAuth } from "../lib/auth";
 import { authApi, metaApi } from "../lib/endpoints";
+import { useAltcha } from "../lib/useAltcha";
 import type { AccountType } from "../types";
 
 export default function Signup() {
@@ -16,18 +17,13 @@ export default function Signup() {
   const [companyName, setCompanyName] = useState("");
   const [fullName, setFullName] = useState("");
   const [acceptTerms, setAcceptTerms] = useState(false);
-  const [challenge, setChallenge] = useState<Record<string, unknown> | null>(null);
-  const [altchaPayload, setAltchaPayload] = useState<string | null>(null);
+  const captcha = useAltcha();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [landingUrl, setLandingUrl] = useState("https://openvisor.example.com");
 
   useEffect(() => {
-    authApi
-      .altcha()
-      .then((c) => setChallenge(c))
-      .catch(() => setError("Could not load the captcha challenge. Reload to retry."));
     metaApi
       .config()
       .then((c) => c.landing_base_url && setLandingUrl(c.landing_base_url))
@@ -45,7 +41,7 @@ export default function Signup() {
       setError("Please accept the terms of service and privacy policy.");
       return;
     }
-    if (!altchaPayload) {
+    if (!captcha.ready) {
       setError("Please complete the captcha.");
       return;
     }
@@ -57,12 +53,14 @@ export default function Signup() {
         account_type: accountType,
         company_name: accountType === "organization" ? companyName : undefined,
         full_name: accountType === "organization" ? fullName : undefined,
-        altcha: altchaPayload,
+        altcha: captcha.payload,
         accept_terms: acceptTerms,
       });
       setDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed.");
+      // The solved challenge is burned; a retry needs a fresh one.
+      captcha.reset();
     } finally {
       setBusy(false);
     }
@@ -85,6 +83,9 @@ export default function Signup() {
   return (
     <AuthShell title="Create account" subtitle={`Start building an MVP with ${brandName}.`}>
       {error && <Alert kind="error">{error}</Alert>}
+      {captcha.error && (
+        <Alert kind="error">Could not load the captcha challenge. Reload to retry.</Alert>
+      )}
       <form onSubmit={submit}>
         <div className="field">
           <label>Account type</label>
@@ -184,9 +185,13 @@ export default function Signup() {
           </label>
         </div>
 
-        <Altcha challenge={challenge} onVerified={setAltchaPayload} />
+        <Altcha challenge={captcha.challenge} onVerified={captcha.setPayload} />
 
-        <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
+        <button
+          type="submit"
+          className="btn btn-primary btn-block"
+          disabled={busy || !captcha.ready}
+        >
           {busy ? <Spinner /> : "Create account"}
         </button>
       </form>

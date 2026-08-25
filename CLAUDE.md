@@ -60,6 +60,7 @@ One line each - the detail is in [docs/CODE_MAP.md](docs/CODE_MAP.md). Read that
 - Tests: `make test` (runs pytest inside the api container). The e2e flow can be replayed with curl/python against Traefik using Host headers (`app.openvisor.local`, `mail.openvisor.local`); mailpit's API at `mail.openvisor.local/api/v1/messages` lets you fetch verification links.
 - Traefik gotcha: the docker provider is pinned to `--providers.docker.network=openvisor_edge`; any service Traefik routes to must be on the `edge` network or you get 504s.
 - Local admin is `admin@example.org` / `ADMIN_PASSWORD` (pydantic rejects reserved TLDs like `.local` in emails, so don't use them for accounts).
+- Captcha gotcha (§captcha): signup AND sign-in are gated by the Altcha proof of work, and the widget solves it with `crypto.subtle`, which browsers expose only in a **secure context**. On the plain-http dev vhost (`http://app.<domain>.local:<port>`) it therefore hangs on "verifying" and the submit button never enables. Drive the SPA from a `localhost` origin (a secure context - e.g. publish the `app` container on a host port) or set `ALTCHA_ENABLED=0` in the instance `.env` and restart `api`. Over HTTPS in production it just works.
 - Stripe/GitLab/LLM placeholders in local `.env` are fine: Stripe endpoints return 503 (grant credits via `POST /api/admin/orgs/{id}/credits` or the /admin/users page), GitLab provisioning logs a warning and stays pending, LLM steps use heuristics.
 
 ## Multi-instance development (several working copies on one machine)

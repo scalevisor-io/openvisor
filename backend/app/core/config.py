@@ -249,6 +249,19 @@ class Settings(BaseSettings):
     # parse time and an empty result falls back to "development".
     instance_capabilities: str = "development"
 
+    # Captcha (PROMPT §2): self-hosted Altcha proof-of-work on the public auth
+    # forms. Off only for an environment that cannot run the browser widget (a
+    # headless smoke test against a deployed stack); the test suite solves the
+    # challenge for real instead of switching it off.
+    altcha_enabled: bool = True
+    # Difficulty. The browser hashes until it finds the server's number, so the
+    # expected work is maxnumber/2 hashes - a second or two of one visitor's
+    # CPU, and that same cost per attempt for a script, which is the point.
+    # Raising it weakens nothing (a wrong or missing solution is rejected
+    # either way), so the ceiling is patience on a slow phone. Read per
+    # challenge, so ALTCHA_MAX_NUMBER takes effect on a restart.
+    altcha_max_number: int = 3_000_000
+
     # Billing
     credit_currency: str = "EUR"
     credit_markup: float = 1.3

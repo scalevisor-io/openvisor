@@ -54,16 +54,16 @@ async def get_csrf(response: Response):
 
 @router.get("/altcha")
 async def altcha_challenge():
+    """Mint a proof-of-work challenge for the signup and sign-in forms."""
     return altcha.create_challenge()
 
 
 @router.post("/signup", status_code=201)
 async def signup(body: SignupIn, request: Request, db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "signup", 10, 3600)
+    await altcha.gate(body.altcha)
     if not body.accept_terms:
         raise HTTPException(400, "You must accept the terms of service and privacy policy")
-    if not await altcha.verify_payload(body.altcha):
-        raise HTTPException(400, "Captcha verification failed")
     existing = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if existing:
         raise HTTPException(409, "An account with this email already exists")
@@ -116,6 +116,9 @@ async def resend_verification(body: EmailIn, request: Request, db: AsyncSession 
 async def login(body: LoginIn, request: Request, response: Response,
                 db: AsyncSession = Depends(get_db)):
     await rate_limit(request, "login", 20, 900)
+    # Before the password check, so a credential-stuffing run pays the proof of
+    # work on every attempt rather than only on the ones that happen to land.
+    await altcha.gate(body.altcha)
     user = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(401, "Invalid email or password")

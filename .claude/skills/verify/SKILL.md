@@ -14,7 +14,7 @@ description: Build, launch, and drive this repo's SPA/landing/API to observe a c
 All endpoints are under `/api` on the app vhost (payloads in `docs/API_CONTRACT.md`):
 
 - CSRF: `GET /api/auth/csrf` → send the token back as `X-CSRF-Token` on every mutation, cookies on.
-- Customer signup needs an Altcha proof-of-work: `GET /api/auth/altcha`, brute-force `n` in `0..maxnumber` until `sha256(salt + str(n)) == challenge`, then POST `/api/auth/signup` with the base64 of `{algorithm, challenge, number, salt, signature}` as `altcha`, plus `accept_terms: true` (ToS/privacy consent; 400 without it).
+- Signup AND login need an Altcha proof-of-work: `GET /api/auth/altcha`, brute-force `n` in `0..maxnumber` until `sha256(salt + str(n)) == challenge`, then POST the base64 of `{algorithm, challenge, number, salt, signature}` as `altcha` on `/api/auth/signup` (plus `accept_terms: true` - ToS/privacy consent, 400 without it) or on `/api/auth/login`. One challenge is worth one attempt, so fetch a fresh one per call; at the default difficulty a solve costs a couple of seconds of CPU. For a long scripted run, `ALTCHA_ENABLED=0` in the instance `.env` (restart `api`) turns the gate off.
 - The verification token arrives in mailpit: `http://mail.openvisor<N>.local:<port>/api/v1/messages`, fetch the message, regex `token=...` from the link, POST `/api/auth/verify-email`.
 - Standard test users (CLAUDE.md): admin `admin@example.org` / `$ADMIN_PASSWORD`; customer `jean.dupont@example.com` / `customer-local-secret1` (create if missing).
 - Projects: `POST /api/projects` - `kind: "ai"` requires a `speciality` (take one from `GET /api/meta/specialities`); `direct_quote` doesn't.

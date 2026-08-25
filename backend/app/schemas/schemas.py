@@ -14,7 +14,10 @@ class SignupIn(BaseModel):
     # contact person behind an organization account; VAT and the billing address
     # are deliberately NOT asked at signup - they live on the account page
     full_name: str | None = Field(default=None, max_length=255)
-    altcha: str
+    # Base64 Altcha payload from the widget. Optional in the schema and
+    # required by altcha.gate(), so a deployment with the captcha switched off
+    # does not 422 on a form that never rendered the widget.
+    altcha: str | None = None
     accept_terms: bool = False
 
 
@@ -33,6 +36,7 @@ class AccountUpdateIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    altcha: str | None = None
 
 
 class TokenIn(BaseModel):
