@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import audit
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.deps import get_current_user, rate_limit
+from app.core.deps import client_ip, get_current_user, rate_limit
 from app.core.security import (
     CSRF_COOKIE,
     SESSION_COOKIE,
@@ -60,7 +60,7 @@ async def altcha_challenge():
 
 @router.post("/signup", status_code=201)
 async def signup(body: SignupIn, request: Request, db: AsyncSession = Depends(get_db)):
-    await rate_limit(request, "signup", 10, 3600)
+    await rate_limit(request, "signup", 10, 3600, identity=client_ip(request))
     await altcha.gate(body.altcha)
     if not body.accept_terms:
         raise HTTPException(400, "You must accept the terms of service and privacy policy")
@@ -105,7 +105,8 @@ async def verify_email(body: TokenIn, db: AsyncSession = Depends(get_db)):
 
 @router.post("/resend-verification")
 async def resend_verification(body: EmailIn, request: Request, db: AsyncSession = Depends(get_db)):
-    await rate_limit(request, "resend", 5, 3600)
+    await rate_limit(request, "resend", 5, 3600, identity=client_ip(request))
+    await rate_limit(request, "resend-email", 5, 3600, identity=body.email.lower())
     user = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if user and not user.email_verified:
         _send_verification(user)
@@ -115,7 +116,11 @@ async def resend_verification(body: EmailIn, request: Request, db: AsyncSession 
 @router.post("/login")
 async def login(body: LoginIn, request: Request, response: Response,
                 db: AsyncSession = Depends(get_db)):
-    await rate_limit(request, "login", 20, 900)
+    # Two caps, because either one alone fails: an address-keyed cap is what a
+    # credential-stuffing run cannot spread out, and an account-keyed cap is what
+    # it cannot escape by rotating exit nodes. Neither can lock anyone else out.
+    await rate_limit(request, "login", 20, 900, identity=client_ip(request))
+    await rate_limit(request, "login-email", 10, 900, identity=body.email.lower())
     # Before the password check, so a credential-stuffing run pays the proof of
     # work on every attempt rather than only on the ones that happen to land.
     await altcha.gate(body.altcha)
@@ -141,7 +146,8 @@ async def logout(response: Response):
 
 @router.post("/forgot-password")
 async def forgot_password(body: EmailIn, request: Request, db: AsyncSession = Depends(get_db)):
-    await rate_limit(request, "forgot", 5, 3600)
+    await rate_limit(request, "forgot", 5, 3600, identity=client_ip(request))
+    await rate_limit(request, "forgot-email", 5, 3600, identity=body.email.lower())
     user = (await db.execute(select(User).where(User.email == body.email))).scalar_one_or_none()
     if user:
         token = create_action_token("reset", user.id)

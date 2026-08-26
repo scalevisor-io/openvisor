@@ -157,7 +157,7 @@ def answer_question(db: Session, org_id: str, query: str, k: int = 6,
     # §KB opt-in: narrow retrieval to what this project was actually given, the
     # same way the chat answer path does. null = every enabled source (legacy
     # rows), [] = none, a list = that selection intersected with what is enabled.
-    chunks, usages = rag.retrieve(db, query, k, kb_ids=project.kb_ids)
+    chunks, usages = rag.retrieve(db, query, k, kb_ids=rag.project_kb_ids(project))
     if not chunks:
         credits = _bill(db, project, usages, "MCP knowledge query (no match)")
         return {"answer": "I don't have anything on that in the knowledge base.",

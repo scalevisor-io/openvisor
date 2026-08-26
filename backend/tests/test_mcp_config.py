@@ -285,14 +285,15 @@ def test_prepare_runner_inputs_writes_extra_secrets(db, tmp_path, monkeypatch):
     from app.workers import tasks
 
     _reset_kbs(db)
-    _add(db, kind="mcp", name="Notion", uri="https://notion.example/mcp",
-         api_key_enc=encrypt("super-secret-kb-key"), enabled=True)
+    notion = _add(db, kind="mcp", name="Notion", uri="https://notion.example/mcp",
+                  api_key_enc=encrypt("super-secret-kb-key"), enabled=True)
 
     # No secret Memory rows (unknown project/org ids), global memory off - isolates
-    # this test to the mcp.json / leak-scan-input plumbing.
+    # this test to the mcp.json / leak-scan-input plumbing. The KB is SELECTED:
+    # kb_ids is opt-in, so an unselecting project embeds no KB key at all.
     project = SimpleNamespace(workspace_path=str(tmp_path), ssh_private_key_enc=None,
                               id="no-such-project", org_id="no-such-org",
-                              use_global_memory=False, kb_ids=None)
+                              use_global_memory=False, kb_ids=[notion.id])
     # Stub the task-file builder (it needs a full project); we only exercise the
     # leak-scan-input plumbing here.
     monkeypatch.setattr(tasks, "_build_task_file", lambda *a, **k: ("task", []))

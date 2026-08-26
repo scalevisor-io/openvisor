@@ -164,6 +164,32 @@ async def get_project_for_org_member(
     return project
 
 
+def client_ip(request: Request) -> str:
+    """The caller's own address, as best the edge can tell us.
+
+    `request.client.host` is the REVERSE PROXY, not the caller: Traefik is the
+    peer uvicorn sees, and uvicorn only honours forwarded headers from
+    127.0.0.1 by default. Keying a limiter on it collapses every caller on the
+    planet into one bucket, which turns a per-caller cap into a platform-wide
+    outage the moment anyone spends it.
+
+    Cloudflare's `CF-Connecting-IP` is the true client and is rewritten on every
+    request that passes the edge; the first `X-Forwarded-For` entry is the
+    fallback for a deployment without it. Both are client-influenced if someone
+    can reach the origin directly - which is why the auth limiters below pair
+    this with an identity-keyed cap that no header can move.
+    """
+    cf = request.headers.get("cf-connecting-ip", "").strip()
+    if cf:
+        return cf
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        first = fwd.split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else "unknown"
+
+
 async def rate_limit(request: Request, key: str, limit: int, window_s: int,
                      identity: str | None = None) -> None:
     """Fixed-window limiter in Redis. Fails OPEN on a Redis outage (logs a warning

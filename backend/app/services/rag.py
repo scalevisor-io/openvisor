@@ -110,12 +110,29 @@ def kb_retrieval_enabled(db: Session) -> bool:
     return local_kb_enabled(db) or _any_git_kb_active(db)
 
 
+def project_kb_ids(project) -> list:
+    """§KB opt-in: the knowledge selection ONE project may read.
+
+    `Project.kb_ids` is `[]` for anything created since the opt-in default, and
+    NULL only on rows that predate it. NULL used to mean "every enabled KB",
+    which is how one tenant's corpus reached another tenant's chat and build
+    context - an instance-wide KB list has no owner, so "all of them" is never a
+    safe default for a project nobody chose sources for. A project resolves to
+    exactly what it was given, and nothing when it was given nothing.
+
+    `selected_root_keys(None)` keeps meaning unrestricted: the admin KB
+    leak-audit sweeps the whole index and has no project to scope to.
+    """
+    return list(project.kb_ids or [])
+
+
 def selected_root_keys(db: Session, kb_ids: list | None) -> set[str] | None:
-    """Map a project's KB selection (Project.kb_ids: null = all, [] = none, a list =
-    exactly those KnowledgeBase ids) to the Meili doc namespaces it may read: the
+    """Map a KB selection ([] = none, a list = exactly those KnowledgeBase ids) to
+    the Meili doc namespaces it may read: the
     literal 'local' root for the local KB row, each git source's row id. Effective
     access = globally enabled AND verified AND selected - selection only narrows, so
-    the /admin/knowledge-bases kill-switch always cascades. None = unrestricted."""
+    the /admin/knowledge-bases kill-switch always cascades. None = unrestricted, and
+    only the project-less admin audit sweep passes it (see `project_kb_ids`)."""
     if kb_ids is None:
         return None
     ids = set(kb_ids)

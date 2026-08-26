@@ -173,9 +173,9 @@ class Project(Base):
     use_global_memory: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Per-project KB selection (§KB): which KnowledgeBase rows feed this project's
     # dev runs (MCP servers + RAG retrieval). [] = none - THE DEFAULT for new
-    # projects (KBs are opt-in per project) - a list = exactly those ids, and
-    # null = all enabled KBs (legacy rows created before the opt-in default; the
-    # modal migrates them to an explicit list on save). Selection only ever
+    # projects (KBs are opt-in per project) - a list = exactly those ids. A null
+    # is a legacy row from before the opt-in default and reads as [] everywhere
+    # (`rag.project_kb_ids`); nothing writes one any more. Selection only ever
     # NARROWS the globally enabled set - a KB disabled in /admin/knowledge-bases
     # stays off in every project.
     kb_ids: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)

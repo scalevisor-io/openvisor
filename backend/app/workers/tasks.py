@@ -131,6 +131,16 @@ def evaluate_project(project_id: str) -> None:
         project = db.get(Project, project_id)
         if project is None:
             return
+        # §spend floor: evaluation runs before anything is paid for, so it is the
+        # one billable path an unpaid account can reach. Past the debt limit it
+        # stops - visibly, so the customer sees why rather than watching a
+        # pending evaluation that never resolves.
+        if not llm.spend_allowed(db, project.org_id):
+            project.evaluation = {"state": "failed",
+                                  "error": "Evaluation needs credits on the account."}
+            db.commit()
+            events.publish_sync(project_id, {"type": "evaluation", "state": "failed"})
+            return
         # Title the project from its description (prompt #9) before evaluating,
         # so the evaluation context and the dashboard show the real name. Skipped
         # once the customer has renamed it; best-effort (bootstrap name stays on
@@ -178,6 +188,10 @@ def title_request(request_id: str, bootstrap_title: str) -> None:
                  .order_by(Message.created_at).first())
         if project is None or first is None:
             return
+        # §spend floor: the title is a nicety, not the request. Past the debt
+        # limit the bootstrap title stands and nothing is spent.
+        if not llm.spend_allowed(db, project.org_id):
+            return
         title = pipeline.generate_request_title(db, project, req, first.body)
         if title:
             # Guarded UPDATE, not an instance write: the LLM call above takes
@@ -206,21 +220,33 @@ def estimate_request(project_id: str, payload: dict) -> dict:
         project = db.get(Project, project_id)
         if project is None:
             return {"project_id": project_id, "available": False, "reason": "not_found"}
+        if not llm.spend_allowed(db, project.org_id):  # §spend floor
+            return {"project_id": project_id, "available": False,
+                    "reason": "insufficient_credits"}
         base_url, api_key, model = _project_model_config(db, project)
 
         # Past completed runs = 'dev run' billing rows, kept only for projects
         # whose effective model (own config's endpoint/inline model, else the
-        # global default) matches.
+        # global default) matches. Scoped to the ASKING ORG: the estimate and its
+        # explanation are shown to the customer, and platform-wide averages would
+        # tell them what every other org's builds cost and how long they took. An
+        # org with no dev runs of its own gets no_history, which the modal already
+        # renders as "no estimate available".
         def _row_model(r: ProjectModelConfig) -> str:
             if r.endpoint_id:
                 ep = db.get(ModelEndpoint, r.endpoint_id)
                 if ep and ep.model_name:
                     return ep.model_name
             return r.model_name or settings.openai_model
-        overrides = {r.project_id: _row_model(r) for r in db.query(ProjectModelConfig).all()}
+        org_project_ids = [pid for (pid,) in db.query(Project.id)
+                           .filter(Project.org_id == project.org_id).all()]
+        overrides = {r.project_id: _row_model(r)
+                     for r in db.query(ProjectModelConfig)
+                     .filter(ProjectModelConfig.project_id.in_(org_project_ids)).all()}
         txs = (db.query(CreditTransaction)
                .filter(CreditTransaction.kind == "consumption",
-                       CreditTransaction.detail == "dev run")
+                       CreditTransaction.detail == "dev run",
+                       CreditTransaction.org_id == project.org_id)
                .order_by(CreditTransaction.created_at.desc()).limit(50).all())
         runs = [t for t in txs
                 if overrides.get(t.project_id, settings.openai_model) == model]
@@ -1225,7 +1251,7 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
             usages: list[dict] = []
             try:
                 chunks, emb_usages = rag.retrieve(db, target.body[:2000], CHAT_ANSWER_K,
-                                                  kb_ids=project.kb_ids)
+                                                  kb_ids=rag.project_kb_ids(project))
                 usages.extend(emb_usages)
                 chunk_texts = [c.content for c in chunks]
                 passages = ("\n\n".join(f"[{i + 1}] {c.content}" for i, c in enumerate(chunks))
@@ -1809,7 +1835,7 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
     try:
         hits = rag.search(db, f"{project.name}: {project.description[:500]}", k=6,
                           tags=speciality.knowledge_tags(project),
-                          kb_ids=project.kb_ids)
+                          kb_ids=rag.project_kb_ids(project))
         # Second, targeted pass: team conventions (branch/commit/PR/workflow rules)
         # are orthogonal to the project description, so similarity retrieval on the
         # description alone almost never surfaces them - yet they are exactly what
@@ -1818,7 +1844,7 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
         try:
             conv = rag.search(db, "branch naming commit message pull request "
                                   "convention team workflow rules", k=3,
-                              kb_ids=project.kb_ids)
+                              kb_ids=rag.project_kb_ids(project))
             seen_paths = {h.path for h in hits}
             hits += [h for h in conv if h.path not in seen_paths]
         except Exception as exc:  # noqa: BLE001
@@ -1839,7 +1865,7 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
     # owner's KB content and must never be committed into the deliverable.
     rules_block = ""
     try:
-        digests = rag.rules_digests(db, project.kb_ids)
+        digests = rag.rules_digests(db, rag.project_kb_ids(project))
         if digests:
             kb_snippets.extend(content for _name, content in digests)
             rules_block = (
@@ -1977,7 +2003,7 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
         if not proc_query:
             proc_query = (fix_instruction or steering_note
                           or f"{project.name}: {project.description[:500]}")
-        procs = rag.procedures_for(db, proc_query, project.kb_ids)
+        procs = rag.procedures_for(db, proc_query, rag.project_kb_ids(project))
         if procs:
             kb_snippets.extend(content for _src, _title, content in procs)
             procedures_block = (
@@ -2347,7 +2373,7 @@ def _prepare_runner_inputs(db: Session, project: Project,
         (openvisor_dir / "conversation_id").unlink(missing_ok=True)
     if approved_plan:
         (openvisor_dir / "plan.md").write_text(approved_plan)
-    mcp_json, mcp_secret_values = _mcp_config(db, project.kb_ids, project=project)
+    mcp_json, mcp_secret_values = _mcp_config(db, rag.project_kb_ids(project), project=project)
     (openvisor_dir / "mcp.json").write_text(mcp_json)
     # Pre-publish leak-scan inputs (runner/leak_scan.py): the KB fingerprints to
     # refuse in published files, and the NAMES of the secret env vars (values stay

@@ -233,6 +233,21 @@ def record_usage(db: Session, project: Project, usage: dict, detail: str,
     return credits
 
 
+def spend_allowed(db: Session, org_id: str) -> bool:
+    """§spend floor: may the platform still spend model tokens for this org?
+
+    The billable paths refuse at a wallet of <= 0 already. This is the backstop
+    for the ones that have to run before anything is paid - the §7 evaluation, a
+    Request's LLM title, the pre-creation estimate - which are otherwise
+    replayable for as long as an account exists: the ledger records the debt, and
+    nobody collects it. Past `credit_debt_limit` credits of debt, those calls stop.
+    """
+    org = db.get(Organization, org_id)
+    if org is None:
+        return False
+    return (org.credit_balance or 0.0) > -settings.credit_debt_limit
+
+
 def _debit_org(db: Session, org_id: str, credits: float) -> None:
     # §parallel-builds MR2: atomic decrement - N concurrent runs/answers must
     # never lose a debit to a read-modify-write race. The expire keeps any
