@@ -546,15 +546,19 @@ def _key_body(public_key: str | None) -> str:
 
 
 def customer_ensure_deploy_key(base_url: str, token: str, path: str, title: str,
-                               public_key: str) -> str:
-    """(Re)install the project's deploy key on a customer repo through their PAT,
-    with write access, under the PAT's own account. GitLab authorises a deploy
-    key's pushes as the account that INSTALLED it, so a key installed by an
-    account that later lost push rights there (a project transferred out of its
-    group) is still listed, still reads, and refuses every push - only a fresh
-    install by someone who has the rights fixes it. An existing copy of the same
-    key is removed first (one fingerprint per project). Returns "reinstalled" |
-    "installed"; raises GitLabError with the API's own words."""
+                               public_key: str, key_id: int | None = None) -> str:
+    """Make the project's deploy key usable on a customer repo through their PAT -
+    attached, with write access - WITHOUT ever detaching it first. GitLab keeps
+    ONE key object per fingerprint across the instance: a DELETE only detaches
+    it while other projects still hold it, and a POST of the same fingerprint
+    then answers 400 "has already been taken" - the detach-then-re-add this used
+    to do left a production repository with no key at all. So: POST (a key new
+    to the instance: 201 → "installed"); on the duplicate-fingerprint 400 find
+    the key object - this project's own list, else the instance list when the
+    token may read it, else the id the caller knows from the platform repo - and
+    ENABLE it here, then grant it write access ("enabled" / "write access
+    granted" / "already installed"). Raises GitLabError with the API's words
+    when none of that is possible, and then nothing was changed."""
     body = _key_body(public_key)
     if not body:
         raise GitLabError("the project has no deploy key")
@@ -563,16 +567,93 @@ def customer_ensure_deploy_key(base_url: str, token: str, path: str, title: str,
         r = c.get(f"/projects/{pid}/deploy_keys", params={"per_page": 100})
         if r.status_code != 200:
             raise GitLabError(f"deploy keys unreadable: HTTP {r.status_code} {r.text[:160]}")
-        existing = [k for k in r.json() if _key_body(k.get("key")) == body]
-        for k in existing:
-            d = c.delete(f"/projects/{pid}/deploy_keys/{k['id']}")
-            if d.status_code not in (200, 204, 404):
-                raise GitLabError(f"deploy key removal failed: HTTP {d.status_code} {d.text[:160]}")
-        r = c.post(f"/projects/{pid}/deploy_keys",
-                   json={"title": title, "key": public_key.strip(), "can_push": True})
-        if r.status_code not in (200, 201):
-            raise GitLabError(f"deploy key install failed: HTTP {r.status_code} {r.text[:160]}")
-        return "reinstalled" if existing else "installed"
+        here = next((k for k in r.json() if _key_body(k.get("key")) == body), None)
+        outcome = "already installed"
+        if here is None:
+            r = c.post(f"/projects/{pid}/deploy_keys",
+                       json={"title": title, "key": public_key.strip(), "can_push": True})
+            if r.status_code in (200, 201):
+                return "installed"
+            if r.status_code != 400 or "already been taken" not in r.text:
+                raise GitLabError(f"deploy key install failed: HTTP {r.status_code} {r.text[:160]}")
+            kid = key_id
+            if kid is None:
+                inst = c.get("/deploy_keys", params={"per_page": 100})
+                if inst.status_code == 200:
+                    kid = next((k["id"] for k in inst.json() if _key_body(k.get("key")) == body), None)
+            if kid is None:
+                raise GitLabError("the deploy key already exists on this GitLab under another "
+                                  "project and this token cannot look it up to enable it here")
+            r = c.post(f"/projects/{pid}/deploy_keys/{kid}/enable")
+            if r.status_code not in (200, 201):
+                raise GitLabError(f"deploy key enable failed: HTTP {r.status_code} {r.text[:160]}")
+            here, outcome = {"id": kid, "can_push": False}, "enabled"
+        if not here.get("can_push"):
+            r = c.put(f"/projects/{pid}/deploy_keys/{here['id']}", json={"can_push": True})
+            if r.status_code != 200:
+                raise GitLabError(f"deploy key write access failed: HTTP {r.status_code} {r.text[:160]}")
+            outcome = "enabled" if outcome == "enabled" else "write access granted"
+        return outcome
+
+
+def customer_grant_member(base_url: str, token: str, path: str, user_id: int,
+                          access_level: int = 30) -> str:
+    """Give an account push rights on a customer repo through their PAT (Developer
+    by default). GitLab authorises a deploy key's pushes as the account that
+    INSTALLED the key, so on the platform's own forge the key the platform
+    installed only pushes while the platform account is a member - a project
+    transferred out of the platform group keeps the key and loses exactly that.
+    Returns "granted" | "already a member"; raises GitLabError otherwise."""
+    with _customer_client(base_url, token) as c:
+        r = c.post(f"/projects/{quote(path, safe='')}/members",
+                   json={"user_id": user_id, "access_level": access_level})
+        if r.status_code in (200, 201):
+            return "granted"
+        if r.status_code == 409 or (r.status_code == 400 and "already" in r.text.lower()):
+            return "already a member"
+        raise GitLabError(f"membership grant failed: HTTP {r.status_code} {r.text[:160]}")
+
+
+_PLATFORM_USER: dict | None = None
+
+
+def platform_user() -> dict | None:
+    """The platform token's own GitLab account ({id, username}) - the installer of
+    every deploy key the platform adds. Cached per process; None when the
+    platform GitLab is not configured or does not answer."""
+    global _PLATFORM_USER
+    if _PLATFORM_USER is not None:
+        return _PLATFORM_USER
+    if not settings.gitlab_url or not settings.gitlab_token:
+        return None
+    try:
+        with _client() as c:
+            r = c.get("/user")
+            if r.status_code != 200:
+                return None
+            data = r.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    _PLATFORM_USER = {"id": data.get("id"), "username": data.get("username")}
+    return _PLATFORM_USER
+
+
+def platform_deploy_key_id(project_id: int | None, public_key: str) -> int | None:
+    """The instance id of the project's deploy key as attached to its platform
+    repo (the platform token can always read that list) - what a customer repo
+    on the same GitLab needs in order to ENABLE the existing key object rather
+    than re-add its fingerprint. None when unknown."""
+    body = _key_body(public_key)
+    if not project_id or not body or not settings.gitlab_url or not settings.gitlab_token:
+        return None
+    try:
+        with _client() as c:
+            r = c.get(f"/projects/{project_id}/deploy_keys", params={"per_page": 100})
+            if r.status_code != 200:
+                return None
+            return next((k["id"] for k in r.json() if _key_body(k.get("key")) == body), None)
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 def customer_upload_file(base_url: str, token: str, path: str,

@@ -220,29 +220,41 @@ def _key_body(public_key: str | None) -> str:
 
 def ensure_deploy_key(owner: str, repo: str, title: str, public_key: str,
                       token: str | None = None) -> str:
-    """(Re)install the project's deploy key on a GitHub repo with write access
-    through the customer's token (repo admin). A copy of the same key already on
-    the repo - read-only, say - is removed first. Returns "reinstalled" |
-    "installed"; raises GitHubError with the API's own words (a key that is
-    already installed on ANOTHER repository is refused by GitHub: deploy keys
-    are unique across the platform)."""
+    """Make the project's deploy key usable on a GitHub repo - installed with
+    write access - through the customer's token (repo admin). POST first; a copy
+    already on THIS repo (read-only, say) is what makes GitHub answer 422 "key
+    is already in use", and only then is it removed and the key re-added (a
+    GitHub deploy key belongs to one repository, so the removal frees the
+    fingerprint and the re-add cannot be refused for it). A key in use on
+    ANOTHER repository is reported, never touched. Returns "installed" |
+    "reinstalled" | "already installed"; raises GitHubError with the API's own
+    words - and then nothing was changed."""
     body = _key_body(public_key)
     if not body:
         raise GitHubError("the project has no deploy key")
     with _client(token) as c:
-        r = c.get(f"/repos/{owner}/{repo}/keys", params={"per_page": 100})
-        if r.status_code != 200:
-            raise GitHubError(f"deploy keys unreadable: HTTP {r.status_code} {r.text[:160]}")
-        existing = [k for k in r.json() if _key_body(k.get("key")) == body]
-        for k in existing:
-            d = c.delete(f"/repos/{owner}/{repo}/keys/{k['id']}")
-            if d.status_code not in (204, 404):
-                raise GitHubError(f"deploy key removal failed: HTTP {d.status_code} {d.text[:160]}")
-        r = c.post(f"/repos/{owner}/{repo}/keys",
-                   json={"title": title, "key": public_key.strip(), "read_only": False})
-        if r.status_code != 201:
+        payload = {"title": title, "key": public_key.strip(), "read_only": False}
+        r = c.post(f"/repos/{owner}/{repo}/keys", json=payload)
+        if r.status_code == 201:
+            return "installed"
+        if r.status_code != 422:
             raise GitHubError(f"deploy key install failed: HTTP {r.status_code} {r.text[:160]}")
-        return "reinstalled" if existing else "installed"
+        keys = c.get(f"/repos/{owner}/{repo}/keys", params={"per_page": 100})
+        if keys.status_code != 200:
+            raise GitHubError(f"deploy keys unreadable: HTTP {keys.status_code} {keys.text[:160]}")
+        here = next((k for k in keys.json() if _key_body(k.get("key")) == body), None)
+        if here is None:
+            raise GitHubError("the deploy key is already in use on another GitHub repository "
+                              "(a deploy key belongs to one repository)")
+        if not here.get("read_only"):
+            return "already installed"
+        d = c.delete(f"/repos/{owner}/{repo}/keys/{here['id']}")
+        if d.status_code not in (204, 404):
+            raise GitHubError(f"deploy key removal failed: HTTP {d.status_code} {d.text[:160]}")
+        r = c.post(f"/repos/{owner}/{repo}/keys", json=payload)
+        if r.status_code != 201:
+            raise GitHubError(f"deploy key re-add failed: HTTP {r.status_code} {r.text[:160]}")
+        return "reinstalled"
 
 
 def create_issue_comment(owner: str, repo: str, number: int, body: str,

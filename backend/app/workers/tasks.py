@@ -3051,38 +3051,57 @@ def _heal_moved_repo(db: Session, project: Project, target: dict | None,
 
 
 def _heal_deploy_key(db: Session, project: Project, target: dict,
-                     refusal: str) -> str | None:
+                     refusal: str) -> tuple[str | None, str | None]:
     """§push preflight self-heal: the repo refused the deploy key's push and the
-    project holds a token for that repo, so re-install the project's own key
-    there, with write access, under the token's account (github.ensure_deploy_key
-    / gitlab.customer_ensure_deploy_key - the exact fix for a key whose
-    installer lost push rights, and for one added read-only). Returns the
-    thread line explaining what was done, or None when no heal applies (no
-    token, an `other` host, the API refused) - the caller then parks with the
-    manual copy."""
+    project holds a token for that repo, so make the project's own key usable
+    there through that token - attached with write access
+    (github.ensure_deploy_key / gitlab.customer_ensure_deploy_key: a key never
+    installed, or installed read-only), and on the platform's own GitLab also
+    push rights for the account that INSTALLED the key (gitlab.customer_grant_
+    member: GitLab authorises a deploy key's pushes as its installer, and a
+    project transferred out of the platform group keeps the key while that
+    account loses its membership - the refusal this incident was). Nothing here
+    detaches a key: the enable path reuses the instance's existing key object,
+    because a detach followed by a refused re-add once left a repository with
+    no key at all. Returns (thread line explaining what was done, None), or
+    (None, why not) - no token, an `other` host, the API's own refusal - and
+    the caller's park copy carries that reason."""
     provider = target.get("provider")
-    if provider not in ("github", "gitlab") or not (project.ssh_public_key or "").strip():
-        return None
+    if provider not in ("github", "gitlab"):
+        return None, None
+    if not (project.ssh_public_key or "").strip():
+        return None, "the project has no deploy key"
     token = _project_repo_token(db, project, provider, target.get("remote"))
     if not token:
-        return None
+        return None, (f"no {repolib.token_key(provider)} in the project Memory to "
+                      "re-install it with")
     title = f"{settings.brand_name} agent"
+    steps = []
     try:
         if provider == "github":
             where = f"{target['owner']}/{target['repo']}"
             how = github.ensure_deploy_key(target["owner"], target["repo"], title,
                                            project.ssh_public_key, token=token)
+            steps.append(f"{how} the project's deploy key on `{where}` with write access")
         else:
             where = target["path"]
-            how = gitlab.customer_ensure_deploy_key(target["base_url"], token, target["path"],
-                                                    title, project.ssh_public_key)
+            how = gitlab.customer_ensure_deploy_key(
+                target["base_url"], token, target["path"], title, project.ssh_public_key,
+                key_id=gitlab.platform_deploy_key_id(project.gitlab_project_id,
+                                                     project.ssh_public_key))
+            steps.append(f"{how} the project's deploy key on `{where}` with write access")
+            bot = gitlab.platform_user() if gitlab.is_platform_host(target.get("remote")) else None
+            if bot and bot.get("id"):
+                grant = gitlab.customer_grant_member(target["base_url"], token, target["path"],
+                                                     bot["id"])
+                steps.append(f"{grant} `{bot.get('username') or 'the platform account'}` "
+                             "(the account that installed the key) Developer access there")
     except Exception as exc:  # noqa: BLE001 - the heal is best-effort; the park copy follows
         log.warning("deploy key heal failed for %s: %s", project.id, exc)
-        return None
-    log.info("deploy key %s on %s for %s", how, where, project.id)
-    return (f"The repository refused the deploy key's push ({refusal}), so I {how} the "
-            f"project's deploy key on `{where}` with write access using your repository "
-            "token - the push works again.")
+        return None, str(exc)[:200]
+    log.info("deploy key heal for %s on %s: %s", project.id, where, "; ".join(steps))
+    return (f"The repository refused the deploy key's push ({refusal}), so using your "
+            f"repository token I {' and '.join(steps)} - the push works again."), None
 
 
 def _push_preflight(db: Session, project: Project, target: dict, thread: str) -> bool:
@@ -3111,7 +3130,7 @@ def _push_preflight(db: Session, project: Project, target: dict, thread: str) ->
             log.warning("push preflight inconclusive for %s (%s): %s", project.id, verdict, detail)
         return True
     log.warning("push preflight refused for %s: %s", project.id, detail)
-    healed = _heal_deploy_key(db, project, target, detail)
+    healed, unhealed = _heal_deploy_key(db, project, target, detail)
     if healed:
         verdict, detail2 = repolib.check_push(remote, key, probe, author=author)
         if verdict != "denied":
@@ -3119,11 +3138,14 @@ def _push_preflight(db: Session, project: Project, target: dict, thread: str) ->
             devfeed.append_event(project, "git", "Deploy key re-installed on the repository")
             db.commit()
             return True
-        detail = detail2
+        unhealed = (f"after that the repository still answered: {detail2}")
     hint = _push_failure_hint(detail)
+    attempted = (f" I tried to fix the deploy key with your repository token, but {unhealed}."
+                 if unhealed else "")
     _post_message(db, project.id, thread, "agent",
                   f"The build can't start: the repository refused the deploy key's push "
-                  f"({detail}).{hint or ' Fix the deploy key on the repository, then Resume.'}"
+                  f"({detail}).{attempted}"
+                  f"{hint or ' Fix the deploy key on the repository, then Resume.'}"
                   " Nothing was built or billed.")
     devfeed.append_event(project, "error", f"Repository refused the push - {detail[:160]}")
     _safe_transition(db, project, "awaiting_customer", "Repository refused the deploy key's push")
@@ -5681,13 +5703,18 @@ def _push_failure_hint(logs: str) -> str:
     if "not allowed to push code" in low:
         return (" The deploy key is installed, but the account that installed it no "
                 "longer has push rights on the repository - a project that was moved "
-                "or transferred keeps the key and refuses its pushes. Re-install the "
-                "project's deploy key under your own account (or keep a repository "
-                "token in Memory and the next build re-installs it for you), then Resume.")
+                "or transferred keeps the key and refuses its pushes. Give that account "
+                "Developer access on the repository, or install the project's deploy key "
+                "again under your own account (with a repository token in Memory the next "
+                "build does this for you), then Resume.")
     if "denied to deploy key" in low:
         return (" The deploy key isn't installed on this repository (a deploy key lives "
                 "on one GitHub repository only) - add the project's public key as a "
                 "deploy key with write access there, then Resume.")
+    if "could not be found or you don't have permission" in low:
+        return (" The repository doesn't know this project's deploy key (or the connected "
+                "URL is wrong) - enable the project's deploy key on the repository with "
+                "write access (repository settings → Deploy keys), then Resume.")
     if "repository not found" in low or "does not appear to be a git repository" in low:
         return " The repository could not be found - check the connected repo URL."
     return ""
