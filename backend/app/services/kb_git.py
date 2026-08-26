@@ -81,7 +81,7 @@ def sync_source(kb: KnowledgeBase) -> Path:
     dest = clone_dir(kb.id)
     dest.parent.mkdir(parents=True, exist_ok=True)
     ref = (kb.ref or "main").strip() or "main"
-    uri = (kb.uri or "").strip()
+    uri = repos.normalize_ssh_uri(kb.uri)  # scp-like host:port/path dials port 22 otherwise
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     secrets: tuple[str, ...] = ()
     keydir: tempfile.TemporaryDirectory | None = None
@@ -103,9 +103,12 @@ def sync_source(kb: KnowledgeBase) -> Path:
         cred = _http_auth_env(env, pat, kb.http_username)
         secrets = (pat, cred)  # redact both the raw PAT and its base64 form
 
+    # §ssh remotes: a KB on a tailnet-only git host needs the same transport
+    # mapping the worker uses for project repos - this pod has no hostAlias.
+    rw = repos.git_host_rewrite(uri)
     try:
         if (dest / ".git").is_dir():
-            _run(["git", "-C", str(dest), "fetch", "--depth", "1", uri, ref], env, *secrets)
+            _run(["git", *rw, "-C", str(dest), "fetch", "--depth", "1", uri, ref], env, *secrets)
             _run(["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD"], env, *secrets)
             # Belt-and-braces: ensure the persisted origin carries no credential (e.g.
             # a checkout left by an older code path that embedded the PAT in the URL).
@@ -114,7 +117,7 @@ def sync_source(kb: KnowledgeBase) -> Path:
         else:
             if dest.exists():
                 shutil.rmtree(dest)
-            _run(["git", "clone", "--depth", "1", "--branch", ref, uri, str(dest)], env, *secrets)
+            _run(["git", *rw, "clone", "--depth", "1", "--branch", ref, uri, str(dest)], env, *secrets)
     finally:
         if keydir is not None:
             keydir.cleanup()

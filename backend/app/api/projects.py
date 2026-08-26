@@ -182,7 +182,8 @@ async def create_project(body: ProjectCreateIn, user: User = Depends(require_ver
         # its whole build conversation lives in its own thread from day one.
         await project_actions.create_mvp_request(db, project)
     for i, repo in enumerate(body.repos):
-        db.add(ProjectRepo(project_id=project.id, ssh_uri=repo.ssh_uri,
+        db.add(ProjectRepo(project_id=project.id,
+                           ssh_uri=repolib.normalize_ssh_uri(repo.ssh_uri),
                            role="primary" if i == 0 else "secondary",
                            provider=repolib.detect_provider(repo.ssh_uri),
                            is_push_target=(i == 0)))
@@ -349,7 +350,7 @@ async def connect_repo(body: RepoConnectIn, project: Project = Depends(get_proje
     later ones are added non-push. Returns the updated Project."""
     if project.kind not in ("ai", "auto_dev"):
         raise HTTPException(409, "Only AI projects build into a repository")
-    ssh_uri = body.ssh_uri.strip()
+    ssh_uri = repolib.normalize_ssh_uri(body.ssh_uri)
     existing = await _project_repos(db, project.id)
     if any(r.ssh_uri == ssh_uri for r in existing):
         raise HTTPException(409, "That repository is already connected")

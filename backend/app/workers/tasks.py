@@ -2930,7 +2930,9 @@ def _change_noun(target: dict | None) -> str:
 
 def _repo_target(r: ProjectRepo) -> dict:
     """Build the dev-target dict for a connected repo from its provider."""
-    common = {"remote": r.ssh_uri, "base_branch": BASE_BRANCH,
+    # normalize on READ too: rows connected before the canonicalisation still
+    # carry `git@host:10022/path`, which git dials on port 22 (§ssh remotes).
+    common = {"remote": repolib.normalize_ssh_uri(r.ssh_uri), "base_branch": BASE_BRANCH,
               "auto_merge": bool(r.auto_merge), "repo_id": r.id,
               "squash": bool(r.squash_on_merge),
               "summarize_to_issue": bool(r.summarize_to_issue)}
@@ -5704,7 +5706,7 @@ def _agent_branch_merged_ssh(project_id: str, remote: str) -> bool | None:
                                       text=True, timeout=timeout)
 
             run(["init", "--quiet", repo], timeout=30)
-            fetch = run([*_git_host_rewrite(remote), "-C", repo, "fetch",
+            fetch = run([*repolib.git_host_rewrite(remote), "-C", repo, "fetch",
                          "--quiet", "--depth", "100", remote,
                          f"+refs/heads/{BASE_BRANCH}:refs/remotes/base",
                          f"+refs/heads/{_project_branch(project)}:refs/remotes/agent"])
@@ -6151,30 +6153,6 @@ def _reap_ownerless_stops() -> None:
 
 # ---------------------------------------------------------------- demo lifecycle
 
-def _git_host_rewrite(remote: str) -> list[str]:
-    """`git -c url.<mapped>.insteadOf=<original>` args routing a WORKER-side git
-    transport to GIT_EXTRA_HOST's target - the same tailnet mapping the deployer
-    injects into runner sandboxes as hostAliases. Worker pods have no such alias:
-    on Kubernetes a tailnet-only git host resolves publicly and its SSH port
-    times out, which made every post-merge root-workspace refresh of a platform
-    repo park a DELIVERED run as failed (prod regression). No-op when the
-    setting is empty, the remote isn't ssh://, or the host doesn't match."""
-    alias, _, mapped = (settings.git_extra_host or "").partition(":")
-    if not alias or not mapped:
-        return []
-    from urllib.parse import urlsplit
-    try:
-        parts = urlsplit(remote)
-    except ValueError:
-        return []
-    if parts.scheme != "ssh" or parts.hostname != alias:
-        return []
-    user = f"{parts.username}@" if parts.username else ""
-    port = f":{parts.port}" if parts.port else ""
-    return ["-c", (f"url.ssh://{user}{mapped}{port}/"
-                   f".insteadOf=ssh://{user}{alias}{port}/")]
-
-
 def _refresh_root_workspace(db: Session, project: Project) -> None:
     """Sync the canonical checkout (Project.workspace_path) to the merged base
     branch over the project deploy key - clone-if-absent, always fail-loud
@@ -6187,7 +6165,7 @@ def _refresh_root_workspace(db: Session, project: Project) -> None:
     root = Path(project.workspace_path or "/nonexistent")
     key = decrypt(project.ssh_private_key_enc) if project.ssh_private_key_enc else None
     env = dict(os.environ)
-    rewrite = _git_host_rewrite(target["remote"])
+    rewrite = repolib.git_host_rewrite(target["remote"])
     keyfile = None
 
     def _git(args: list[str], timeout: int) -> None:

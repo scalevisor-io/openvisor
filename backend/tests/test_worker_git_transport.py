@@ -27,7 +27,7 @@ from app.workers import tasks
 def test_rewrite_maps_matching_ssh_host(monkeypatch):
     monkeypatch.setattr(settings, "git_extra_host",
                         "git.example.com:gitlab-ssh.ns.svc.cluster.local")
-    args = tasks._git_host_rewrite("ssh://git@git.example.com:10022/grp/repo.git")
+    args = tasks.repolib.git_host_rewrite("ssh://git@git.example.com:10022/grp/repo.git")
     assert args == ["-c", ("url.ssh://git@gitlab-ssh.ns.svc.cluster.local:10022/"
                            ".insteadOf=ssh://git@git.example.com:10022/")]
 
@@ -35,14 +35,15 @@ def test_rewrite_maps_matching_ssh_host(monkeypatch):
 def test_rewrite_noop_cases(monkeypatch):
     monkeypatch.setattr(settings, "git_extra_host",
                         "git.example.com:gitlab-ssh.ns.svc.cluster.local")
-    # different host, non-ssh scheme, scp-style shorthand: all untouched
-    assert tasks._git_host_rewrite("ssh://git@github.com/org/repo.git") == []
-    assert tasks._git_host_rewrite("https://git.example.com/grp/repo.git") == []
-    assert tasks._git_host_rewrite("git@git.example.com:grp/repo.git") == []
+    # different host and non-ssh schemes: untouched (scp-style ON the mapped host
+    # IS routed - see test_ssh_remotes.py; only that host's traffic is rerouted)
+    assert tasks.repolib.git_host_rewrite("ssh://git@github.com/org/repo.git") == []
+    assert tasks.repolib.git_host_rewrite("https://git.example.com/grp/repo.git") == []
+    assert tasks.repolib.git_host_rewrite("git@github.com:org/repo.git") == []
     monkeypatch.setattr(settings, "git_extra_host", "")
-    assert tasks._git_host_rewrite("ssh://git@git.example.com:10022/g/r.git") == []
+    assert tasks.repolib.git_host_rewrite("ssh://git@git.example.com:10022/g/r.git") == []
     monkeypatch.setattr(settings, "git_extra_host", "hostwithouttarget")
-    assert tasks._git_host_rewrite("ssh://git@hostwithouttarget/g/r.git") == []
+    assert tasks.repolib.git_host_rewrite("ssh://git@hostwithouttarget/g/r.git") == []
 
 
 # ---------------------------------------------------------- _refresh_root_workspace

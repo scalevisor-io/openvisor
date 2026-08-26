@@ -83,6 +83,76 @@ def is_ssh_uri(uri: str | None) -> bool:
     return sep == ":" and "@" in host and "/" not in host
 
 
+def normalize_ssh_uri(uri: str | None) -> str:
+    """Canonicalise a git SSH remote. git's scp-like syntax has NO port field, so
+    `git@host:10022/grp/repo.git` - the form everyone writes after reading a
+    self-hosted GitLab's "SSH port 10022" - is parsed as PATH `10022/grp/repo.git`
+    on port 22: it dials the wrong port and asks for a repository that doesn't
+    exist, and git's own error only says the repository may not exist. Rewrite
+    that one shape to the URL form (`ssh://git@host:10022/grp/repo.git`), which
+    means what the customer intended. Everything else is returned untouched -
+    plain scp-like remotes are valid, and https/ssh:// URLs already say it."""
+    u = (uri or "").strip()
+    if not u or not is_ssh_uri(u) or u.startswith("ssh://"):
+        return u
+    host, _, path = u.partition(":")
+    port, sep, rest = path.partition("/")
+    if not (sep and port.isdigit() and rest):
+        return u
+    return f"ssh://{host}:{port}/{rest}"
+
+
+def git_host_rewrite(remote: str) -> list[str]:
+    """`git -c url.<mapped>.insteadOf=<original>` args routing a PLATFORM-side git
+    transport (worker root-workspace refresh, merge probe, the API's SSH checks) to
+    GIT_EXTRA_HOST's target - the same tailnet mapping the deployer injects into
+    runner sandboxes as hostAliases. api/worker pods have no such alias: on
+    Kubernetes a tailnet-only git host resolves publicly and its SSH port times
+    out, which parked DELIVERED runs as failed and made the repo card's Verify SSH
+    report an unreachable host for a correctly installed deploy key. Handles both
+    remote spellings; no-op when the setting is empty or the host doesn't match."""
+    alias, _, mapped = (settings.git_extra_host or "").partition(":")
+    if not alias or not mapped:
+        return []
+    remote = (remote or "").strip()
+    if remote.startswith("ssh://"):
+        try:
+            parts = urllib.parse.urlsplit(remote)
+        except ValueError:
+            return []
+        if parts.hostname != alias:
+            return []
+        user = f"{parts.username}@" if parts.username else ""
+        port = f":{parts.port}" if parts.port else ""
+        return ["-c", (f"url.ssh://{user}{mapped}{port}/"
+                       f".insteadOf=ssh://{user}{alias}{port}/")]
+    if not is_ssh_uri(remote):
+        return []
+    # scp-like `user@alias:path` - the path is relative to the git user's home,
+    # which the ssh:// form spells with a leading slash.
+    head, _, _ = remote.partition(":")
+    user, _, host = head.rpartition("@")
+    if host != alias:
+        return []
+    user = f"{user}@" if user else ""
+    return ["-c", f"url.ssh://{user}{mapped}/.insteadOf={user}{alias}:"]
+
+
+def _ssh_cause(err: str) -> str:
+    """The line of git's stderr that names the failure. ssh states the cause
+    FIRST ("connect to host … Connection timed out"); git closes with its generic
+    "make sure you have the correct access rights and the repository exists",
+    which is what a tail picks up and reads like an auth problem for a host that
+    never answered at all."""
+    lines = [ln.strip() for ln in (err or "").splitlines() if ln.strip()]
+    if not lines:
+        return "unknown error"
+    for line in lines:
+        if line.lower().startswith(("ssh:", "fatal: could not read", "git@", "permission denied")):
+            return line
+    return lines[0]
+
+
 def check_ssh(ssh_uri: str, deploy_private_key: str) -> tuple[bool, str]:
     """Reachability + deploy-key-access check for a customer's own remote repo,
     run BEFORE development so a missing/mis-added deploy key surfaces here instead
@@ -92,7 +162,7 @@ def check_ssh(ssh_uri: str, deploy_private_key: str) -> tuple[bool, str]:
     the key. Only meaningful for an SSH URI (git@… / ssh://) - an https:// or the
     platform repo returns a clear, non-actionable note. Shells out, so callers run
     it in a threadpool."""
-    uri = (ssh_uri or "").strip()
+    uri = normalize_ssh_uri(ssh_uri)
     if not uri:
         return False, "No repository URL to check."
     if not is_ssh_uri(uri):
@@ -112,8 +182,8 @@ def check_ssh(ssh_uri: str, deploy_private_key: str) -> tuple[bool, str]:
                                        "-o BatchMode=yes -o StrictHostKeyChecking=accept-new "
                                        "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"),
                    "GIT_TERMINAL_PROMPT": "0"}
-            proc = subprocess.run(["git", "ls-remote", "--heads", uri], env=env,
-                                  capture_output=True, text=True, timeout=15)
+            proc = subprocess.run(["git", *git_host_rewrite(uri), "ls-remote", "--heads", uri],
+                                  env=env, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
         return False, "Couldn't reach the host in time (timed out). Check the URL and that the host is reachable."
     except Exception as exc:  # pragma: no cover - defensive; git missing etc.
@@ -121,7 +191,7 @@ def check_ssh(ssh_uri: str, deploy_private_key: str) -> tuple[bool, str]:
     if proc.returncode == 0:
         return True, "Reachable. The deploy key has access to this repository."
     err = (proc.stderr or "").strip()
-    detail = err.splitlines()[-1].strip() if err else "unknown error"
+    detail = _ssh_cause(err)
     low = err.lower()
     if "permission denied" in low or "publickey" in low:
         return False, ("The repository isn't authorized for this project's deploy key yet - add "
@@ -144,7 +214,7 @@ def detect_default_branch(ssh_uri: str, deploy_private_key: str) -> str | None:
     is "master": the runner read the mismatch as an empty remote and built an
     orphan branch. None on any failure (caller falls back); provider-agnostic
     (works on github/gitlab/other alike, no API token needed)."""
-    uri = (ssh_uri or "").strip()
+    uri = normalize_ssh_uri(ssh_uri)
     key = (deploy_private_key or "").strip()
     if not uri or not key or not is_ssh_uri(uri):
         return None
@@ -158,7 +228,8 @@ def detect_default_branch(ssh_uri: str, deploy_private_key: str) -> str | None:
                                        "-o BatchMode=yes -o StrictHostKeyChecking=accept-new "
                                        "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"),
                    "GIT_TERMINAL_PROMPT": "0"}
-            proc = subprocess.run(["git", "ls-remote", "--symref", uri, "HEAD"], env=env,
+            proc = subprocess.run(["git", *git_host_rewrite(uri), "ls-remote", "--symref",
+                                   uri, "HEAD"], env=env,
                                   capture_output=True, text=True, timeout=15)
     except Exception:  # noqa: BLE001 - timeout, git missing: caller falls back
         return None
