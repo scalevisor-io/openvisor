@@ -3,8 +3,9 @@ feed a project's dev runs. rag-side: selected_root_keys maps a selection to the
 Meili doc namespaces it may read (local row → the literal 'local', git rows →
 their ids, gated on enabled+verified), retrieval root-filters hits fail-closed and
 short-circuits WITHOUT embedding when the selection matches no active source.
-API-side: the admin PATCH validates ids loudly, [] selects none, null resets to
-"all enabled KBs", and an omitted field leaves the selection untouched.
+API-side: the admin PATCH validates ids loudly, [] selects none, an explicit null
+CLEARS the selection to [] (no state means "every KB on the instance"), and an
+omitted field leaves the selection untouched.
 """
 import uuid
 
@@ -155,11 +156,14 @@ def test_admin_patch_kb_ids(client):
     r = client.patch(f"/api/admin/projects/{pid}", json={"tier": "mvp"}, headers=h)
     assert r.status_code == 200 and r.json()["kb_ids"] == [kb_id]
 
-    # ...an explicit [] selects none, and null resets to "all enabled KBs".
+    # ...an explicit [] selects none, and so does null: there is no state that
+    # means "every KB on the instance", so the route can never write one back.
     r = client.patch(f"/api/admin/projects/{pid}", json={"kb_ids": []}, headers=h)
     assert r.status_code == 200 and r.json()["kb_ids"] == []
+    r = client.patch(f"/api/admin/projects/{pid}", json={"kb_ids": [kb_id]}, headers=h)
+    assert r.status_code == 200 and r.json()["kb_ids"] == [kb_id]
     r = client.patch(f"/api/admin/projects/{pid}", json={"kb_ids": None}, headers=h)
-    assert r.status_code == 200 and r.json()["kb_ids"] is None
+    assert r.status_code == 200 and r.json()["kb_ids"] == []
 
 
 def test_admin_patch_dev_pod_resources(client):
@@ -189,3 +193,43 @@ def test_admin_patch_dev_pod_resources(client):
     assert r.status_code == 200
     assert r.json()["dev_cpu_request"] is None
     assert r.json()["dev_mem_request"] is None
+
+
+def test_legacy_null_kb_ids_reads_nothing():
+    """§KB opt-in: a legacy NULL row resolves to NO knowledge bases.
+
+    KnowledgeBase is an instance-wide list with no org_id, so the old "null =
+    every enabled KB" default put one tenant's corpus in another tenant's chat
+    and build context. `rag.project_kb_ids` is the single boundary that every
+    project-scoped read goes through, so pinning it here pins all of them.
+    """
+    from types import SimpleNamespace
+
+    assert rag.project_kb_ids(SimpleNamespace(kb_ids=None)) == []
+    assert rag.project_kb_ids(SimpleNamespace(kb_ids=[])) == []
+    assert rag.project_kb_ids(SimpleNamespace(kb_ids=["a", "b"])) == ["a", "b"]
+
+
+def test_every_project_scoped_kb_read_goes_through_the_resolver():
+    """Source guard: no project-scoped retrieval may pass `project.kb_ids` raw.
+
+    The fix is one helper, and a new call site that reaches around it silently
+    restores the cross-tenant default for that path only - which is exactly how
+    this got missed the first time.
+    """
+    import pathlib as _p
+    import re
+
+    root = _p.Path(__file__).resolve().parent.parent / "app"
+    offenders = []
+    for f in list(root.rglob("*.py")):
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if re.search(r"(?<!rag\.)project_kb_ids", line):
+                continue
+            if re.search(r"\bproject\.kb_ids\b", line) and "rag.project_kb_ids" not in line:
+                # the resolver itself, plus the admin write path and the
+                # serializer, which read the stored column on purpose
+                if f.name in ("rag.py", "admin.py", "serializers.py"):
+                    continue
+                offenders.append(f"{f.relative_to(root)}:{i}: {line.strip()}")
+    assert not offenders, "pass rag.project_kb_ids(project), not project.kb_ids:\n" + "\n".join(offenders)

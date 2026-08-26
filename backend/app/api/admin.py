@@ -203,11 +203,13 @@ async def patch_project(project_id: str, body: ProjectPatchIn,
         project.subdomain = body.subdomain
     if body.block_auto_development is not None:
         project.block_auto_development = body.block_auto_development
-    # kb_ids: null is meaningful (reset to "all enabled KBs"), so only an
-    # explicitly sent field is applied - never the pydantic default.
+    # kb_ids: only an explicitly sent field is applied, never the pydantic
+    # default. An explicit null clears the selection to [] rather than storing a
+    # null - a project with no selection reads no knowledge base (§KB opt-in),
+    # and there is no longer any state that means "every KB on the instance".
     if "kb_ids" in body.model_fields_set:
         if body.kb_ids is None:
-            project.kb_ids = None
+            project.kb_ids = []
         else:
             known = set((await db.execute(select(KnowledgeBase.id))).scalars().all())
             unknown = sorted(set(body.kb_ids) - known)

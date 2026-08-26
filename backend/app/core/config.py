@@ -163,6 +163,20 @@ class Settings(BaseSettings):
     # it doesn't), so this cap is what keeps the endpoint useless as a bulk
     # email-enumeration oracle. Legitimate use is a handful of grants.
     share_rate_per_hour: int = 20
+    # §spend floor: the three session-authed routes that dispatch a model call
+    # before anything is paid for - project evaluation, filing a Request (its LLM
+    # title) and the pre-creation Request estimate. Each is legitimate a handful
+    # of times per project; without a cap one account can replay them forever, and
+    # the ledger only records a debt nobody collects. Per-org, fixed 10-minute
+    # window. The hub routes keep their own hub-keyed caps and are unaffected.
+    evaluate_rate_per_10min: int = 10
+    request_create_rate_per_10min: int = 20
+    request_estimate_rate_per_10min: int = 20
+    # How far an org's wallet may go negative before the platform stops spending
+    # model tokens on it at all (`services.llm.spend_allowed`). The wallet gates on
+    # the billable paths already refuse at <= 0; this is the backstop for the paths
+    # that MUST run before payment, so an unpaid account cannot bill indefinitely.
+    credit_debt_limit: float = 25.0
 
     # GitLab
     gitlab_url: str

@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request as HTTPRequest, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +10,7 @@ from app.api.serializers import message_out, request_out
 from app.core.config import settings
 from app.core.db import async_session, get_db
 from app.core import deps
-from app.core.deps import get_current_user, get_project_for_user
+from app.core.deps import get_current_user, get_project_for_user, rate_limit
 from app.core.security import SESSION_COOKIE, read_session_token
 from app.models import Message, Project, Request, User
 from app.schemas.schemas import HumanAnswerIn, MessageIn, RequestIn, RequestUpdateIn
@@ -93,10 +93,15 @@ async def list_requests(project: Project = Depends(get_project_for_user),
 
 
 @router.post("/requests/estimate", status_code=202)
-async def estimate_request(body: RequestIn,
+async def estimate_request(request: HTTPRequest, body: RequestIn,
                            project: Project = Depends(get_project_for_user)):
     """Async cost/time estimate for a request being drafted (informational,
     never a quote). Poll GET /requests/estimate/{task_id} for the result."""
+    # §spend floor: one model call per hit, on any project in any status, with
+    # nothing paid for yet. Drafting a request re-estimates a few times; a loop
+    # would bill a wallet that is allowed to go negative.
+    await rate_limit(request, "request-estimate", settings.request_estimate_rate_per_10min,
+                     600, identity=f"org:{project.org_id}")
     task = celery.send_task("app.workers.tasks.estimate_request", args=[
         project.id, {"type": body.type, "body": body.body}])
     return {"task_id": task.id}
@@ -118,10 +123,15 @@ async def estimate_result(task_id: str,
 
 
 @router.post("/requests", status_code=201)
-async def create_request(body: RequestIn,
+async def create_request(request: HTTPRequest, body: RequestIn,
                          project: Project = Depends(get_project_for_user),
                          user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
+    # §spend floor: filing a request dispatches its LLM title pass. The hub files
+    # requests through /api/hub, which keeps its own hub-keyed cap - this one is
+    # the session surface only.
+    await rate_limit(request, "request-create", settings.request_create_rate_per_10min,
+                     600, identity=f"org:{project.org_id}")
     author = "admin" if user.role == "admin" else "customer"
     try:
         req, _ = await project_actions.create_request(

@@ -303,7 +303,7 @@ export default function AdminProjectControls({
             Knowledge bases…
             <span className="tiny faint">
               {" "}
-              ({project.kb_ids === null ? "legacy: all enabled" : `${project.kb_ids.length} selected`})
+              ({(project.kb_ids ?? []).length} selected)
             </span>
           </button>
         )}
@@ -366,9 +366,9 @@ function KbSelectModal({
 }) {
   const toast = useToast();
   const [kbs, setKbs] = useState<KnowledgeBase[] | null>(null);
-  // Off = NO knowledge bases ([]). A legacy null (pre-opt-in "all enabled")
-  // renders as on-with-all-enabled-checked and saves as that explicit list.
-  const [custom, setCustom] = useState(project.kb_ids === null || project.kb_ids.length > 0);
+  // Off = NO knowledge bases ([]). A legacy null reads as none everywhere the
+  // backend scopes retrieval, so it renders as none here too.
+  const [custom, setCustom] = useState((project.kb_ids ?? []).length > 0);
   const [selected, setSelected] = useState<Set<string>>(new Set(project.kb_ids ?? []));
   const [busy, setBusy] = useState(false);
 
@@ -381,12 +381,6 @@ function KbSelectModal({
         toast.push(err instanceof Error ? err.message : "Could not load knowledge bases", "err");
       });
   }, [toast]);
-
-  useEffect(() => {
-    if (project.kb_ids === null && kbs) {
-      setSelected(new Set(kbs.filter((k) => k.enabled).map((k) => k.id)));
-    }
-  }, [kbs, project.kb_ids]);
 
   function toggle(id: string) {
     setSelected((prev) => {

@@ -488,8 +488,14 @@ async def save_answers(body: AnswersIn, project: Project = Depends(get_project_f
 
 
 @router.post("/{project_id}/evaluate")
-async def evaluate(project: Project = Depends(get_project_for_user),
+async def evaluate(request: Request, project: Project = Depends(get_project_for_user),
                    db: AsyncSession = Depends(get_db)):
+    # §spend floor: a draft stays a draft, so this route can be replayed for as
+    # long as the project exists - and each replay is four model calls (title,
+    # moderation, feasibility, estimate). Re-evaluating after an edit is the real
+    # use and needs a handful of calls, not a stream of them.
+    await rate_limit(request, "project-evaluate", settings.evaluate_rate_per_10min,
+                     600, identity=f"org:{project.org_id}")
     try:
         task_id = await project_actions.evaluate(db, project)
     except project_actions.ActionError as exc:

@@ -100,7 +100,7 @@ def generate_branch_name(db: Session, project: Project, request: Request | None,
     # conventions living in fact-class docs.
     try:
         from app.services import rag
-        digests = rag.rules_digests(db, project.kb_ids)
+        digests = rag.rules_digests(db, rag.project_kb_ids(project))
         if digests:
             rules = "\n\n".join(f"[{name}]\n{content}" for name, content in digests)
             parts.append("Customer standing rules (AUTHORITATIVE when they state "
@@ -110,7 +110,7 @@ def generate_branch_name(db: Session, project: Project, request: Request | None,
     try:
         from app.services import rag
         hits = rag.search(db, "branch naming convention git branch prefix workflow rules",
-                          k=3, kb_ids=project.kb_ids)
+                          k=3, kb_ids=rag.project_kb_ids(project))
         if hits:
             parts.append("Customer knowledge base - naming/workflow conventions "
                          "(AUTHORITATIVE when they state a branch scheme):\n"
