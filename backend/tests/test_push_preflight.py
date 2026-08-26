@@ -133,7 +133,7 @@ def test_push_failure_hint_names_the_lost_installer_and_the_wrong_repo():
 def _project():
     return SimpleNamespace(id="p1", ssh_private_key_enc="enc", ssh_public_key="ssh-ed25519 AAAA agent",
                            git_author_name=None, git_author_email=None, dev_request_id=None,
-                           workspace_path=None)
+                           workspace_path=None, gitlab_project_id=183)
 
 
 def _target(**over):
@@ -152,7 +152,9 @@ def _wire(monkeypatch, probes: list, token=None, heal=None):
                         lambda remote, key, probe, author=None: calls.probes.append(probe) or next(seq))
     monkeypatch.setattr(tasks, "_project_repo_token", lambda db, p, prov, uri=None: token)
     monkeypatch.setattr(tasks.gitlab, "customer_ensure_deploy_key",
-                        lambda *a, **k: calls.heals.append(a) or (heal() if callable(heal) else heal))
+                        lambda *a, **k: calls.heals.append((a, k)) or (heal() if callable(heal) else heal))
+    monkeypatch.setattr(tasks.gitlab, "platform_deploy_key_id", lambda pid, key: 99)
+    monkeypatch.setattr(tasks.gitlab, "is_platform_host", lambda uri: False)
     monkeypatch.setattr(tasks, "_post_message", lambda db, pid, thread, author, body, **k: calls.msgs.append(body))
     monkeypatch.setattr(tasks, "_safe_transition", lambda db, p, to, reason: calls.parked.append((to, reason)))
     monkeypatch.setattr(tasks, "_save_run", lambda p, state, **k: calls.saved.append((state, k.get("error"))))
@@ -173,14 +175,34 @@ def test_preflight_builds_when_the_key_pushes(monkeypatch):
 
 def test_preflight_heals_the_deploy_key_then_builds(monkeypatch):
     calls = _wire(monkeypatch, [("denied", "GitLab: You are not allowed to push code to this project."),
-                                ("ok", "")], token="glpat", heal="reinstalled")
+                                ("ok", "")], token="glpat", heal="enabled")
     assert tasks._push_preflight(_Db(), _project(), _target(), "main") is True
     assert len(calls.probes) == 2 and not calls.parked
-    base_url, tok, path, title, key = calls.heals[0]
+    (base_url, tok, path, title, key), kw = calls.heals[0]
     assert (base_url, tok, path) == ("https://gl.example", "glpat", "o/r")
     assert key == "ssh-ed25519 AAAA agent" and title.endswith(" agent")
-    assert calls.msgs and "reinstalled the project's deploy key" in calls.msgs[0]
+    assert kw == {"key_id": 99}  # the platform repo's copy of the key object, to ENABLE it
+    assert calls.msgs and "enabled the project's deploy key" in calls.msgs[0]
     assert "not allowed to push code" in calls.msgs[0]  # the customer learns why
+
+
+def test_preflight_grants_the_installer_push_rights_on_the_platform_forge(monkeypatch):
+    """GitLab authorises a deploy key's pushes as the account that installed it:
+    on the platform's own forge that is the platform account, which a transfer
+    out of the platform group strips of its membership - the key stays, the
+    pushes stop. The heal gives it Developer access back through the customer's
+    token, and says so."""
+    calls = _wire(monkeypatch, [("denied", "GitLab: You are not allowed to push code to this project."),
+                                ("ok", "")], token="glpat", heal="already installed")
+    grants = []
+    monkeypatch.setattr(tasks.gitlab, "is_platform_host", lambda uri: True)
+    monkeypatch.setattr(tasks.gitlab, "platform_user", lambda: {"id": 17, "username": "openvisor-bot"})
+    monkeypatch.setattr(tasks.gitlab, "customer_grant_member",
+                        lambda base_url, token, path, user_id, access_level=30:
+                        grants.append((path, user_id, access_level)) or "granted")
+    assert tasks._push_preflight(_Db(), _project(), _target(), "main") is True
+    assert grants == [("o/r", 17, 30)]
+    assert "granted `openvisor-bot`" in calls.msgs[0] and "Developer access" in calls.msgs[0]
 
 
 def test_preflight_parks_when_nothing_heals(monkeypatch):
@@ -190,15 +212,30 @@ def test_preflight_parks_when_nothing_heals(monkeypatch):
     assert calls.parked == [("awaiting_customer", "Repository refused the deploy key's push")]
     assert calls.saved[0][0] == "failed" and refusal in calls.saved[0][1]
     assert refusal in calls.msgs[0] and "account that installed it" in calls.msgs[0]
+    assert "no GITLAB_TOKEN in the project Memory" in calls.msgs[0]  # why no heal ran
     assert "Nothing was built or billed" in calls.msgs[0]
     assert not calls.heals
 
 
+def test_preflight_parks_with_the_apis_own_refusal_when_the_heal_fails(monkeypatch):
+    """The heal's failure reason reaches the thread - a silent heal (prod
+    2026-08-26: "fingerprint has already been taken") read as if nothing had
+    been tried."""
+    def boom():
+        raise tasks.gitlab.GitLabError('deploy key install failed: HTTP 400 {"fingerprint":["has already been taken"]}')
+    calls = _wire(monkeypatch, [("denied", "GitLab: The project you were looking for could not be found or you don't have permission to view it.")],
+                  token="glpat", heal=boom)
+    assert tasks._push_preflight(_Db(), _project(), _target(), "main") is False
+    assert "I tried to fix the deploy key with your repository token, but deploy key install failed" in calls.msgs[0]
+    assert "has already been taken" in calls.msgs[0]
+    assert "doesn't know this project's deploy key" in calls.msgs[0]  # the hint for that refusal
+
+
 def test_preflight_parks_when_the_heal_does_not_take(monkeypatch):
     calls = _wire(monkeypatch, [("denied", "refused"), ("denied", "still refused")],
-                  token="glpat", heal="reinstalled")
+                  token="glpat", heal="enabled")
     assert tasks._push_preflight(_Db(), _project(), _target(), "main") is False
-    assert "still refused" in calls.msgs[0] and calls.parked
+    assert "after that the repository still answered: still refused" in calls.msgs[0] and calls.parked
 
 
 def test_preflight_is_not_a_verdict_on_the_network_or_the_platform_repo(monkeypatch):
@@ -290,7 +327,15 @@ def test_poll_issues_follows_a_moved_repository_and_names_refusals(monkeypatch):
 
 # ------------------------------------------------------------ the forge APIs
 
-def _gitlab_forge(monkeypatch, log):
+def _gitlab_forge(monkeypatch, log, keys=None, instance_keys=None):
+    """A GitLab that keeps ONE key object per fingerprint across the instance:
+    `keys` is what /projects/<path>/deploy_keys lists for the project under
+    test, `instance_keys` the fingerprints that exist anywhere (a POST of one
+    of those answers the duplicate-fingerprint 400, /deploy_keys lists them
+    when the token may read the instance)."""
+    keys = list(keys or [])
+    taken = set(instance_keys or [])
+
     def handler(request: httpx.Request) -> httpx.Response:
         log.append((request.method, request.url.path))
         path = request.url.path
@@ -300,17 +345,39 @@ def _gitlab_forge(monkeypatch, log):
             return httpx.Response(200, json={"id": 182, "path_with_namespace": "flavienbwk/carouter.ai"})
         if path == "/api/v4/projects/same%2Fplace" or path == "/api/v4/projects/same/place":
             return httpx.Response(200, json={"id": 1, "path_with_namespace": "same/place"})
+        if path == "/api/v4/deploy_keys":
+            return (httpx.Response(200, json=[{"id": 99, "key": f"ssh-ed25519 {b} platform"} for b in taken])
+                    if instance_keys is not None else httpx.Response(403))
         if path.endswith("/deploy_keys") and request.method == "GET":
-            return httpx.Response(200, json=[{"id": 7, "key": "ssh-ed25519 AAAA old-title", "can_push": True},
-                                             {"id": 8, "key": "ssh-ed25519 BBBB other", "can_push": False}])
-        if path.endswith("/deploy_keys/7") and request.method == "DELETE":
-            return httpx.Response(204)
+            return httpx.Response(200, json=keys)
         if path.endswith("/deploy_keys") and request.method == "POST":
-            assert json.loads(request.read())["can_push"] is True
+            body = json.loads(request.read())
+            assert body["can_push"] is True
+            if body["key"].split()[1] in taken:
+                return httpx.Response(400, json={"message": {"deploy_key.fingerprint_sha256": ["has already been taken"]}})
+            keys.append({"id": 9, "key": body["key"], "can_push": True})
             return httpx.Response(201, json={"id": 9})
+        if path.endswith("/deploy_keys/99/enable") and request.method == "POST":
+            keys.append({"id": 99, "key": "ssh-ed25519 AAAA platform", "can_push": False})
+            return httpx.Response(201, json={"id": 99, "can_push": False})
+        if "/deploy_keys/" in path and request.method == "PUT":
+            kid = int(path.rsplit("/", 1)[1])
+            for k in keys:
+                if k["id"] == kid:
+                    k["can_push"] = json.loads(request.read())["can_push"]
+                    return httpx.Response(200, json=k)
+            return httpx.Response(404)
+        if path.endswith("/members") and request.method == "POST":
+            body = json.loads(request.read())
+            if body["user_id"] == 17:
+                return httpx.Response(201, json={"id": 17, "access_level": body["access_level"]})
+            return httpx.Response(409, json={"message": "Member already exists"})
+        if "/deploy_keys/" in path and request.method == "DELETE":
+            raise AssertionError("a deploy key must never be detached by the heal")
         return httpx.Response(404)
     monkeypatch.setattr(gitlab, "_customer_client", lambda base_url, token: httpx.Client(
         base_url="https://gl.example/api/v4", transport=httpx.MockTransport(handler)))
+    return keys
 
 
 def test_gitlab_resolve_moved_follows_one_redirect(monkeypatch):
@@ -321,17 +388,85 @@ def test_gitlab_resolve_moved_follows_one_redirect(monkeypatch):
     assert gitlab.customer_resolve_moved("https://gl.example", "t", "gone/away") is None
 
 
-def test_gitlab_ensure_deploy_key_reinstalls_under_the_token(monkeypatch):
+KEY = "ssh-ed25519 AAAA agent\n"
+
+
+def test_gitlab_ensure_deploy_key_installs_a_key_new_to_the_instance(monkeypatch):
     log = []
-    _gitlab_forge(monkeypatch, log)
+    keys = _gitlab_forge(monkeypatch, log, keys=[{"id": 8, "key": "ssh-ed25519 BBBB other", "can_push": False}])
     assert gitlab.customer_ensure_deploy_key("https://gl.example", "t", "flavienbwk/carouter.ai",
-                                             "Openvisor agent", "ssh-ed25519 AAAA agent\n") == "reinstalled"
+                                             "Openvisor agent", KEY) == "installed"
     # httpx hands the handler decoded paths (the wire carries %2F)
-    assert ("DELETE", "/api/v4/projects/flavienbwk/carouter.ai/deploy_keys/7") in log
     assert ("POST", "/api/v4/projects/flavienbwk/carouter.ai/deploy_keys") in log
-    assert not any(p.endswith("/deploy_keys/8") for _, p in log)  # someone else's key stays
+    assert [k["id"] for k in keys] == [8, 9]  # someone else's key stays
     with pytest.raises(gitlab.GitLabError):
         gitlab.customer_ensure_deploy_key("https://gl.example", "t", "x/y", "t", "")
+
+
+def test_gitlab_ensure_deploy_key_enables_the_existing_key_object_instead_of_detaching(monkeypatch):
+    """The prod regression: the key lived on the platform repo too, so a
+    detach only unlinked it here and the re-add hit the duplicate-fingerprint
+    400 - the repo was left with no key. Now the existing object is ENABLED
+    (id from the platform repo, or the instance list) and given write access;
+    no DELETE is ever issued."""
+    log = []
+    keys = _gitlab_forge(monkeypatch, log, keys=[], instance_keys=["AAAA"])
+    assert gitlab.customer_ensure_deploy_key("https://gl.example", "t", "flavienbwk/carouter.ai",
+                                             "Openvisor agent", KEY, key_id=99) == "enabled"
+    assert ("POST", "/api/v4/projects/flavienbwk/carouter.ai/deploy_keys/99/enable") in log
+    assert ("PUT", "/api/v4/projects/flavienbwk/carouter.ai/deploy_keys/99") in log
+    assert keys == [{"id": 99, "key": "ssh-ed25519 AAAA platform", "can_push": True}]
+    # without a known id the instance list answers (an admin token), else nothing changes
+    log.clear()
+    _gitlab_forge(monkeypatch, log, keys=[], instance_keys=["AAAA"])
+    assert gitlab.customer_ensure_deploy_key("https://gl.example", "t", "flavienbwk/carouter.ai",
+                                             "Openvisor agent", KEY) == "enabled"
+    assert ("GET", "/api/v4/deploy_keys") in log
+    log.clear()
+    with pytest.raises(gitlab.GitLabError, match="cannot look it up"):
+        _forge_taken_without_listing(monkeypatch, log)
+    assert not any(m == "DELETE" for m, _ in log)
+
+
+def _forge_taken_without_listing(monkeypatch, log):
+    """A forge where the fingerprint is taken but /deploy_keys is not readable."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        log.append((request.method, request.url.path))
+        if request.url.path == "/api/v4/deploy_keys":
+            return httpx.Response(403)
+        if request.url.path.endswith("/deploy_keys") and request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.url.path.endswith("/deploy_keys") and request.method == "POST":
+            return httpx.Response(400, json={"message": {"deploy_key.fingerprint_sha256": ["has already been taken"]}})
+        return httpx.Response(404)
+    monkeypatch.setattr(gitlab, "_customer_client", lambda base_url, token: httpx.Client(
+        base_url="https://gl.example/api/v4", transport=httpx.MockTransport(handler)))
+    return gitlab.customer_ensure_deploy_key("https://gl.example", "t", "x/y", "t", KEY)
+
+
+def test_gitlab_ensure_deploy_key_grants_write_access_to_an_attached_key(monkeypatch):
+    log = []
+    keys = _gitlab_forge(monkeypatch, log, keys=[{"id": 7, "key": "ssh-ed25519 AAAA old", "can_push": False}])
+    assert gitlab.customer_ensure_deploy_key("https://gl.example", "t", "x/y", "t", KEY) == "write access granted"
+    assert keys[0]["can_push"] is True
+    assert gitlab.customer_ensure_deploy_key("https://gl.example", "t", "x/y", "t", KEY) == "already installed"
+    assert not any(m in ("POST", "DELETE") for m, _ in log)
+
+
+def test_gitlab_grant_member_and_platform_user(monkeypatch):
+    log = []
+    _gitlab_forge(monkeypatch, log)
+    assert gitlab.customer_grant_member("https://gl.example", "t", "flavienbwk/carouter.ai", 17) == "granted"
+    assert gitlab.customer_grant_member("https://gl.example", "t", "flavienbwk/carouter.ai", 18) == "already a member"
+    assert log.count(("POST", "/api/v4/projects/flavienbwk/carouter.ai/members")) == 2
+    monkeypatch.setattr(gitlab, "_PLATFORM_USER", None)
+    monkeypatch.setattr(gitlab, "_client", lambda: httpx.Client(
+        base_url="https://gl.example/api/v4",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"id": 17, "username": "openvisor-bot"})
+                                      if r.url.path == "/api/v4/user" else httpx.Response(404))))
+    monkeypatch.setattr(gitlab.settings, "gitlab_url", "https://gl.example")
+    monkeypatch.setattr(gitlab.settings, "gitlab_token", "platform")
+    assert gitlab.platform_user() == {"id": 17, "username": "openvisor-bot"}
 
 
 def test_github_resolve_moved_and_ensure_deploy_key(monkeypatch):
@@ -347,19 +482,35 @@ def test_github_resolve_moved_and_ensure_deploy_key(monkeypatch):
         if path == "/repos/same/name":
             return httpx.Response(200, json={"full_name": "same/name"})
         if path == "/repos/new/name/keys" and request.method == "GET":
-            return httpx.Response(200, json=[{"id": 3, "key": "ssh-ed25519 AAAA x", "read_only": True}])
-        if path == "/repos/new/name/keys/3" and request.method == "DELETE":
+            return httpx.Response(200, json=list(keys.values()))
+        if path.startswith("/repos/new/name/keys/") and request.method == "DELETE":
+            keys.pop(int(path.rsplit("/", 1)[1]), None)
             return httpx.Response(204)
         if path == "/repos/new/name/keys" and request.method == "POST":
-            assert json.loads(request.read())["read_only"] is False
+            body = json.loads(request.read())
+            assert body["read_only"] is False
+            if any(k["key"].split()[1] == body["key"].split()[1] for k in keys.values()) or body["key"].split()[1] in elsewhere:
+                return httpx.Response(422, json={"message": "key is already in use"})
+            keys[4] = {"id": 4, "key": body["key"], "read_only": False}
             return httpx.Response(201, json={"id": 4})
         return httpx.Response(404)
+    keys = {3: {"id": 3, "key": "ssh-ed25519 AAAA x", "read_only": True}}
+    elsewhere = {"CCCC"}  # a fingerprint some other repository owns
     monkeypatch.setattr(github, "_client", lambda token=None: httpx.Client(
         base_url="https://api.github.com", transport=httpx.MockTransport(handler)))
     assert github.resolve_moved("old", "name", token="t") == ("new", "name")
     assert github.resolve_moved("same", "name", token="t") is None
+    # a read-only copy on THIS repo: removed, re-added with write access
     assert github.ensure_deploy_key("new", "name", "Openvisor agent", "ssh-ed25519 AAAA agent", token="t") == "reinstalled"
-    assert ("DELETE", "/repos/new/name/keys/3") in log
+    assert ("DELETE", "/repos/new/name/keys/3") in log and keys[4]["read_only"] is False
+    assert github.ensure_deploy_key("new", "name", "Openvisor agent", "ssh-ed25519 AAAA agent", token="t") == "already installed"
+    # a fresh key: one POST
+    assert github.ensure_deploy_key("new", "name", "Openvisor agent", "ssh-ed25519 BBBB agent", token="t") == "installed"
+    # a key some OTHER repository owns: reported, nothing removed
+    n_deletes = sum(1 for m, _ in log if m == "DELETE")
+    with pytest.raises(github.GitHubError, match="another GitHub repository"):
+        github.ensure_deploy_key("new", "name", "Openvisor agent", "ssh-ed25519 CCCC agent", token="t")
+    assert sum(1 for m, _ in log if m == "DELETE") == n_deletes
 
 
 # ------------------------------------------------------------ runner contract
