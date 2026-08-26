@@ -309,6 +309,21 @@ def main() -> int:
         litellm.drop_params = True
     except Exception as exc:  # noqa: BLE001
         print(f"driver: litellm drop_params unavailable: {exc}", file=sys.stderr)
+    # §LLM transient errors: the SDK retries connection errors, 429, 500, 503
+    # and timeouts - not litellm's BadGatewayError (a 502 from the gateway in
+    # front of the model) nor its generic APIError (the 52x family a CDN edge
+    # answers with), and one such blip used to end a whole build with the
+    # work unpublished. The SDK's retry decorator reads a module constant on
+    # every call, so widening it here gives those the same bounded backoff.
+    try:
+        import litellm
+        import openhands.sdk.llm.llm as _sdk_llm
+        extra = tuple(e for e in (getattr(litellm, "BadGatewayError", None),
+                                  getattr(litellm, "APIError", None))
+                      if isinstance(e, type) and e not in _sdk_llm.LLM_RETRY_EXCEPTIONS)
+        _sdk_llm.LLM_RETRY_EXCEPTIONS = (*_sdk_llm.LLM_RETRY_EXCEPTIONS, *extra)
+    except Exception as exc:  # noqa: BLE001 - an SDK without the constant: provider default
+        print(f"driver: LLM retry set unchanged: {exc}", file=sys.stderr)
     llm_kwargs = dict(
         model=_model_for_litellm(os.environ["LLM_MODEL"]),
         api_key=os.environ["LLM_API_KEY"],

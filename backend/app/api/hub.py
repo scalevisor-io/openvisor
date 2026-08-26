@@ -451,7 +451,7 @@ async def check_hub_project_repo(project_id: str, request: Request,
         return {"ok": False, "detail": "No connected push-target repository - the "
                                        "platform repo is managed and needs no check."}
     key = decrypt(project.ssh_private_key_enc) if project.ssh_private_key_enc else ""
-    ok, detail = await run_in_threadpool(repolib.check_ssh, repo.ssh_uri, key)
+    ok, detail = await run_in_threadpool(repolib.check_ssh, repo.ssh_uri, key, True)
     return {"ok": ok, "detail": detail}
 
 

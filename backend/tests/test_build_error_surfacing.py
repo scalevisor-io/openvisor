@@ -474,3 +474,26 @@ def test_branch_namer_gets_standing_rules_digest(monkeypatch):
     assert pipeline.generate_branch_name(None, _P(), None) == "f/#67-bump"
     assert "Customer standing rules" in captured["user"]
     assert "f/#<issue>-" in captured["user"]
+
+
+def test_preflight_parks_a_gateway_outage_without_a_sandbox(monkeypatch):
+    """A 5xx from /models AND twice from the 1-token completion is an endpoint
+    that is down (prod: a 502 page from the CDN in front of the model ended a
+    build after its startup was billed). Park it as an outage - nothing to
+    reconfigure, Resume later - before a sandbox is spent."""
+    import time
+    monkeypatch.setattr(tasks.settings, "openhands_enabled", True)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    _fake_models(monkeypatch, status=502, probe_status=502, probe_text="<html>502 Bad Gateway")
+    err = tasks._model_preflight(None, _P())
+    assert err and tasks._MODEL_OUTAGE in err and "502" in err and "llm.example" in err
+
+
+def test_preflight_fails_open_when_only_models_is_down(monkeypatch):
+    import time
+    monkeypatch.setattr(tasks.settings, "openhands_enabled", True)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    _fake_models(monkeypatch, status=502, probe_status=200)
+    assert tasks._model_preflight(None, _P()) is None
+    _fake_models(monkeypatch, status=502, probe_status=400, probe_text="odd gateway")
+    assert tasks._model_preflight(None, _P()) is None  # not this guard's call

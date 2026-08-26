@@ -182,7 +182,8 @@ async def create_project(body: ProjectCreateIn, user: User = Depends(require_ver
         # its whole build conversation lives in its own thread from day one.
         await project_actions.create_mvp_request(db, project)
     for i, repo in enumerate(body.repos):
-        db.add(ProjectRepo(project_id=project.id, ssh_uri=repo.ssh_uri,
+        db.add(ProjectRepo(project_id=project.id,
+                           ssh_uri=repolib.normalize_ssh_uri(repo.ssh_uri),
                            role="primary" if i == 0 else "secondary",
                            provider=repolib.detect_provider(repo.ssh_uri),
                            is_push_target=(i == 0)))
@@ -349,7 +350,7 @@ async def connect_repo(body: RepoConnectIn, project: Project = Depends(get_proje
     later ones are added non-push. Returns the updated Project."""
     if project.kind not in ("ai", "auto_dev"):
         raise HTTPException(409, "Only AI projects build into a repository")
-    ssh_uri = body.ssh_uri.strip()
+    ssh_uri = repolib.normalize_ssh_uri(body.ssh_uri)
     existing = await _project_repos(db, project.id)
     if any(r.ssh_uri == ssh_uri for r in existing):
         raise HTTPException(409, "That repository is already connected")
@@ -381,15 +382,17 @@ async def verify_repo_auth(repo_id: str, project: Project = Depends(get_project_
 @router.post("/{project_id}/repos/{repo_id}/verify-ssh")
 async def verify_repo_ssh(repo_id: str, project: Project = Depends(get_project_for_user),
                           db: AsyncSession = Depends(get_db)):
-    """SSH reachability check for a connected remote repo: `git ls-remote` over the
-    project's deploy key confirms the host is reachable AND the key is authorized,
-    up front, so a mis-added key surfaces here instead of failing the dev run at
-    push time. Distinct from verify-auth (which checks the auto-merge PAT). Returns
-    {ok, detail}; https/platform repos get a clear managed/skip note. Shells out, so
-    it runs in a threadpool."""
+    """SSH check for a connected remote repo over the project's deploy key: `git
+    ls-remote` proves the host answers and the key reads; for the PUSH TARGET a
+    hidden-ref probe push (`repos.check_push`) then proves the key can write, so
+    a read-only key - or one whose installer lost their push rights - surfaces
+    here instead of after a full build. Distinct from verify-auth (which checks
+    the auto-merge PAT). Returns {ok, detail}; https/platform repos get a clear
+    managed/skip note. Shells out, so it runs in a threadpool."""
     repo = await _get_repo(db, project, repo_id)
     key = decrypt(project.ssh_private_key_enc) if project.ssh_private_key_enc else ""
-    ok, detail = await run_in_threadpool(repolib.check_ssh, repo.ssh_uri, key)
+    ok, detail = await run_in_threadpool(repolib.check_ssh, repo.ssh_uri, key,
+                                         bool(repo.is_push_target))
     return {"ok": ok, "detail": detail}
 
 

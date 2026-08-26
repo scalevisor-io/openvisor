@@ -191,6 +191,60 @@ def list_open_issues(owner: str, repo: str, token: str | None = None) -> list[di
         return out
 
 
+def resolve_moved(owner: str, repo: str, token: str | None = None) -> tuple[str, str] | None:
+    """The repository's CURRENT (owner, name) when `owner/repo` is the redirect a
+    rename or a transfer left behind, else None. GitHub answers the old name with
+    301 on the API (git keeps following it with a warning, the API does not), so
+    the connected row learns the new name here. Never raises."""
+    try:
+        with _client(token) as c:
+            r = c.get(f"/repos/{owner}/{repo}")
+            if r.status_code not in (301, 302, 307, 308):
+                return None
+            r = c.get(f"/repos/{owner}/{repo}", follow_redirects=True)
+            if r.status_code != 200:
+                return None
+            full = str((r.json() or {}).get("full_name") or "").strip("/")
+    except (httpx.HTTPError, ValueError, GitHubError):
+        return None
+    if "/" not in full or full.lower() == f"{owner}/{repo}".lower():
+        return None
+    new_owner, _, new_repo = full.partition("/")
+    return new_owner, new_repo
+
+
+def _key_body(public_key: str | None) -> str:
+    parts = (public_key or "").split()
+    return parts[1] if len(parts) >= 2 else (parts[0] if parts else "")
+
+
+def ensure_deploy_key(owner: str, repo: str, title: str, public_key: str,
+                      token: str | None = None) -> str:
+    """(Re)install the project's deploy key on a GitHub repo with write access
+    through the customer's token (repo admin). A copy of the same key already on
+    the repo - read-only, say - is removed first. Returns "reinstalled" |
+    "installed"; raises GitHubError with the API's own words (a key that is
+    already installed on ANOTHER repository is refused by GitHub: deploy keys
+    are unique across the platform)."""
+    body = _key_body(public_key)
+    if not body:
+        raise GitHubError("the project has no deploy key")
+    with _client(token) as c:
+        r = c.get(f"/repos/{owner}/{repo}/keys", params={"per_page": 100})
+        if r.status_code != 200:
+            raise GitHubError(f"deploy keys unreadable: HTTP {r.status_code} {r.text[:160]}")
+        existing = [k for k in r.json() if _key_body(k.get("key")) == body]
+        for k in existing:
+            d = c.delete(f"/repos/{owner}/{repo}/keys/{k['id']}")
+            if d.status_code not in (204, 404):
+                raise GitHubError(f"deploy key removal failed: HTTP {d.status_code} {d.text[:160]}")
+        r = c.post(f"/repos/{owner}/{repo}/keys",
+                   json={"title": title, "key": public_key.strip(), "read_only": False})
+        if r.status_code != 201:
+            raise GitHubError(f"deploy key install failed: HTTP {r.status_code} {r.text[:160]}")
+        return "reinstalled" if existing else "installed"
+
+
 def create_issue_comment(owner: str, repo: str, number: int, body: str,
                          token: str | None = None) -> None:
     with _client(token) as c:
