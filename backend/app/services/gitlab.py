@@ -516,6 +516,65 @@ def customer_list_open_issues(base_url: str, token: str, path: str) -> list[dict
         } for it in r.json()]
 
 
+def customer_resolve_moved(base_url: str, token: str, path: str) -> str | None:
+    """The project's CURRENT path when `path` is the redirect route a rename or
+    a transfer left behind, else None. GitLab answers a moved project's old path
+    with 301 on GET and 405 on everything else ("Non GET methods are not allowed
+    for moved projects"), and refuses pushes through it - so every API call and
+    the final branch push keep failing until the connected row learns the new
+    path. One extra GET per build; never raises."""
+    try:
+        with _customer_client(base_url, token) as c:
+            pid = quote(path, safe="")
+            r = c.get(f"/projects/{pid}")
+            if r.status_code not in (301, 302, 307, 308):
+                return None
+            r = c.get(f"/projects/{pid}", follow_redirects=True)
+            if r.status_code != 200:
+                return None
+            new = str((r.json() or {}).get("path_with_namespace") or "").strip("/")
+    except (httpx.HTTPError, ValueError, GitLabError):
+        return None
+    return new if new and new.lower() != path.strip("/").lower() else None
+
+
+def _key_body(public_key: str | None) -> str:
+    """The base64 body of an OpenSSH public key - what identifies the key across
+    installs, whatever title or comment each copy carries."""
+    parts = (public_key or "").split()
+    return parts[1] if len(parts) >= 2 else (parts[0] if parts else "")
+
+
+def customer_ensure_deploy_key(base_url: str, token: str, path: str, title: str,
+                               public_key: str) -> str:
+    """(Re)install the project's deploy key on a customer repo through their PAT,
+    with write access, under the PAT's own account. GitLab authorises a deploy
+    key's pushes as the account that INSTALLED it, so a key installed by an
+    account that later lost push rights there (a project transferred out of its
+    group) is still listed, still reads, and refuses every push - only a fresh
+    install by someone who has the rights fixes it. An existing copy of the same
+    key is removed first (one fingerprint per project). Returns "reinstalled" |
+    "installed"; raises GitLabError with the API's own words."""
+    body = _key_body(public_key)
+    if not body:
+        raise GitLabError("the project has no deploy key")
+    with _customer_client(base_url, token) as c:
+        pid = quote(path, safe="")
+        r = c.get(f"/projects/{pid}/deploy_keys", params={"per_page": 100})
+        if r.status_code != 200:
+            raise GitLabError(f"deploy keys unreadable: HTTP {r.status_code} {r.text[:160]}")
+        existing = [k for k in r.json() if _key_body(k.get("key")) == body]
+        for k in existing:
+            d = c.delete(f"/projects/{pid}/deploy_keys/{k['id']}")
+            if d.status_code not in (200, 204, 404):
+                raise GitLabError(f"deploy key removal failed: HTTP {d.status_code} {d.text[:160]}")
+        r = c.post(f"/projects/{pid}/deploy_keys",
+                   json={"title": title, "key": public_key.strip(), "can_push": True})
+        if r.status_code not in (200, 201):
+            raise GitLabError(f"deploy key install failed: HTTP {r.status_code} {r.text[:160]}")
+        return "reinstalled" if existing else "installed"
+
+
 def customer_upload_file(base_url: str, token: str, path: str,
                          filename: str, data: bytes) -> str:
     """Upload a file to the project and return GitLab's ready-made markdown

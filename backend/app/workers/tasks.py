@@ -1388,14 +1388,41 @@ def _fetch_watch_issues(db: Session, project: Project,
         if not token:
             return None, ("No GitHub API token resolves for the push repository - add a "
                           "GITHUB_TOKEN secret to the project Memory so I can poll issues")
-        return github.list_open_issues(target["owner"], target["repo"], token=token), None
+        return _poll_issues(db, project, target, lambda t: github.list_open_issues(
+            t["owner"], t["repo"], token=token))
     if target["provider"] == "gitlab" and target.get("customer"):
         token = _project_repo_token(db, project, "gitlab", target.get("remote"))
         if not token:
             return None, ("No GitLab API token resolves for the push repository - add a "
                           "GITLAB_TOKEN secret to the project Memory so I can poll issues")
-        return gitlab.customer_list_open_issues(target["base_url"], token, target["path"]), None
+        return _poll_issues(db, project, target, lambda t: gitlab.customer_list_open_issues(
+            t["base_url"], token, t["path"]))
     return None, "The push repository's provider does not support issue polling"
+
+
+def _poll_issues(db: Session, project: Project, target: dict,
+                 fetch) -> tuple[list[dict] | None, str | None]:
+    """One issue poll that follows a repository which moved (§moved repo: the
+    forge 301s the old path; heal the row once and ask again) and turns any
+    other API refusal into the watch card's WHY - a moved repo used to be one
+    warning per minute in the worker log and "Nothing yet" on the card."""
+    import httpx
+    try:
+        return fetch(target), None
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (301, 302, 307, 308):
+            healed = _heal_moved_repo(db, project, target)
+            if healed is not target:
+                try:
+                    return fetch(healed), None
+                except Exception as exc2:  # noqa: BLE001 - reported, never raised
+                    return None, f"Polling issues on the moved repository failed: {str(exc2)[:160]}"
+            return None, ("The repository moved and its new location could not be resolved - "
+                          "reconnect it under its new URL")
+        return None, f"Polling issues failed (HTTP {code}) - check the repository token's access"
+    except httpx.HTTPError as exc:
+        return None, f"Polling issues failed: {str(exc)[:160]}"
 
 
 def _issue_matches(watch: dict, issue: dict) -> bool:
@@ -2636,6 +2663,10 @@ def _resolve_base_branch(db: Session, project: Project, target: dict | None) -> 
         target["base_branch"] = detected
 
 
+_MODEL_OUTAGE = "is unavailable right now"
+_OUTAGE_RECHECK_S = 15
+
+
 def _model_preflight(db: Session, project: Project) -> str | None:
     """Dispatch-time guard: when the project's model endpoint conclusively does
     NOT serve the configured model, say so BEFORE spending a sandbox - a bad
@@ -2646,34 +2677,56 @@ def _model_preflight(db: Session, project: Project) -> str | None:
     doesn't list (a real customer gateway lists only 'all-team-models' yet
     accepts 'ds.chat.qwen36'), a miss there is only a suspicion: the ground
     truth is a 1-token completion, and only ITS rejection parks the run.
+    A gateway answering 5xx is the other cheap verdict: a model endpoint that is
+    DOWN (a 502 from the CDN in front of it) fails the sandbox's first call
+    after the run was dispatched and billed for its startup, so when /models is
+    5xx the 1-token completion decides, re-asked once after a pause - two 5xx
+    park the run as an outage (Resume later, nothing to reconfigure), while any
+    definitive answer keeps the guard's fail-open judgement.
     Returns the customer-facing error, or None to proceed."""
     if not settings.openhands_enabled:
         return None  # scaffold runs never call the LLM
+    import time
+
     import httpx
     base_url, api_key, model = _project_model_config(db, project)
     base = (base_url or "").rstrip("/")
     headers = {"Authorization": f"Bearer {api_key}"}
+    gateway_down = False
     try:
         r = httpx.get(f"{base}/models", headers=headers, timeout=10)
-        if r.status_code != 200:
+        gateway_down = r.status_code >= 500
+        if r.status_code != 200 and not gateway_down:
             return None
-        served = [str(m.get("id") or "") for m in (r.json().get("data") or [])]
+        served = ([] if gateway_down
+                  else [str(m.get("id") or "") for m in (r.json().get("data") or [])])
     except Exception:  # noqa: BLE001 - unreachable/odd endpoint: not this guard's call
         return None
-    if not served:
+    if not served and not gateway_down:
         return None
     tail = model.split("/")[-1]
     if any(s == model or s == tail or s.split("/")[-1] == tail for s in served):
         return None
+
+    def _probe():
+        return httpx.post(f"{base}/chat/completions", headers=headers,
+                          json={"model": model, "max_tokens": 1,
+                                "messages": [{"role": "user", "content": "ping"}]},
+                          timeout=20)
     try:
-        probe = httpx.post(f"{base}/chat/completions", headers=headers,
-                           json={"model": model, "max_tokens": 1,
-                                 "messages": [{"role": "user", "content": "ping"}]},
-                           timeout=20)
+        probe = _probe()
+        if probe.status_code >= 500:
+            time.sleep(_OUTAGE_RECHECK_S)
+            probe = _probe()
     except Exception:  # noqa: BLE001
         return None
     if probe.status_code == 200:
         return None  # unlisted alias that works - /models was just incomplete
+    if probe.status_code >= 500:
+        host = base.split("://", 1)[-1].split("/", 1)[0] or "the gateway"
+        return f"the model endpoint {_MODEL_OUTAGE} (HTTP {probe.status_code} from {host})"
+    if gateway_down:
+        return None  # /models was down, the completion path answered something else: fail open
     detail = (probe.text or "")[:150].replace(api_key or "\0", "***")
     shown = ", ".join(served[:5]) + ("…" if len(served) > 5 else "")
     return (f"the model endpoint rejected the configured model '{model}' "
@@ -2720,9 +2773,11 @@ def _runner_exit_copy(project: Project, result: dict | None = None) -> tuple[str
     copy."""
     if _remote_denied(result):
         devfeed.append_event(project, "error", "The repository refused the sandbox's key")
+        hint = _push_failure_hint((result or {}).get("logs") or "")
         return ("The build couldn't authenticate to your code repository, so it "
-                "stopped before starting. Check that the deploy key is still "
-                "installed with write access, then hit Resume.",
+                "stopped before starting." + (hint or " Check that the deploy key is "
+                                              "still installed with write access, "
+                                              "then hit Resume."),
                 "Git remote refused the sandbox's deploy key")
     if _remote_unreachable(result):
         devfeed.append_event(project, "error", "Cannot reach the code repository from the sandbox")
@@ -2948,6 +3003,133 @@ def _repo_target(r: ProjectRepo) -> dict:
                 "base_url": gitlab.customer_base_url(r.ssh_uri),
                 "path": gitlab.parse_repo_path(r.ssh_uri)}
     return {**common, "provider": "other"}
+
+
+def _heal_moved_repo(db: Session, project: Project, target: dict | None,
+                     thread: str | None = None) -> dict | None:
+    """§moved repo: a connected repository that was renamed or transferred
+    still READS through the forge's redirect (the sandbox fetches, the watch
+    sweep 301s, every non-GET 405s) and refuses every push - so the row kept
+    the old path and each build died at the end, after the full spend. One GET
+    with the repo's own token asks the forge where it went; the connected row
+    then learns the new path (same scheme, user, host and port - only the
+    project path moves), the thread says so, and the returned target builds
+    there. §repo binding is untouched: the run stays pinned to the same row.
+    Anything short of a confirmed move returns the target unchanged."""
+    if not target or not target.get("repo_id") or target.get("provider") not in ("github", "gitlab"):
+        return target
+    token = _project_repo_token(db, project, target["provider"], target.get("remote"))
+    if not token:
+        return target
+    try:
+        if target["provider"] == "github":
+            moved = github.resolve_moved(target["owner"], target["repo"], token=token)
+            new_path = "/".join(moved) if moved else None
+        else:
+            new_path = gitlab.customer_resolve_moved(target["base_url"], token, target["path"])
+    except Exception as exc:  # noqa: BLE001 - a resolver error must never block a build
+        log.warning("moved-repo probe failed for %s: %s", project.id, exc)
+        return target
+    if not new_path:
+        return target
+    row = db.get(ProjectRepo, target["repo_id"])
+    if row is None or row.project_id != project.id:
+        return target
+    old_uri = row.ssh_uri
+    row.ssh_uri = repolib.replace_repo_path(repolib.normalize_ssh_uri(old_uri), new_path)
+    if row.ssh_uri == old_uri:
+        return target
+    log.info("repo %s of %s moved: %s -> %s", row.id, project.id, old_uri, row.ssh_uri)
+    _post_message(db, project.id, thread or _dev_thread(db, project), "agent",
+                  f"Your repository moved to `{new_path}`, so I updated the connected "
+                  f"repository to `{row.ssh_uri}` and carry on there.")
+    devfeed.append_event(project, "git", f"Repository moved - now tracking {new_path}")
+    db.commit()
+    healed = _repo_target(row)
+    healed["base_branch"] = target.get("base_branch") or healed["base_branch"]
+    return healed
+
+
+def _heal_deploy_key(db: Session, project: Project, target: dict,
+                     refusal: str) -> str | None:
+    """§push preflight self-heal: the repo refused the deploy key's push and the
+    project holds a token for that repo, so re-install the project's own key
+    there, with write access, under the token's account (github.ensure_deploy_key
+    / gitlab.customer_ensure_deploy_key - the exact fix for a key whose
+    installer lost push rights, and for one added read-only). Returns the
+    thread line explaining what was done, or None when no heal applies (no
+    token, an `other` host, the API refused) - the caller then parks with the
+    manual copy."""
+    provider = target.get("provider")
+    if provider not in ("github", "gitlab") or not (project.ssh_public_key or "").strip():
+        return None
+    token = _project_repo_token(db, project, provider, target.get("remote"))
+    if not token:
+        return None
+    title = f"{settings.brand_name} agent"
+    try:
+        if provider == "github":
+            where = f"{target['owner']}/{target['repo']}"
+            how = github.ensure_deploy_key(target["owner"], target["repo"], title,
+                                           project.ssh_public_key, token=token)
+        else:
+            where = target["path"]
+            how = gitlab.customer_ensure_deploy_key(target["base_url"], token, target["path"],
+                                                    title, project.ssh_public_key)
+    except Exception as exc:  # noqa: BLE001 - the heal is best-effort; the park copy follows
+        log.warning("deploy key heal failed for %s: %s", project.id, exc)
+        return None
+    log.info("deploy key %s on %s for %s", how, where, project.id)
+    return (f"The repository refused the deploy key's push ({refusal}), so I {how} the "
+            f"project's deploy key on `{where}` with write access using your repository "
+            "token - the push works again.")
+
+
+def _push_preflight(db: Session, project: Project, target: dict, thread: str) -> bool:
+    """§push preflight: prove the deploy key can PUSH to the run's repository
+    BEFORE a sandbox is spent on it (repos.check_push - a hidden-ref probe the
+    remote's own pre-receive checks judge). The sandbox's fetch preflight
+    answers reachability; this answers write access, which reading never did -
+    a read-only key, a key whose installer lost push rights (a project moved
+    out of their group), a repository that moved: all fetch fine and refuse
+    the final push, after a full build (prod: 3.2M tokens for a two-line fix
+    that never landed). A refusal first tries the deploy-key self-heal, then
+    parks with the remote's own words and the fix. True = build; False = parked.
+    A probe that could not reach the host is NOT a verdict on the key (the
+    sandbox's route is the authority there) and the build proceeds."""
+    remote = target.get("remote") or ""
+    if (not target.get("repo_id") or not repolib.is_ssh_uri(remote)
+            or not project.ssh_private_key_enc):
+        return True
+    row = dev_concurrency.bound_run(project)
+    probe = (row.id if row else project.id)[:12]
+    key = decrypt(project.ssh_private_key_enc)
+    author = repolib.git_identity(project)
+    verdict, detail = repolib.check_push(remote, key, probe, author=author)
+    if verdict != "denied":
+        if verdict != "ok":
+            log.warning("push preflight inconclusive for %s (%s): %s", project.id, verdict, detail)
+        return True
+    log.warning("push preflight refused for %s: %s", project.id, detail)
+    healed = _heal_deploy_key(db, project, target, detail)
+    if healed:
+        verdict, detail2 = repolib.check_push(remote, key, probe, author=author)
+        if verdict != "denied":
+            _post_message(db, project.id, thread, "agent", healed)
+            devfeed.append_event(project, "git", "Deploy key re-installed on the repository")
+            db.commit()
+            return True
+        detail = detail2
+    hint = _push_failure_hint(detail)
+    _post_message(db, project.id, thread, "agent",
+                  f"The build can't start: the repository refused the deploy key's push "
+                  f"({detail}).{hint or ' Fix the deploy key on the repository, then Resume.'}"
+                  " Nothing was built or billed.")
+    devfeed.append_event(project, "error", f"Repository refused the push - {detail[:160]}")
+    _safe_transition(db, project, "awaiting_customer", "Repository refused the deploy key's push")
+    _save_run(project, "failed", error=f"Repository refused the push: {detail}"[:400])
+    db.commit()
+    return False
 
 
 def _project_repo_token(db: Session, project: Project, provider: str,
@@ -3790,11 +3972,16 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
         if target is not None:
             model_err = _model_preflight(db, project)
             if model_err:
+                outage = _MODEL_OUTAGE in model_err
                 _post_message(db, project_id, _dev_thread(db, project), "agent",
-                              f"The build can't start: {model_err}. Update the project's "
-                              "model configuration, then press Resume development.")
+                              f"The build can't start: {model_err}. "
+                              + ("Nothing was built or billed - press Resume development "
+                                 "in a few minutes." if outage else
+                                 "Update the project's model configuration, then press "
+                                 "Resume development."))
                 _safe_transition(db, project, "awaiting_customer",
-                                 "Model endpoint rejected the configured model")
+                                 "Model endpoint unavailable" if outage
+                                 else "Model endpoint rejected the configured model")
                 _save_run(project, "failed", error=f"Model preflight: {model_err}"[:400])
                 db.commit()
                 return
@@ -4773,6 +4960,11 @@ def _run_development_customer(db: Session, project: Project, target: dict,
     # 'other' hosts have no PR/MR API: always the branch-push path (token=None).
     token = None if provider == "other" else _project_repo_token(
         db, project, provider, target.get("remote"))
+    if token:
+        # §moved repo: before anything talks to the repository, follow a rename
+        # or transfer the row hasn't heard of (else every call below 301/405s
+        # and the push is refused after the build).
+        target = _heal_moved_repo(db, project, target, thread)
     ops = _remote_ops(target, token, _project_branch(project)) if token else None
     noun = {"github": "pull request", "gitlab": "merge request"}.get(provider, "pull request")
 
@@ -4784,6 +4976,11 @@ def _run_development_customer(db: Session, project: Project, target: dict,
             ops["ensure_base"]()
         except Exception as exc:
             log.warning("ensure_base failed for %s: %s", project.id, exc)
+
+    # §push preflight: the deploy key must be able to push HERE, or nothing is
+    # worth building (parks with the remote's own reason, nothing billed).
+    if not _push_preflight(db, project, target, thread):
+        return
 
     # Deterministic fallback: with the LLM agent disabled, pre-populate the
     # workspace with a ready-to-ship OCPA app; the runner publishes it as-is.
@@ -5481,6 +5678,16 @@ def _push_failure_hint(logs: str) -> str:
     if "protected branch" in low:
         return (" The branch is protected on the repository - allow the deploy "
                 "key to push to it, then Resume.")
+    if "not allowed to push code" in low:
+        return (" The deploy key is installed, but the account that installed it no "
+                "longer has push rights on the repository - a project that was moved "
+                "or transferred keeps the key and refuses its pushes. Re-install the "
+                "project's deploy key under your own account (or keep a repository "
+                "token in Memory and the next build re-installs it for you), then Resume.")
+    if "denied to deploy key" in low:
+        return (" The deploy key isn't installed on this repository (a deploy key lives "
+                "on one GitHub repository only) - add the project's public key as a "
+                "deploy key with write access there, then Resume.")
     if "repository not found" in low or "does not appear to be a git repository" in low:
         return " The repository could not be found - check the connected repo URL."
     return ""

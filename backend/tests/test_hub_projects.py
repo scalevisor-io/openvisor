@@ -239,7 +239,7 @@ def test_repo_check_route(client, env, monkeypatch):
     pid = r.json()["id"]
     from app.api import hub as hub_api
     monkeypatch.setattr(hub_api.repolib, "check_ssh",
-                        lambda uri, key: (True, f"Reachable: {uri}"))
+                        lambda uri, key, write=False: (True, f"Reachable: {uri}"))
     out = client.post(f"/api/hub/projects/{pid}/repos/check",
                       headers=_h(env["token"])).json()
     assert out == {"ok": True, "detail": f"Reachable: {REPO_URI}"}

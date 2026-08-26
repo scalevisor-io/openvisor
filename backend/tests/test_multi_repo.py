@@ -633,19 +633,22 @@ def test_verify_ssh_endpoint(org, client, monkeypatch):
     rid = r.json()["repos"][0]["id"]
 
     # the endpoint surfaces whatever check_ssh decides, in {ok, detail} shape
-    monkeypatch.setattr(repolib, "check_ssh", lambda uri, key: (True, "reachable"))
+    monkeypatch.setattr(repolib, "check_ssh", lambda uri, key, write=False: (True, "reachable"))
     body = client.post(f"/api/projects/{pid}/repos/{rid}/verify-ssh", headers=h).json()
     assert body == {"ok": True, "detail": "reachable"}
-    monkeypatch.setattr(repolib, "check_ssh", lambda uri, key: (False, "nope"))
+    monkeypatch.setattr(repolib, "check_ssh", lambda uri, key, write=False: (False, "nope"))
     body = client.post(f"/api/projects/{pid}/repos/{rid}/verify-ssh", headers=h).json()
     assert body["ok"] is False and body["detail"] == "nope"
 
-    # the project's deploy key is decrypted and passed through (never the ciphertext)
+    # the project's deploy key is decrypted and passed through (never the ciphertext),
+    # and the push target gets the WRITE probe (§push preflight)
     seen = {}
     monkeypatch.setattr(repolib, "check_ssh",
-                        lambda uri, key: seen.update(uri=uri, key=key) or (True, "ok"))
+                        lambda uri, key, write=False: seen.update(uri=uri, key=key, write=write)
+                        or (True, "ok"))
     client.post(f"/api/projects/{pid}/repos/{rid}/verify-ssh", headers=h)
     assert seen["uri"] == GH_REMOTE and seen["key"] == "K"  # _customer seeds encrypt("K")
+    assert seen["write"] is True  # the first connected repo is the push target
 
     # unknown repo id → 404
     assert client.post(f"/api/projects/{pid}/repos/nope/verify-ssh", headers=h).status_code == 404
