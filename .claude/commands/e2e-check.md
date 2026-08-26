@@ -16,6 +16,6 @@ Act as both the customer and the consultant (the admin) to verify the full custo
 7. **PR merge (customer)** - review and merge the PR with gh (`gh pr merge --merge`); within ~60 s the `dev_pr_sweep` Beat job must deploy the demo (`demo_state=running`). Open the demo URL with its basic-auth creds and confirm the app renders.
 8. **Fail-safe spot-check** - exercise Resume development once and confirm the Development panel (state badge, PR link, View logs with the run log, error message on failure) and the status-history entries. Optionally test the trial timeout: set `DEV_RUN_TIMEOUT_MINUTES=1`, Resume, expect `awaiting_customer` + "Build exceeded the time limit" with logs, then restore.
 9. **Delivery approval (customer)** - press Approve delivery: status → `finished`, customer notified by email.
-10. **Report** - PASS/FAIL per step with evidence (status history, PR URL, demo HTTP code, mailpit subjects). Fix any bug found on its own branch with a GitLab MR via glab (never push to main). Restore every `.env` toggle you changed and leave the stack running.
+10. **Report** - PASS/FAIL per step with evidence (status history, PR URL, demo HTTP code, mailpit subjects). Fix any bug found on its own branch with a pull request via `gh pr create` (never push to main). Restore every `.env` toggle you changed and leave the stack running.
 
 $ARGUMENTS
