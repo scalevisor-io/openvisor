@@ -298,6 +298,10 @@ def _with_images(text: str):
         return text
 
 
+def _discard_token(_chunk) -> None:
+    """§streaming: the SDK only streams when a token callback is present."""
+
+
 def main() -> int:
     task = (OPENVISOR / "task.md").read_text()
     # A previous session's end-of-run marker must never drive this run's copy.
@@ -324,11 +328,35 @@ def main() -> int:
         _sdk_llm.LLM_RETRY_EXCEPTIONS = (*_sdk_llm.LLM_RETRY_EXCEPTIONS, *extra)
     except Exception as exc:  # noqa: BLE001 - an SDK without the constant: provider default
         print(f"driver: LLM retry set unchanged: {exc}", file=sys.stderr)
+    # §streaming: every model call streams. A non-streaming answer is one silent
+    # connection from the request until its last token, and any idle timeout on
+    # the path cuts it while the model keeps generating for nobody - a load
+    # balancer's 50 s default, a CDN's origin timeout, the SDK's own 300 s request
+    # timeout - and the retry then adds a second stream beside the orphan. A
+    # reasoning model answers a hard coding step in 100-570 s, so on such a path
+    # nearly every real step failed (2026-08-27: two runs lost, the provider at 9
+    # streams for 2 agents). Bytes that flow from the first token trip none of
+    # those timers, and the SDK rebuilds the same response from the chunks, usage
+    # included (it forces stream_options.include_usage). The SDK refuses to
+    # stream without a token callback, and the condenser and the delegation
+    # sub-agents call the LLM without one, so a no-op stands in for every path.
+    try:
+        for _name in ("completion", "acompletion", "responses", "aresponses"):
+            _orig = getattr(LLM, _name)
+
+            def _with_token_sink(self, *args, _orig=_orig, on_token=None, **kwargs):
+                if on_token is None and self.stream:
+                    on_token = _discard_token
+                return _orig(self, *args, on_token=on_token, **kwargs)
+            setattr(LLM, _name, _with_token_sink)
+    except Exception as exc:  # noqa: BLE001 - an SDK without these methods
+        print(f"driver: streaming shim not installed: {exc}", file=sys.stderr)
     llm_kwargs = dict(
         model=_model_for_litellm(os.environ["LLM_MODEL"]),
         api_key=os.environ["LLM_API_KEY"],
         base_url=os.environ.get("LLM_BASE_URL") or None,
         service_id="openvisor-agent",
+        stream=True,
     )
     effort = (os.environ.get("LLM_REASONING_EFFORT") or "").strip()
     if effort:
@@ -344,10 +372,20 @@ def main() -> int:
     except Exception:  # noqa: BLE001 - SDK without the fields: run at provider default
         llm_kwargs.pop("reasoning_effort", None)
         llm_kwargs.pop("litellm_extra_body", None)
+        llm_kwargs.pop("stream", None)
         llm = LLM(**llm_kwargs)
-        if effort or cache_key:
-            print("driver: reasoning_effort/prompt_cache_key not supported by this SDK; "
-                  "provider default", file=sys.stderr)
+        print("driver: reasoning_effort/prompt_cache_key/stream not supported by this "
+              "SDK; provider default", file=sys.stderr)
+    # The Responses API (gpt-5 family) is a different streaming path in the SDK,
+    # unverified here, and those calls reach OpenAI directly with no edge idle
+    # timeout on the way: they keep the non-streaming path.
+    try:
+        if llm.stream and llm.uses_responses_api():
+            llm = llm.model_copy(update={"stream": False})
+            print("driver: Responses-API model; completions stay non-streaming",
+                  file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - SDK without the switch: keep streaming
+        print(f"driver: Responses-API check skipped: {exc}", file=sys.stderr)
     agent = get_default_agent(llm=llm, cli_mode=True)  # cli_mode: no browser GUI deps
     # §Phase 1: add purpose-built grep + glob so the agent navigates the repo with
     # real search tools instead of shelling out (the SWE-agent ACI thesis). They ship
