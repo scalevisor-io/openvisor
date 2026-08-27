@@ -172,6 +172,19 @@ browserMcp:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: "2", memory: 2Gi }
 
+# §web research (donsetch): search / page fetch / site crawl for the dev agent,
+# behind the stdio->HTTP bridge. One engine process per MCP session, so memory
+# scales with concurrent runs rather than with traffic; the browser it escalates
+# to for bot walls is what makes the limits generous. Disable to drop the
+# Deployment entirely - the §Tools row then has nothing to point at, and an admin
+# who enables it gets a connection error rather than silence.
+donsetch:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { cpu: "2", memory: 3Gi }
+
 mailpit:
   # Dev/test mail sink (compose.dev parity). When enabled the chart also points
   # SMTP_HOST/SMTP_PORT at it and routes mail.<domain>.
