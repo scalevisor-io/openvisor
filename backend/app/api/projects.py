@@ -245,7 +245,8 @@ async def get_project(project: Project = Depends(get_project_for_user),
                                 DevRun.workspace_dir == "",
                                 DevRun.started_at.is_not(None))
         .order_by(DevRun.started_at.desc()).limit(1))).scalar_one_or_none()
-    project.dev_runs_payload = [dev_run_out(r, project, legacy_feed_owner)
+    resume_ctx = await project_actions.run_resume_sets(db, project)
+    project.dev_runs_payload = [dev_run_out(r, project, legacy_feed_owner, resume_ctx)
                                 for r in active]
     # §repo binding: the live console's branch chip follows the PRIMARY run's
     # own pinned link (the mirror derivation only covers pin-less legacy rows).
@@ -552,10 +553,14 @@ async def retry_build(body: RetryBuildIn | None = None,
     flight, a repository to build into, and the project must not be closed
     (finished/canceled - a finished project takes new work via requests).
     `fresh` (§run chains Start fresh) discards the failed chain instead of
-    resuming it: new workspace, new branch, the abandoned runs superseded."""
+    resuming it: new workspace, new branch, the abandoned runs superseded.
+    `run_id` (§parallel-builds) resumes ONE failed /dev-runs row under that
+    row's own `can_resume` - in parallel mode a sibling request's live build no
+    longer blocks it; 404 for a run of another project."""
     try:
         await project_actions.retry_build(db, project, is_admin=user.role == "admin",
-                                          fresh=bool(body and body.fresh))
+                                          fresh=bool(body and body.fresh),
+                                          run_id=body.run_id if body else None)
     except project_actions.ActionError as exc:
         raise HTTPException(exc.status, exc.detail)
     await db.refresh(project, ["repos"])
@@ -673,7 +678,8 @@ async def dev_runs(request_id: str | None = None,
                                 DevRun.started_at.is_not(None))
         .order_by(DevRun.started_at.desc()).limit(1))).scalar_one_or_none()
     await db.refresh(project, ["repos"])
-    return [dev_run_out(r, project, legacy_feed_owner) for r in rows]
+    resume_ctx = await project_actions.run_resume_sets(db, project)
+    return [dev_run_out(r, project, legacy_feed_owner, resume_ctx) for r in rows]
 
 
 @router.get("/{project_id}/issue-events")

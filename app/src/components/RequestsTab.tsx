@@ -510,6 +510,11 @@ export default function RequestsTab({
             run={r}
             defaultOpen={!ownsRun && i === 0}
             stoppable={!readOnly}
+            resumable={!readOnly}
+            onResumed={() => {
+              load();
+              build?.onStale();
+            }}
           />
         ))}
       </div>
