@@ -780,8 +780,11 @@ class Tool(Base):
     """An instance-admin-level MCP tool the dev agent can call during builds
     (§Tools) - distinct from knowledge bases: a tool ACTS (GitHub/GitLab PR,
     issue and review operations), a KB informs. Global rows seeded per kind
-    (github, gitlab - disabled until configured); per-project overrides live in
-    ProjectToolConfig. The GitLab row's `url` points at the instance's MCP
+    (github, gitlab, donsetch - disabled until configured); per-project
+    overrides live in ProjectToolConfig. `params` carries per-kind settings: the
+    donsetch row stores {"capabilities": [...]} (§web research), the subset of
+    search/fetch/crawl a build may call, and its `url` is the sidecar BASE
+    because the served path is derived from that subset. The GitLab row's `url` points at the instance's MCP
     endpoint (https://<host>/api/v4/mcp), so self-hosted instances are plain
     configuration. `api_key_enc` is envelope-encrypted and never leaves the
     server (the API exposes has_api_key only); `tools_fingerprint` supports the

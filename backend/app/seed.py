@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.db import SyncSession
 from app.core.security import hash_password
 from app.models import Tool, KnowledgeBase, Membership, Organization, User
+from app.services import donsetch
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("seed")
@@ -87,6 +88,10 @@ _BUILTIN_TOOLS = [
     # (slug, name, kind, url) - disabled until the admin configures a key.
     ("github", "GitHub", "github", "https://api.githubcopilot.com/mcp/"),
     ("gitlab", "GitLab", "gitlab", "https://gitlab.com/api/v4/mcp"),
+    # §web research: keyless, so it needs no configuring - only enabling. `url`
+    # is the sidecar BASE; the served path carries the enabled capabilities.
+    (donsetch.SLUG, "Web research (DonSeTch)", donsetch.KIND,
+     settings.donsetch_mcp_url),
 ]
 
 
@@ -98,7 +103,10 @@ def seed_tools() -> None:
         for slug, name, kind, url in _BUILTIN_TOOLS:
             if db.execute(select(Tool).where(Tool.slug == slug)).scalar_one_or_none():
                 continue
-            db.add(Tool(slug=slug, name=name, kind=kind, url=url, enabled=False))
+            params = ({"capabilities": list(donsetch.DEFAULT_CAPABILITIES)}
+                      if kind == donsetch.KIND else None)
+            db.add(Tool(slug=slug, name=name, kind=kind, url=url, enabled=False,
+                        params=params))
             try:
                 db.commit()
                 log.info("seeded tool %s", slug)

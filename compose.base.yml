@@ -153,6 +153,28 @@ services:
     networks: [internal]
     restart: unless-stopped
 
+  donsetch-mcp:
+    # The dev agent's web research (§web research): search, page fetch and site
+    # crawl from one keyless engine, served over MCP by donsetch/bridge.py. Its
+    # own image, not the mcp sidecar's: the engine needs glibc 2.38+ (the
+    # python:3.12-slim base is Debian 12 / 2.36) and it is AGPL-3.0, so it stays
+    # in an image of its own carrying its licence (see donsetch/README.md).
+    # Which of the three tools a build actually sees is the §Tools row's
+    # capability set, carried in the injected URL's path.
+    build: ./donsetch
+    init: true
+    environment:
+      # Chrome's own sandbox needs privileges this container does not have; the
+      # container IS the isolation boundary. Same trade the browser sidecar makes.
+      DONGHOST_NO_SANDBOX: "1"
+    networks: [internal]
+    restart: unless-stopped
+    volumes:
+      # The engine learns per-domain cookie lifetimes and page fingerprints, and
+      # caches its rerank model here; losing it costs a slow first search, not
+      # correctness.
+      - donsetch-cache:/home/donsetch/.cache/donsetch
+
   browser-mcp:
     # The dev agent's browser tool: the official Playwright MCP image with its own
     # bundled headless chromium (the image entrypoint already carries --headless
@@ -213,6 +235,7 @@ volumes:
   meili:
   workspaces:
   traefik-dynamic:
+  donsetch-cache:
 
 networks:
   internal:

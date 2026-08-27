@@ -20,7 +20,7 @@ from app.core.deps import require_admin
 from app.core.encryption import decrypt, encrypt
 from app.models import Project, ProjectToolConfig, Tool
 from app.schemas.schemas import ProjectToolPatchIn, ToolPatchIn
-from app.services import mcp_names, mcp_scan
+from app.services import donsetch, mcp_names, mcp_scan
 
 router = APIRouter(prefix="/api/admin", tags=["tools"],
                    dependencies=[Depends(require_admin)])
@@ -29,12 +29,28 @@ _HTTP_RE = re.compile(r"^https?://", re.I)
 
 
 def _tool_out(t: Tool) -> dict:
-    return {"id": t.id, "slug": t.slug, "name": t.name, "kind": t.kind,
-            "url": t.url, "enabled": t.enabled,
-            "has_api_key": bool(t.api_key_enc),
-            # The key the agent addresses this server by in a run - the string to
-            # quote in project instructions.
-            "mcp_server": mcp_names.tool_server_name(t)}
+    out = {"id": t.id, "slug": t.slug, "name": t.name, "kind": t.kind,
+           "url": t.url, "enabled": t.enabled,
+           "has_api_key": bool(t.api_key_enc),
+           # The key the agent addresses this server by in a run - the string to
+           # quote in project instructions.
+           "mcp_server": mcp_names.tool_server_name(t)}
+    if t.kind == donsetch.KIND:
+        out["capabilities"] = donsetch.capabilities(t)
+        out["all_capabilities"] = [{"slug": c, "label": donsetch.LABELS[c]}
+                                   for c in donsetch.CAPABILITIES]
+    return out
+
+
+def _scan_url(t: Tool, url: str | None = None) -> str:
+    """The endpoint to probe for a row: §web research serves one route per
+    capability set, so the scan must hit the route the run will actually get."""
+    if t.kind == donsetch.KIND:
+        endpoint = donsetch.tool_endpoint(t, url)
+        if endpoint is None:
+            raise HTTPException(422, "Enable at least one web-research capability first")
+        return endpoint
+    return url or t.url
 
 
 def _scan_or_409(name: str, url: str, key: str | None) -> None:
@@ -63,12 +79,21 @@ async def patch_tool(tool_id: str, body: ToolPatchIn, db: AsyncSession = Depends
         t.url = body.url.strip()
     if body.api_key is not None:
         t.api_key_enc = encrypt(body.api_key.strip()) if body.api_key.strip() else None
+    if body.capabilities is not None:
+        if t.kind != donsetch.KIND:
+            raise HTTPException(422, "This tool has no configurable capabilities")
+        caps = donsetch.normalize(body.capabilities)
+        if not caps and (t.enabled if body.enabled is None else body.enabled):
+            raise HTTPException(422, "Enable at least one web-research capability, "
+                                     "or disable the tool")
+        t.params = dict(t.params or {}) | {"capabilities": caps}
     if body.enabled is not None:
         if body.enabled:
             key = decrypt(t.api_key_enc) if t.api_key_enc else None
-            await run_in_threadpool(_scan_or_409, t.name, t.url, key)
+            url = _scan_url(t)
+            await run_in_threadpool(_scan_or_409, t.name, url, key)
             t.tools_fingerprint = await run_in_threadpool(
-                mcp_scan.fingerprint_tools, t.url, key)
+                mcp_scan.fingerprint_server, url, key)
         t.enabled = body.enabled
     await db.commit()
     return _tool_out(t)
@@ -81,7 +106,7 @@ async def verify_tool(tool_id: str, db: AsyncSession = Depends(get_db)):
     if t is None:
         raise HTTPException(404, "Unknown tool")
     key = decrypt(t.api_key_enc) if t.api_key_enc else None
-    findings, err = await run_in_threadpool(mcp_scan.audit_server, t.url, key)
+    findings, err = await run_in_threadpool(mcp_scan.audit_server, _scan_url(t), key)
     if findings:
         return {"ok": False, "detail": "Poisoning scan findings: " + "; ".join(findings[:3])}
     if err:
@@ -134,7 +159,7 @@ async def put_project_tool(project_id: str, tool_id: str, body: ProjectToolPatch
         if body.enabled:
             # never-trust-client: enabling FOR THIS PROJECT scans the effective
             # endpoint with the effective key (override -> global).
-            url = ov.url or t.url
+            url = _scan_url(t, ov.url or t.url)
             key = (decrypt(ov.api_key_enc) if ov.api_key_enc
                    else decrypt(t.api_key_enc) if t.api_key_enc else None)
             await run_in_threadpool(_scan_or_409, t.name, url, key)

@@ -321,6 +321,9 @@ class Settings(BaseSettings):
     # appends /<provider>/mcp per enabled row. Default resolves in compose and
     # in-namespace K8s alike.
     websearch_mcp_url: str = "http://websearch-mcp:3000"
+    # Base URL of the donsetch web-research sidecar (§web research); the caller
+    # appends /<caps>/mcp for the capabilities the §Tools row leaves enabled.
+    donsetch_mcp_url: str = "http://donsetch-mcp:3000"
     workspaces_dir: str = "/workspaces"
     # Public Traefik HTTP port. 80 in production; a per-instance port in local
     # multi-instance dev (e.g. 8090). Demo URLs must carry it when it isn't 80,
