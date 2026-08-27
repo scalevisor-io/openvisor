@@ -28,6 +28,7 @@ Sober, functional, fast. Dark-first.
 
 - Fonts: the landing defaults to the system font stack via `--font-brand`. To use a brand font, drop its files into `landing/public/fonts/`, declare the `@font-face` in the landing's global CSS, and repoint `--font-brand` at it.
 - Dark theme default (`--gray-0` background, `--gray-800` text). Light theme optional on the landing (toggle); the SPA can stay dark-only for the alpha.
+- Consultant photo (§consultant photo): optional and admin-uploaded (Settings → Consultant photo), never a repo asset. When the API serves one, the landing reveals a 56 px gradient-ringed portrait with the consultant's name under the hero call to action (the note becomes its caption) and a 48 px face on the Direct quote card in place of the pen glyph; without one, both spots render as before.
 - CTAs and key highlights use `--gradient-speed` (gradient background on buttons, gradient text-clip on hero keywords). Everything else stays sober navy.
 - Red "alpha" banner: thin bar or badge in the app header, `--alpha-red` background, white text, e.g. "⚠ alpha".
 - Aesthetic: generous whitespace, 1px borders in `--gray-100`, subtle noise/gradient backgrounds, rounded corners ~0.75rem, shadows only on elevation.

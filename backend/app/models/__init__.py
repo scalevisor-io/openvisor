@@ -1,6 +1,7 @@
 from app.models.models import (  # noqa: F401
     ApiToken,
     AppSetting,
+    BrandAsset,
     CreditTransaction,
     DeploymentEvent,
     DevRun,

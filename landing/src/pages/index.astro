@@ -3,7 +3,7 @@ import Base from '../layouts/Base.astro';
 import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
 
-import { aiIntakeUrl, programsUrl, signupUrl, tokensUrl } from '../lib/site';
+import { aiIntakeUrl, consultantName, programsUrl, signupUrl, tokensUrl } from '../lib/site';
 import content from '../lib/content';
 
 // Hand-drawn inline SVG icon set - one stroke grammar (24px grid, 1.7 stroke,
@@ -123,9 +123,19 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
             <a href={aiIntakeUrl} class="btn btn-primary">{hero.ctaPrimary}</a>
             <a href="#work-with-me" class="btn btn-ghost">{hero.ctaSecondary}</a>
           </div>
-          <p class="hero-note rise r5">
-            {hero.note}
-          </p>
+          <!-- §consultant photo: the hero signature. The ring and the name stay
+               hidden until the admin's portrait loads (Base.astro flips
+               html.has-consultant-photo), so a deployment without one renders
+               the plain note. -->
+          <div class="hero-sign rise r5">
+            <span class="sign-ring">
+              <img class="sign-img" alt={consultantName} data-consultant-photo-img />
+            </span>
+            <p class="hero-note">
+              <strong class="sign-name">{consultantName}</strong>
+              {hero.note}
+            </p>
+          </div>
         </div>
 
         <!-- Signature visual: the project dashboard, as the customer sees it -->
@@ -239,6 +249,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
           <article class="way-card way-card--wide" data-reveal style="--d: 180ms">
             <div class="wide-main">
               <span class="way-glyph way-glyph--muted" set:html={icons.pen} />
+              <span class="way-face"><img alt={consultantName} data-consultant-photo-img /></span>
               <span class="way-tag way-tag--muted">{channels.quote.tag}</span>
               <h3 class="way-title">{channels.quote.title}</h3>
               <p class="way-lede">
@@ -812,6 +823,51 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
     color: var(--text-muted);
   }
 
+  /* §consultant photo: the hero signature - the note alone until the portrait
+     loads, then a ring + name row (html.has-consultant-photo, set in Base.astro). */
+  .hero-sign {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    margin-top: 1.5rem;
+  }
+
+  .hero-sign .hero-note {
+    margin-top: 0;
+  }
+
+  .sign-ring,
+  .sign-name {
+    display: none;
+  }
+
+  html.has-consultant-photo .sign-ring {
+    display: inline-block;
+    flex: none;
+    width: 56px;
+    height: 56px;
+    padding: 2px;
+    border-radius: 50%;
+    background: var(--gradient-speed);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+
+  .sign-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--bg);
+  }
+
+  html.has-consultant-photo .sign-name {
+    display: block;
+    margin-bottom: 0.15rem;
+    font-weight: 600;
+    color: var(--text-strong);
+  }
+
   /* HERO VISUAL - the project dashboard card */
   .hero-visual {
     width: 100%;
@@ -1274,6 +1330,37 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
   .way-glyph :global(svg) {
     width: 21px;
     height: 21px;
+  }
+
+  /* §consultant photo: the human door shows the consultant's face in place of
+     the pen glyph once the portrait loads. */
+  .way-face {
+    display: none;
+  }
+
+  html.has-consultant-photo .way-face {
+    display: inline-block;
+    align-self: flex-start;
+    width: 48px;
+    height: 48px;
+    padding: 2px;
+    margin-bottom: 0.9rem;
+    border-radius: 50%;
+    background: var(--gradient-speed);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+
+  .way-face img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--bg);
+  }
+
+  html.has-consultant-photo .way-card--wide .way-glyph {
+    display: none;
   }
 
   .way-tag {

@@ -137,6 +137,18 @@ const colorOverride =
         });
       })();
 
+      // The API origin: the build-time app URL when this page is served from its
+      // canonical host (or a bare/dev host), else app.<apex> of the host actually
+      // serving it - so a landing on another domain still finds its platform.
+      const apiOrigin = () => {
+        const apex = location.hostname.replace(/^www\./, '');
+        const sameHost =
+          apex === siteHost || apex === 'localhost' || !apex.includes('.') || /^[\d.]+$/.test(apex);
+        return sameHost
+          ? appUrl
+          : location.protocol + '//app.' + apex + (location.port ? ':' + location.port : '');
+      };
+
       // §legal identity: the operating company's legal name and registered address
       // are admin-editable (Admin Settings -> Business legal identity) but this
       // page is a static build, so the site.yml values render first - that is what
@@ -144,13 +156,7 @@ const colorOverride =
       // here. Any failure (API down, field never set) keeps the built-in text.
       (() => {
         if (!document.querySelector('[data-legal-entity], [data-legal-address]')) return;
-        const apex = location.hostname.replace(/^www\./, '');
-        const sameHost =
-          apex === siteHost || apex === 'localhost' || !apex.includes('.') || /^[\d.]+$/.test(apex);
-        const origin = sameHost
-          ? appUrl
-          : location.protocol + '//app.' + apex + (location.port ? ':' + location.port : '');
-        fetch(origin + '/api/meta/legal')
+        fetch(apiOrigin() + '/api/meta/legal')
           .then((r) => (r.ok ? r.json() : null))
           .then((d) => {
             if (!d) return;
@@ -174,6 +180,23 @@ const colorOverride =
           .catch(() => {
             /* keep the values this page was built with */
           });
+      })();
+
+      // §consultant photo: the admin's portrait (Admin Settings -> Consultant
+      // photo) is served by the API, never baked into this static build. Every
+      // photo slot starts hidden; the first successful load flips one class on
+      // <html> and the slots (hero signature, Direct quote face) appear. A 404
+      // (no photo yet), a network error or a blocked host leaves the page as built.
+      (() => {
+        const slots = document.querySelectorAll('img[data-consultant-photo-img]');
+        if (!slots.length) return;
+        const src = apiOrigin() + '/api/meta/consultant-photo';
+        slots.forEach((img) => {
+          img.addEventListener('load', () => {
+            document.documentElement.classList.add('has-consultant-photo');
+          });
+          img.src = src;
+        });
       })();
     </script>
   </body>

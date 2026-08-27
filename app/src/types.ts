@@ -566,6 +566,17 @@ export interface AdminSettings {
   // of service name. Empty = the landing keeps the value it was built with.
   legal_name: string;
   legal_address: string;
+  // §consultant photo: the portrait the landing shows next to the consultant's
+  // name - metadata only, the bytes are served by GET /meta/consultant-photo.
+  // null = none uploaded (the landing keeps its photo-less layout).
+  consultant_photo: ConsultantPhoto | null;
+}
+
+export interface ConsultantPhoto {
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  updated_at: string | null;
 }
 
 export interface SpecialityFeeRow {
