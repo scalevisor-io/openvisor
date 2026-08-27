@@ -16,10 +16,31 @@ import { ApiError } from "../lib/api";
 import type { Answer, Evaluation, Question, Speciality, WizardProjectKind } from "../types";
 
 const DESC_LIMIT = 40000;
-const STEP_LABELS = ["Engagement", "Description", "Sources", "Questions", "Sovereignty", "Review"];
-// Engagement kinds tucked behind the step-1 "More options..." expander; add
-// future secondary kinds here so the first screen stays two cards.
-const EXTRA_KINDS: string[] = ["auto_dev", "chat"];
+
+// The wizard is a list of named steps that depends on the engagement kind:
+// the curated-AI kinds pick a speciality (it drives the questions, the
+// sovereign default and the harness) on a step of its own; a direct quote has
+// none; chat is just the kind and the opening message.
+type StepId =
+  | "engagement" | "speciality" | "description" | "sources" | "questions" | "sovereignty" | "review";
+const STEP_LABELS: Record<StepId, string> = {
+  engagement: "Engagement",
+  speciality: "Speciality",
+  description: "Description",
+  sources: "Sources",
+  questions: "Questions",
+  sovereignty: "Sovereignty",
+  review: "Review",
+};
+const FULL_STEPS: StepId[] = [
+  "engagement", "speciality", "description", "sources", "questions", "sovereignty", "review",
+];
+
+function stepsFor(kind: WizardProjectKind | null): StepId[] {
+  if (kind === "chat") return ["engagement", "description"];
+  if (kind === "ai" || kind === "auto_dev") return FULL_STEPS;
+  return FULL_STEPS.filter((s) => s !== "speciality");
+}
 
 export default function NewProject() {
   const navigate = useNavigate();
@@ -42,7 +63,6 @@ export default function NewProject() {
       ? kindParam
       : null,
   );
-  const [showAllKinds, setShowAllKinds] = useState(EXTRA_KINDS.includes(kindParam ?? ""));
   const [specialityId, setSpecialityId] = useState<string>("");
   const [description, setDescription] = useState("");
   const [fromScratch, setFromScratch] = useState(true);
@@ -106,16 +126,21 @@ export default function NewProject() {
     (k === "auto_dev" && pauseAutoDev) || (k === "chat" && pauseChat);
   const PAUSED_MSG = "We're not accepting this kind of project right now.";
 
-  // Chat is a 2-step path: pick the kind, write the opening message, done.
-  const stepLabels = isChat ? ["Engagement", "Message"] : STEP_LABELS;
+  const steps = stepsFor(kind);
+  const stepId: StepId = steps[Math.min(step, steps.length - 1)];
+  const stepLabel = (id: StepId) =>
+    id === "description" && isChat ? "Message" : STEP_LABELS[id];
+  // The last input before the project is created: sovereignty on the build
+  // paths, the opening message on chat.
+  const isFinalInput = isChat ? stepId === "description" : stepId === "sovereignty";
 
   // Clear a deep-linked (?kind=) preselection that is currently paused so the
   // customer can't advance past step 1 with it.
   useEffect(() => {
-    if (isAdmin || !config || step !== 0) return;
+    if (isAdmin || !config || stepId !== "engagement") return;
     if (kindPaused(kind)) setKind(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, isAdmin, step, kind]);
+  }, [config, isAdmin, stepId, kind]);
 
   // Questions are shown one by one; the wizard's Back/Continue walk them.
   const visibleQs = visibleQuestions(questions, specialityId, answers);
@@ -124,19 +149,19 @@ export default function NewProject() {
   const onLastQuestion = qIdxClamped >= qCount - 1;
 
   function canAdvance(): string | null {
-    if (step === 0) {
+    if (stepId === "engagement") {
       if (!kind) return "Choose how you'd like to work with me.";
       if (kindPaused(kind)) return PAUSED_MSG;
-      if ((kind === "ai" || kind === "auto_dev") && !specialityId) return "Select a speciality.";
     }
-    if (step === 1) {
+    if (stepId === "speciality" && !specialityId) return "Select a speciality.";
+    if (stepId === "description") {
       if (!description.trim())
         return isAuto ? "Describe how you want me to develop."
           : isChat ? "Write your opening message."
             : "Describe what you want to build.";
       if (description.length > DESC_LIMIT) return "Description exceeds the character limit.";
     }
-    if (step === 2 && !isDirect) {
+    if (stepId === "sources" && !isDirect) {
       if (isAuto) {
         if (cleanRepos.length === 0) return "Add the repository whose issues I should watch.";
         if (csv(watchLabels).length === 0 && csv(watchAssignees).length === 0)
@@ -145,7 +170,7 @@ export default function NewProject() {
         return "Add at least one repository SSH URI, or choose from scratch.";
       }
     }
-    if (step === 3) {
+    if (stepId === "questions") {
       if (missing.length > 0) return "Answer the required questions.";
     }
     return null;
@@ -156,7 +181,7 @@ export default function NewProject() {
   function next() {
     // Inside the Questions step, Continue moves one question at a time; only
     // the current question is validated (later ones haven't been seen yet).
-    if (step === 3 && !onLastQuestion) {
+    if (stepId === "questions" && !onLastQuestion) {
       const q = visibleQs[qIdxClamped];
       if (q?.required && (answers[q.id]?.option_ids.length ?? 0) === 0) {
         toast.push("Answer this question to continue.", "err");
@@ -169,7 +194,7 @@ export default function NewProject() {
       toast.push(advanceBlock, "err");
       return;
     }
-    if (step === 4 || (isChat && step === 1)) {
+    if (isFinalInput) {
       void createAndEvaluate();
       return;
     }
@@ -177,7 +202,7 @@ export default function NewProject() {
   }
 
   function back() {
-    if (step === 3 && qIdxClamped > 0) {
+    if (stepId === "questions" && qIdxClamped > 0) {
       setQIdx(qIdxClamped - 1);
       return;
     }
@@ -243,7 +268,7 @@ export default function NewProject() {
         return;
       }
       await projectsApi.evaluate(id);
-      setStep(5);
+      setStep(steps.indexOf("review"));
       setEvaluation({ state: "pending" });
     } catch (err) {
       if (err instanceof ApiError && err.status === 403 && err.detail === "email_not_verified") {
@@ -265,7 +290,7 @@ export default function NewProject() {
 
   // Poll evaluation until it resolves.
   useEffect(() => {
-    if (step !== 5 || !projectId || !evaluation || evaluation.state !== "pending") return;
+    if (stepId !== "review" || !projectId || !evaluation || evaluation.state !== "pending") return;
     let stop = false;
     const t = setInterval(async () => {
       try {
@@ -282,7 +307,7 @@ export default function NewProject() {
       stop = true;
       clearInterval(t);
     };
-  }, [step, projectId, evaluation]);
+  }, [stepId, projectId, evaluation]);
 
   if (loadErr) return <Alert kind="error">{loadErr}</Alert>;
   if (specialities.length === 0) return <Loading label="Loading onboarding…" />;
@@ -304,21 +329,20 @@ export default function NewProject() {
     <div className="wizard">
       <h1>New project</h1>
       <div className="steps">
-        {stepLabels.map((_, i) => (
+        {steps.map((id, i) => (
           <div
-            key={i}
+            key={id}
             className={`step-pill ${i < step ? "done" : i === step ? "current" : ""}`}
-            title={stepLabels[i]}
+            title={stepLabel(id)}
           />
         ))}
       </div>
       <p className="muted small" style={{ marginTop: "-0.75rem", marginBottom: "1.25rem" }}>
-        Step {Math.min(step + 1, stepLabels.length)} of {stepLabels.length} -{" "}
-        {stepLabels[Math.min(step, stepLabels.length - 1)]}
+        Step {Math.min(step + 1, steps.length)} of {steps.length} - {stepLabel(stepId)}
       </p>
 
-      {/* Step 1 - engagement kind + speciality */}
-      {step === 0 && (
+      {/* Engagement kind - every way to work, side by side */}
+      {stepId === "engagement" && (
         <div className="card">
           <label>How would you like to work with me?</label>
           {(pauseAi || pauseDirect) && (
@@ -330,7 +354,7 @@ export default function NewProject() {
                   : "We're not accepting new direct-contact quotes for now - the AI-curated MVP is still open."}
             </Alert>
           )}
-          <div className="stack">
+          <div className="kind-grid">
             <button
               type="button"
               className={`select-card${kind === "ai" ? " selected" : ""}`}
@@ -370,93 +394,85 @@ export default function NewProject() {
                 <div className="tiny faint mt">Paused - not accepting these right now.</div>
               )}
             </button>
-            {!showAllKinds && (
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                style={{ alignSelf: "center" }}
-                onClick={() => setShowAllKinds(true)}
-              >
-                More options...
-              </button>
-            )}
-            {showAllKinds && (
-              <>
-                <button
-                  type="button"
-                  className={`select-card${kind === "auto_dev" ? " selected" : ""}`}
-                  disabled={pauseAutoDev}
-                  onClick={() => setKind("auto_dev")}
-                >
-                  <div className="between">
-                    <h3>Curated AI auto-developer</h3>
-                    <span className="chip chip-ai">Curated AI</span>
-                  </div>
-                  <div className="muted small">
-                    A sentinel on one of your GitHub/GitLab repositories: assign an issue or add a
-                    label and the {consultant}-curated agent builds it and opens a pull request,
-                    guided by your standing development policy. Usage-based credits per build - no
-                    upfront estimate.
-                  </div>
-                  {pauseAutoDev && (
-                    <div className="tiny faint mt">Paused - not accepting these right now.</div>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className={`select-card${kind === "chat" ? " selected" : ""}`}
-                  disabled={pauseChat}
-                  onClick={() => {
-                    setKind("chat");
-                    setSpecialityId("");
-                  }}
-                >
-                  <div className="between">
-                    <h3>Just chat with me</h3>
-                    <span className="chip chip-ai">Curated AI</span>
-                  </div>
-                  <div className="muted small">
-                    A conversation, not a build: ask anything and get answers grounded in{" "}
-                    {consultant}'s experience knowledge base, with a human hand-off whenever you
-                    want it. {chatFee.toLocaleString()} credits to open, then usage-billed answers.
-                  </div>
-                  {pauseChat && (
-                    <div className="tiny faint mt">Paused - not accepting these right now.</div>
-                  )}
-                </button>
-              </>
-            )}
-          </div>
-
-          {(kind === "ai" || kind === "auto_dev") && (
-            <>
-              <label className="mt-2">Speciality</label>
-              <div className="stack">
-                {specialities.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={`select-card${specialityId === s.id ? " selected" : ""}`}
-                    onClick={() => chooseSpeciality(s)}
-                  >
-                    <div className="between">
-                      <h3>{s.label}</h3>
-                      <span className="badge">{s.complexity_baseline}</span>
-                    </div>
-                    <div className="muted small">{s.description}</div>
-                    {s.requires_existing_repo && (
-                      <div className="tiny faint mt">Acts on your existing repository.</div>
-                    )}
-                  </button>
-                ))}
+            <button
+              type="button"
+              className={`select-card${kind === "auto_dev" ? " selected" : ""}`}
+              disabled={pauseAutoDev}
+              onClick={() => setKind("auto_dev")}
+            >
+              <div className="between">
+                <h3>Curated AI auto-developer</h3>
+                <span className="chip chip-ai">Curated AI</span>
               </div>
-            </>
-          )}
+              <div className="muted small">
+                A sentinel on one of your GitHub/GitLab repositories: assign an issue or add a
+                label and the {consultant}-curated agent builds it and opens a pull request,
+                guided by your standing development policy. Usage-based credits per build - no
+                upfront estimate.
+              </div>
+              {pauseAutoDev && (
+                <div className="tiny faint mt">Paused - not accepting these right now.</div>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`select-card${kind === "chat" ? " selected" : ""}`}
+              disabled={pauseChat}
+              onClick={() => {
+                setKind("chat");
+                setSpecialityId("");
+              }}
+            >
+              <div className="between">
+                <h3>Just chat with me</h3>
+                <span className="chip chip-ai">Curated AI</span>
+              </div>
+              <div className="muted small">
+                A conversation, not a build: ask anything and get answers grounded in{" "}
+                {consultant}'s experience knowledge base, with a human hand-off whenever you
+                want it. {chatFee.toLocaleString()} credits to open, then usage-billed answers.
+              </div>
+              {pauseChat && (
+                <div className="tiny faint mt">Paused - not accepting these right now.</div>
+              )}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Step 2 - description */}
-      {step === 1 && (
+      {/* Speciality (curated AI kinds) */}
+      {stepId === "speciality" && (
+        <div className="card">
+          <label>Which speciality fits this project?</label>
+          <p className="muted small mb">
+            The speciality picks the harness and the knowledge the agent builds with, the
+            questions that follow and the sovereignty default. Change it later from the project
+            page if the scope moves.
+          </p>
+          <div className="stack">
+            {specialities.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={`select-card${specialityId === s.id ? " selected" : ""}`}
+                onClick={() => chooseSpeciality(s)}
+              >
+                <div className="between">
+                  <h3>{s.label}</h3>
+                  <span className="badge">{s.complexity_baseline}</span>
+                </div>
+                <div className="muted small">{s.description}</div>
+                {s.requires_existing_repo && (
+                  <div className="tiny faint mt">Acts on your existing repository.</div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Description (the opening message on chat) */}
+      {stepId === "description" && (
         <div className="card">
           <label htmlFor="desc">
             {isAuto
@@ -485,8 +501,8 @@ export default function NewProject() {
         </div>
       )}
 
-      {/* Step 3 - from scratch vs existing repos (AI only) */}
-      {step === 2 && isDirect && (
+      {/* Sources - from scratch vs existing repos (AI only) */}
+      {stepId === "sources" && isDirect && (
         <div className="card">
           <label>Existing systems</label>
           <Alert kind="info">
@@ -496,7 +512,7 @@ export default function NewProject() {
           </Alert>
         </div>
       )}
-      {step === 2 && !isDirect && (
+      {stepId === "sources" && !isDirect && (
         <div className="card">
           {!isAuto && <label>How should we start?</label>}
           {!isAuto && (
@@ -594,8 +610,8 @@ export default function NewProject() {
         </div>
       )}
 
-      {/* Step 4 - MCQ, one question at a time */}
-      {step === 3 && (
+      {/* Questions - MCQ, one question at a time */}
+      {stepId === "questions" && (
         <div className="card">
           <p className="muted small mb">
             These answers scope the MVP and improve the estimate.
@@ -611,8 +627,8 @@ export default function NewProject() {
         </div>
       )}
 
-      {/* Step 5 - sovereign toggle */}
-      {step === 4 && (
+      {/* Sovereignty toggle */}
+      {stepId === "sovereignty" && (
         <div className="card">
           <div className="between">
             <div>
@@ -642,8 +658,8 @@ export default function NewProject() {
         </div>
       )}
 
-      {/* Step 6 - creation + evaluation */}
-      {step === 5 && (
+      {/* Review - creation + evaluation */}
+      {stepId === "review" && (
         <EvaluationScreen
           evaluation={evaluation}
           error={evalError}
@@ -651,14 +667,14 @@ export default function NewProject() {
           onRevise={() => {
             setEvaluation(null);
             setEvalError(null);
-            setStep(1);
+            setStep(steps.indexOf("description"));
           }}
           onRetry={() => void createAndEvaluate()}
           onSubmitted={(id) => navigate(`/projects/${id}`)}
         />
       )}
 
-      {step < 5 && (
+      {stepId !== "review" && (
         <div className="wizard-actions">
           <button
             type="button"
@@ -672,11 +688,11 @@ export default function NewProject() {
             type="button"
             className="btn btn-primary"
             onClick={next}
-            disabled={busy || (step === 0 && bothPaused)}
+            disabled={busy || (stepId === "engagement" && bothPaused)}
           >
             {busy ? <Spinner />
-              : isChat && step === 1 ? `Open chat (${chatFee.toLocaleString()} credits)`
-                : step === 4 ? "Create & evaluate" : "Continue"}
+              : isChat && stepId === "description" ? `Open chat (${chatFee.toLocaleString()} credits)`
+                : stepId === "sovereignty" ? "Create & evaluate" : "Continue"}
           </button>
         </div>
       )}
