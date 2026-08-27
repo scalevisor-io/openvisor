@@ -265,6 +265,10 @@ export interface DevRunSummary {
   cost_credits: number;
   // Whether dev-activity?run_id= can still serve this run's feed.
   has_feed: boolean;
+  // §parallel-builds: this row's own Resume verdict (retry-build {run_id}) -
+  // in parallel mode a sibling request's live build does not block it.
+  can_resume: boolean;
+  resume_blocker: string | null;
 }
 
 // Admin overview rows carry org context.

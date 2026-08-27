@@ -12,32 +12,80 @@ from app.services import countries
 from app.services import repos as repolib
 
 
+def _parallel_effective(p: Project) -> int:
+    """The resolved per-project parallel limit (§parallel-builds MR3): the
+    entitlement hook returns None today, so this is computable without a
+    session; 1 = serialized."""
+    return max(1, min(p.dev_parallel_limit or settings.dev_parallel_runs_default,
+                      settings.dev_parallel_runs_max))
+
+
+def _resume_closed_blocker(p: Project) -> str | None:
+    if p.kind == "direct_quote":
+        return "Managed engagement - no automated builds"
+    if p.status == "canceled":
+        return "The project is canceled"
+    if p.status == "finished":
+        return "The project is finished - submit a new request for further changes"
+    return None
+
+
+def _resume_setup_blocker(p: Project) -> str | None:
+    if p.block_auto_development:
+        return "Automatic development is blocked pending admin authorization"
+    if not (p.gitlab_project_id or len(p.repos) > 0):
+        return "No repository to build into yet"
+    return None
+
+
 def dev_resume_capability(p: Project) -> tuple[bool, str | None]:
     """State-level capability behind the Resume-development button: (enabled,
     why-disabled). Enabled only when a failed run actually exists and no run is
     in flight - shared by the serializer (button state + tooltip) and the
     retry-build endpoint so the UI and the API can't drift. `p.repos` must be
     loaded."""
-    if p.kind == "direct_quote":
-        return False, "Managed engagement - no automated builds"
-    if p.status == "canceled":
-        return False, "The project is canceled"
-    if p.status == "finished":
-        return False, "The project is finished - submit a new request for further changes"
+    blocker = _resume_closed_blocker(p)
+    if blocker:
+        return False, blocker
     if p.dev_run_state in ("running", "deploying"):
         return False, "A build is already in progress"
     if p.dev_run_state == "awaiting_merge":
         return False, "Waiting for you to merge the pull request"
-    if p.block_auto_development:
-        return False, "Automatic development is blocked pending admin authorization"
-    if not (p.gitlab_project_id or len(p.repos) > 0):
-        return False, "No repository to build into yet"
+    blocker = _resume_setup_blocker(p)
+    if blocker:
+        return False, blocker
     if p.dev_run_state == "merged":
         # delivered work whose demo deploy parked: rebuilding is pointless -
         # restarting the demo retries the deploy and finalizes the run
         return False, "The change is merged - restart the demo to redeploy it"
     if p.dev_run_state != "failed":
         return False, "Nothing to resume - the last build completed"
+    return True, None
+
+
+def dev_run_resume_capability(p: Project, run: DevRun, *, inflight_request_ids: set,
+                              latest_failed_ids: set) -> tuple[bool, str | None]:
+    """§parallel-builds: the Resume behind ONE run's console - the request
+    thread's history rows. The project-level rules that do not depend on which
+    run is meant apply unchanged; then the row must be its request's newest
+    failed run and, in parallel mode, its request must have no run in flight: a
+    sibling request's live build is no reason to keep a parked one waiting,
+    which the project-level verdict ("A build is already in progress") would
+    do. At limit 1 that verdict stands whole - one workspace, one run.
+    `inflight_request_ids` are the request ids of the ACTIVE rows and
+    `latest_failed_ids` the newest failed row per request; the endpoints and
+    the action gather both (`project_actions.run_resume_sets`)."""
+    if run.state != "failed":
+        return False, "Nothing to resume - this run did not fail"
+    if _parallel_effective(p) <= 1:
+        return dev_resume_capability(p)
+    blocker = _resume_closed_blocker(p) or _resume_setup_blocker(p)
+    if blocker:
+        return False, blocker
+    if run.id not in latest_failed_ids:
+        return False, "A later build of this request took over - resume that one"
+    if run.request_id in inflight_request_ids:
+        return False, "This request already has a build in flight"
     return True, None
 
 
@@ -254,8 +302,7 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
         # effective limit (entitlement hook returns None today, so this is
         # computable without a session; 1 = serialized).
         "dev_parallel_limit": p.dev_parallel_limit,
-        "dev_parallel_effective": max(1, min(p.dev_parallel_limit or settings.dev_parallel_runs_default,
-                                             settings.dev_parallel_runs_max)),
+        "dev_parallel_effective": _parallel_effective(p),
         # §build panel branch chip: the run's branch + its push-repo web URL.
         "dev_branch": p.dev_branch,
         # §repo binding: the detail route stamps the primary run's own pinned
@@ -309,11 +356,19 @@ def _run_branch_url(r: DevRun, p: Project) -> str | None:
     return branch_url(shim)
 
 
-def dev_run_out(r: DevRun, p: Project, legacy_feed_owner: str | None) -> dict:
+def dev_run_out(r: DevRun, p: Project, legacy_feed_owner: str | None,
+                resume_ctx: tuple[set, set] | None = None) -> dict:
     """One run-history row for the request-thread consoles. `p.repos` must be
     loaded (branch link derivation); `legacy_feed_owner` is the id of the one
-    legacy row whose feed still lives at the shared workspace path."""
+    legacy row whose feed still lives at the shared workspace path;
+    `resume_ctx` is `project_actions.run_resume_sets` (the row's own Resume
+    verdict - without it the row is not resumable, never guessed)."""
+    can_resume, resume_blocker = False, None
+    if resume_ctx is not None:
+        can_resume, resume_blocker = dev_run_resume_capability(
+            p, r, inflight_request_ids=resume_ctx[0], latest_failed_ids=resume_ctx[1])
     return {"id": r.id, "request_id": r.request_id, "state": r.state,
+            "can_resume": can_resume, "resume_blocker": resume_blocker,
             "created_at": r.created_at, "started_at": r.started_at,
             "repo_id": r.repo_id,
             "branch": r.branch, "branch_url": _run_branch_url(r, p),

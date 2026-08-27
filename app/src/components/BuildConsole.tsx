@@ -504,6 +504,8 @@ export function RunConsole({
   defaultOpen = false,
   title = null,
   stoppable = false,
+  resumable = false,
+  onResumed,
   onOpenRequest,
 }: {
   projectId: string;
@@ -515,6 +517,12 @@ export function RunConsole({
   // §parallel-builds MR4: offer a Stop scoped to THIS run (running + not a
   // read-only share). The worker validates the row before killing anything.
   stoppable?: boolean;
+  // §parallel-builds: offer Resume / Start fresh scoped to THIS run when it
+  // failed (not a read-only share); the row's own can_resume gates the button
+  // and resume_blocker is its tooltip, so a sibling's live build no longer
+  // hides the way back into a parked request.
+  resumable?: boolean;
+  onResumed?: () => void;
   onOpenRequest?: () => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -523,6 +531,8 @@ export function RunConsole({
   const [devLogs, setDevLogs] = useState<DevLogs | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
   const offsetRef = useRef(0);
   const feedRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -541,6 +551,25 @@ export function RunConsole({
     } catch {
       setStopBusy(false);
     }
+  }
+
+  async function resumeRun(fresh: boolean) {
+    if (
+      fresh &&
+      !window.confirm(
+        "Start over from scratch? The failed build's work in progress is set aside and a new build starts clean on a new branch.",
+      )
+    )
+      return;
+    setResumeBusy(true);
+    setResumeError(null);
+    try {
+      await projectsApi.retryBuild(projectId, fresh, run.id);
+      onResumed?.();
+    } catch (e) {
+      setResumeError((e as Error).message || "Resume failed");
+    }
+    setResumeBusy(false);
   }
 
   function pull() {
@@ -640,6 +669,33 @@ export function RunConsole({
               {stopBusy ? "Stopping…" : "Stop"}
             </button>
           )}
+          {resumable && run.state === "failed" && (
+            <>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => resumeRun(false)}
+                disabled={resumeBusy || !run.can_resume}
+                title={
+                  run.resume_blocker ??
+                  "Continues this failed build: same branch, same files, your notes folded in"
+                }
+              >
+                {resumeBusy ? "Resuming…" : "Resume"}
+              </button>
+              {run.can_resume && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => resumeRun(true)}
+                  disabled={resumeBusy}
+                  title="Discards this build's work in progress and starts a clean build"
+                >
+                  Start fresh
+                </button>
+              )}
+            </>
+          )}
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(!open)}>
             {open ? "Hide console" : "Show console"}
           </button>
@@ -664,6 +720,7 @@ export function RunConsole({
         </div>
       )}
       {run.run_error && <Alert kind="warn">{run.run_error}</Alert>}
+      {resumeError && <Alert kind="warn">{resumeError}</Alert>}
 
       {open && (
         <>

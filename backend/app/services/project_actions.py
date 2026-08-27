@@ -10,9 +10,9 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.serializers import dev_resume_capability, message_out
+from app.api.serializers import dev_resume_capability, dev_run_resume_capability, message_out
 from app.core.config import settings
-from app.models import CreditTransaction, Message, Organization, Project, Request
+from app.models import CreditTransaction, DevRun, Message, Organization, Project, Request
 from app.services import dev_concurrency, events, hub_events
 from app.services.lifecycle import TransitionError, transition_async
 from app.workers.celery_app import celery
@@ -112,12 +112,45 @@ async def charge_chat_upfront(db: AsyncSession, project: Project) -> None:
                              kind="chat_upfront", detail="Chat opening fee"))
 
 
+async def run_resume_sets(db: AsyncSession, project: Project) -> tuple[set, set]:
+    """The two sets `dev_run_resume_capability` judges a row against: the
+    request ids with a run in flight, and the newest failed row per request.
+    One gatherer for the serializers (row `can_resume`) and the action, so the
+    button and the endpoint can't drift."""
+    inflight = set((await db.execute(
+        select(DevRun.request_id).where(
+            DevRun.project_id == project.id,
+            DevRun.state.in_(dev_concurrency.ACTIVE_ROW_STATES)))).scalars().all())
+    failed = (await db.execute(
+        select(DevRun.id, DevRun.request_id)
+        .where(DevRun.project_id == project.id, DevRun.state == "failed")
+        .order_by(DevRun.created_at.desc(), DevRun.id.desc()))).all()
+    latest: dict = {}
+    for run_id, request_id in failed:
+        latest.setdefault(request_id, run_id)
+    return inflight, set(latest.values())
+
+
 async def retry_build(db: AsyncSession, project: Project, is_admin: bool,
-                      fresh: bool = False) -> None:
+                      fresh: bool = False, run_id: str | None = None) -> None:
     """Resume development after a failed/stalled build (§14.5). Gated by the same
-    dev_resume_capability the UI renders, so button and endpoint can't drift."""
+    dev_resume_capability the UI renders, so button and endpoint can't drift.
+    `run_id` (§parallel-builds) resumes ONE failed row - the request-thread
+    history console's Resume - under the row's own `dev_run_resume_capability`,
+    and chains onto it through its request (`acquire_for_project` continues the
+    request's newest failed run, which the capability just proved this is)."""
     await db.refresh(project, ["repos"])
-    enabled, blocker = dev_resume_capability(project)
+    request_id = None
+    if run_id is not None:
+        run = await db.get(DevRun, run_id)
+        if run is None or run.project_id != project.id:
+            raise ActionError(404, "Unknown run")
+        inflight, latest = await run_resume_sets(db, project)
+        enabled, blocker = dev_run_resume_capability(
+            project, run, inflight_request_ids=inflight, latest_failed_ids=latest)
+        request_id = run.request_id
+    else:
+        enabled, blocker = dev_resume_capability(project)
     if not enabled:
         raise ActionError(409, blocker or "Resume isn't available right now")
     if project.status == "awaiting_admin" and not is_admin:
@@ -134,12 +167,12 @@ async def retry_build(db: AsyncSession, project: Project, is_admin: bool,
     # §parallel-builds MR1: take a run slot through the one chokepoint (sync
     # service, threadpool - knowledge.py precedent) before dispatching.
     try:
-        run_id = await run_in_threadpool(dev_concurrency.acquire_for_project,
-                                         project.id, None, fresh)
+        new_run_id = await run_in_threadpool(dev_concurrency.acquire_for_project,
+                                             project.id, request_id, fresh)
     except dev_concurrency.SlotRefused as exc:
         raise ActionError(409, str(exc))
     celery.send_task("app.workers.tasks.run_development", args=[project.id],
-                     kwargs={"fix_only": True, "run_id": run_id})
+                     kwargs={"fix_only": True, "run_id": new_run_id})
 
 
 def stop_build(project: Project, run_id: str | None = None) -> None:

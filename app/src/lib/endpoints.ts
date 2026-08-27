@@ -221,8 +221,13 @@ export const projectsApi = {
   requireReview: (id: string) => api.post<Project>(`/projects/${id}/require-review`),
   // fresh (§run chains Start fresh) discards the failed chain - new workspace,
   // new branch - instead of resuming it.
-  retryBuild: (id: string, fresh = false) =>
-    api.post<Project>(`/projects/${id}/retry-build`, fresh ? { fresh: true } : undefined),
+  // runId (§parallel-builds) resumes THAT failed run - the request-thread
+  // history console's Resume - instead of the project's mirrored one.
+  retryBuild: (id: string, fresh = false, runId?: string) =>
+    api.post<Project>(
+      `/projects/${id}/retry-build`,
+      fresh || runId ? { ...(fresh ? { fresh: true } : {}), ...(runId ? { run_id: runId } : {}) } : undefined,
+    ),
   stopBuild: (id: string, runId?: string) =>
     api.post<{ ok: boolean }>(
       `/projects/${id}/stop-build${runId ? `?run_id=${runId}` : ""}`,

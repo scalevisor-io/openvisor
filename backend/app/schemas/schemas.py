@@ -252,6 +252,9 @@ class RetryBuildIn(BaseModel):
     # §run chains Start fresh: true discards the failed chain (new workspace,
     # new branch) instead of resuming it. Absent body = plain resume.
     fresh: bool = False
+    # §parallel-builds: resume THIS failed run (a /dev-runs row) rather than the
+    # project's mirrored one - the request-thread history console's Resume.
+    run_id: str | None = None
 
 
 class RoutineIn(BaseModel):
