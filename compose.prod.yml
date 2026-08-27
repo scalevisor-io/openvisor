@@ -56,6 +56,11 @@ services:
     # compose.base override
     image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/mcp:${IMAGE_TAG:-latest}
 
+  donsetch-mcp:
+    # §web research: its OWN image, not the mcp one - the engine needs glibc 2.38+
+    # and is AGPL-3.0, so it stays in an image carrying its licence.
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/donsetch-mcp:${IMAGE_TAG:-latest}
+
   deployer:
     image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/deployer:${IMAGE_TAG:-latest}
     environment:

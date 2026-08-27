@@ -197,6 +197,76 @@ spec:
     - name: http
       port: 3000
       targetPort: http
+{{- if .Values.donsetch.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: donsetch-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.donsetch.replicas }}
+  selector:
+    matchLabels:
+      app: donsetch-mcp
+  template:
+    metadata:
+      labels:
+        app: donsetch-mcp
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: donsetch-mcp
+          # §web research: the DonSeTch engine behind a stdio->HTTP MCP bridge.
+          # Its own image (the engine needs glibc 2.38+ and is AGPL-3.0, so it
+          # does not ride the mcp image). Which of search/fetch/crawl a build may
+          # call is the §Tools row's capability set, carried in the URL path.
+          image: {{ include "openvisor.image" (dict "root" . "name" "donsetch-mcp") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          env:
+            # Chrome's own sandbox needs privileges this pod does not have; the
+            # container is the isolation boundary. Same trade browser-mcp makes.
+            - name: DONGHOST_NO_SANDBOX
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.donsetch.resources | nindent 12 }}
+          volumeMounts:
+            # Learned cookie lifetimes, page fingerprints and the rerank model.
+            # emptyDir, not a PVC: losing it costs a slow first search, and a
+            # replica must never inherit another's browsing state.
+            - name: cache
+              mountPath: /home/donsetch/.cache/donsetch
+      volumes:
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: donsetch-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: donsetch-mcp
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+{{- end }}
 {{- if .Values.mailpit.enabled }}
 ---
 apiVersion: apps/v1

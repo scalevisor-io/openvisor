@@ -44,7 +44,7 @@ spec:
               {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
 ---
 # Dev-run Jobs (untrusted agent build): egress to DNS, the in-cluster MCP tools
-# (context7, browser-mcp, websearch-mcp) and the public internet (git remotes,
+# (context7, browser-mcp, websearch-mcp, donsetch-mcp) and the public internet (git remotes,
 # package registries) - but NOT postgres/redis/deployer/api, and NOT link-local/
 # cloud metadata (169.254.0.0/16, blocked via privateCidrs so the agent can't SSRF
 # the instance metadata service for node credentials). Set networkPolicy.egressAllowlist
@@ -100,6 +100,12 @@ spec:
         - podSelector:
             matchLabels:
               app: websearch-mcp
+      ports:
+        - { protocol: TCP, port: 3000 }
+    - to:
+        - podSelector:
+            matchLabels:
+              app: donsetch-mcp
       ports:
         - { protocol: TCP, port: 3000 }
     # The platform-GitLab SSH remote runs through the Tailscale operator egress
@@ -171,6 +177,13 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    # §web research is deliberately ABSENT here. donsetch-mcp fetches and crawls
+    # arbitrary URLs with its own unrestricted egress, so allowing a LOCKED run to
+    # call it would hand back exactly the unfiltered internet the allowlist exists
+    # to remove - the run would reach any host the filter forbids, by proxy. A
+    # locked run therefore gets a connection error from the web-research tools,
+    # which is the honest outcome; browser-mcp stays because page loads for the
+    # agent's own dev server are what the lockdown was designed around.
     - to:
         - podSelector: { matchLabels: { app: context7 } }
         - podSelector: { matchLabels: { app: browser-mcp } }

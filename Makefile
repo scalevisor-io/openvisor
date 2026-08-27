@@ -14,7 +14,7 @@ IMAGE_DEPLOYS := api worker beat mcp deployer app landing
 # emulated, on an arm64 dev machine) - one artifact for compose and Kubernetes.
 IMAGE_PLATFORM ?= linux/amd64
 # services whose image we build+push (postgres/redis/... are upstream images)
-PROD_IMAGES   := api mcp deployer app landing runner
+PROD_IMAGES   := api mcp donsetch-mcp deployer app landing runner
 
 .PHONY: dev prod prod-build prod-push stop down logs ps migrate makemigration seed psql test build-dev build-runner helm-deploy helm-uninstall helm-build-push helm-bpdr
 
