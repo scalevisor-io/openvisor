@@ -247,8 +247,19 @@ deploy:
       # §deploy gate: never roll the platform while a build sandbox Job is live
       # (an interrupted run strands at 'running' until the reaper). The worker's
       # 15-minute termination grace covers post-sandbox processing.
+      #
+      # Select on the deployer's own label, and count only Jobs with a RUNNING
+      # pod. Counting `grep -cv Complete` over every Job in the namespace counted
+      # two things it must not: helm's own `migrate` hook Job, and any FAILED
+      # Job. The second one DEADLOCKS the platform - a failed migrate hook is
+      # cleared only when helm creates the next one (hook-delete-policy
+      # before-hook-creation), and helm cannot run because this gate is holding
+      # it. One stale pipeline's failed hook then blocks every deploy forever;
+      # 2026-08-27 it held three in a row until the Job was deleted by hand.
       for i in $(seq 1 90); do
-        active="$(kubectl get jobs -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cv Complete || true)"
+        active="$(kubectl get jobs -n "$NAMESPACE" -l openvisor/dev-run=true \
+          -o jsonpath='{range .items[*]}{.status.active}{"\n"}{end}' 2>/dev/null \
+          | grep -c '^[1-9]' || true)"
         [ "${active:-0}" = "0" ] && break
         echo "deploy gate: $active active sandbox job(s), waiting..."
         sleep 30
