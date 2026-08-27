@@ -965,6 +965,21 @@ class AppSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class BrandAsset(Base):
+    """Admin-uploaded brand imagery, one row per asset key - today only the
+    consultant photo (§consultant photo, `services/consultant_photo`). Bytes live
+    in-DB like ChatImage and ProjectFile (alpha scale); `sha256` is the public
+    route's ETag, so an unchanged picture stays a cache hit across re-uploads.
+    """
+    __tablename__ = "brand_asset"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Program(Base):
     """Admin-defined runnable program (PROMPT §28): an admin-managed repo in the
     platform GitLab, executed as `docker compose build && docker compose run

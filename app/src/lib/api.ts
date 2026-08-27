@@ -119,6 +119,8 @@ export const api = {
     request<T>(path, { ...opts, method: "POST", formData }),
   put: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>(path, { ...opts, method: "PUT", body }),
+  putForm: <T>(path: string, formData: FormData, opts?: RequestOptions) =>
+    request<T>(path, { ...opts, method: "PUT", formData }),
   patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>(path, { ...opts, method: "PATCH", body }),
   del: <T>(path: string, opts?: RequestOptions) => request<T>(path, { ...opts, method: "DELETE" }),

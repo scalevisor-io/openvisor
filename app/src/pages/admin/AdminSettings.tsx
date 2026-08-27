@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminApi } from "../../lib/endpoints";
 import { useAuth } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
 import { Alert, Loading, Toggle } from "../../components/ui";
-import type { AdminSettings as AdminSettingsT } from "../../types";
+import type { AdminSettings as AdminSettingsT, ConsultantPhoto } from "../../types";
 
 // Admin settings: runtime switches that don't need a redeploy.
 // First control - pause new project deposits, independently per kind. Pausing
@@ -146,6 +146,13 @@ export default function AdminSettings() {
 
       <LegalIdentityCard settings={settings} busy={busy} update={update} />
 
+      <ConsultantPhotoCard
+        photo={settings.consultant_photo ?? null}
+        busy={busy}
+        setBusy={setBusy}
+        onChange={(photo) => setSettings({ ...settings, consultant_photo: photo })}
+      />
+
       <FeesCard settings={settings} busy={busy} update={update} />
 
       <EgressCard settings={settings} busy={busy} update={update} />
@@ -218,6 +225,131 @@ function LegalIdentityCard({
             Save legal identity
           </button>
           {dirty && <span className="muted small">Unsaved changes</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// §consultant photo: the portrait the public landing shows next to the
+// consultant's name (the hero signature and the Direct quote card). The landing
+// is a static build, so it loads the photo from the API at runtime and shows its
+// photo slots only when one exists - no upload, no slots. Served as uploaded.
+function ConsultantPhotoCard({
+  photo,
+  busy,
+  setBusy,
+  onChange,
+}: {
+  photo: ConsultantPhoto | null;
+  busy: string | null;
+  setBusy: (field: string | null) => void;
+  onChange: (photo: ConsultantPhoto | null) => void;
+}) {
+  const toast = useToast();
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function upload(file: File) {
+    setBusy("photo");
+    setError(null);
+    try {
+      onChange(await adminApi.uploadConsultantPhoto(file));
+      toast.push("Photo saved", "ok");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not upload the photo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove() {
+    setBusy("photo");
+    setError(null);
+    try {
+      await adminApi.removeConsultantPhoto();
+      onChange(null);
+      toast.push("Photo removed", "ok");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove the photo.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const summary = photo
+    ? `${photo.content_type.replace("image/", "").toUpperCase()} · ${Math.max(1, Math.round(photo.size_bytes / 1024))} KB`
+    : "No photo yet - the landing keeps its text-only layout.";
+
+  return (
+    <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
+      <h3 style={{ marginTop: 0 }}>Consultant photo</h3>
+      <Alert kind="info">
+        Shown on the public landing next to your name: under the hero call to action and on the
+        Direct quote card. Square, at least 320 px, PNG, JPEG or WebP, 1 MB max - it is served
+        exactly as uploaded.
+      </Alert>
+
+      <div className="row gap-sm" style={{ marginTop: "1rem", alignItems: "center", gap: "1rem" }}>
+        {photo ? (
+          <img
+            src={adminApi.consultantPhotoUrl(photo.sha256)}
+            alt=""
+            width={72}
+            height={72}
+            style={{ borderRadius: "50%", objectFit: "cover", flex: "none" }}
+          />
+        ) : (
+          <div
+            aria-hidden
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: "50%",
+              background: "var(--surface-2)",
+              border: "1px dashed var(--border)",
+              flex: "none",
+            }}
+          />
+        )}
+        <div className="stack-sm">
+          <span className="muted small">{summary}</span>
+          <div className="row gap-sm">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void upload(file);
+              }}
+            />
+            <button
+              type="button"
+              className={`btn btn-sm${photo ? " btn-ghost" : " btn-primary"}`}
+              disabled={busy !== null}
+              onClick={() => fileRef.current?.click()}
+            >
+              {photo ? "Replace photo" : "Upload photo"}
+            </button>
+            {photo && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={busy !== null}
+                onClick={() => void remove()}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {error && (
+            <span className="small" style={{ color: "var(--danger)" }}>
+              {error}
+            </span>
+          )}
         </div>
       </div>
     </div>

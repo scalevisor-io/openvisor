@@ -3,6 +3,7 @@ import type {
   AdminProgram,
   AdminProjectSummary,
   AdminSettings,
+  ConsultantPhoto,
   KbTiers,
   KnowledgeBase,
   AdminUser,
@@ -454,6 +455,15 @@ export const tokensApi = {
 
 // --- Admin ---
 export const adminApi = {
+  // §consultant photo: a multipart PUT (the bytes decide the type). The public
+  // URL carries the content hash so a fresh upload shows at once on the page.
+  uploadConsultantPhoto: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.putForm<ConsultantPhoto>("/admin/settings/consultant-photo", fd);
+  },
+  removeConsultantPhoto: () => api.del<void>("/admin/settings/consultant-photo"),
+  consultantPhotoUrl: (sha256: string) => `/api/meta/consultant-photo?v=${sha256}`,
   overview: () =>
     api.get<{ projects: AdminProjectSummary[]; counts: { by_status: Record<string, number> } }>(
       "/admin/overview",

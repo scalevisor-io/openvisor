@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ from app.schemas.schemas import (
     ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, dev_concurrency, egress, hub_events,
+    app_settings, brand, consultant_photo, dev_concurrency, egress, hub_events,
     routines as routines_svc, speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
@@ -102,6 +102,7 @@ async def _settings_out(db: AsyncSession) -> dict:
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
     out.update(await app_settings.get_legal_identity(db))
+    out["consultant_photo"] = await consultant_photo.describe(db)
     return out
 
 
@@ -155,6 +156,28 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
         db, name=body.legal_name, address=body.legal_address)
     await db.commit()
     return await _settings_out(db)
+
+
+@router.put("/settings/consultant-photo")
+async def upload_consultant_photo(file: UploadFile, db: AsyncSession = Depends(get_db)):
+    """§consultant photo: store or replace the portrait the landing shows next to
+    the consultant's name. Judged by its bytes and a size cap, never by the
+    client's content type (`services/consultant_photo`)."""
+    data = await file.read()
+    try:
+        row = await consultant_photo.put(db, data)
+    except consultant_photo.PhotoError as exc:
+        raise HTTPException(exc.status, exc.detail)
+    await db.commit()
+    return consultant_photo.meta(row)
+
+
+@router.delete("/settings/consultant-photo", status_code=204)
+async def remove_consultant_photo(db: AsyncSession = Depends(get_db)):
+    """Remove the portrait: the landing goes back to its photo-less layout."""
+    await consultant_photo.delete(db)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/knowledge/reindex")

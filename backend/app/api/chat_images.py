@@ -17,24 +17,12 @@ from app.core.db import get_db
 from app.core.deps import get_current_user, get_project_for_user
 from app.models import ChatImage, Project, User
 from app.services import vision
+from app.services.images import sniff_image
 
 router = APIRouter(prefix="/api/projects/{project_id}/chat-images", tags=["chat"])
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_PER_MESSAGE = 4
-# What a vision model actually accepts, and what a browser will render back.
-# Sniffed from the magic bytes, never from the client's content-type header -
-# and hand-rolled because imghdr is deprecated and gone in Python 3.13.
-def sniff_image(data: bytes) -> str | None:
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
 
 
 def image_out(img: ChatImage) -> dict:
@@ -66,7 +54,8 @@ async def upload_images(files: list[UploadFile],
         if len(data) > MAX_IMAGE_BYTES:
             raise HTTPException(413, f"Images are limited to "
                                      f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB")
-        # Trust the bytes, not the client's content-type header.
+        # Trust the bytes, not the client's content-type header (PNG/JPEG/GIF/WebP:
+        # what a vision model accepts and a browser renders back).
         mime = sniff_image(data)
         if mime is None:
             raise HTTPException(415, "Images must be PNG, JPEG, WebP or GIF")

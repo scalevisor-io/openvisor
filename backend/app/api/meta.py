@@ -1,9 +1,9 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.services import app_settings
+from app.services import app_settings, consultant_photo
 from app.services.pricing import load_static
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
@@ -43,6 +43,25 @@ async def legal(response: Response, db: AsyncSession = Depends(get_db)):
     # follow within the minute, and these two pages are low-traffic.
     response.headers["Cache-Control"] = "public, max-age=60"
     return await app_settings.get_legal_identity(db)
+
+
+@router.get("/consultant-photo")
+async def consultant_photo_bytes(request: Request, db: AsyncSession = Depends(get_db)):
+    """§consultant photo: the admin's portrait for the landing, as uploaded on the
+    Settings page. 404 until one exists - the landing (a static build on another
+    host) points an <img> here and reveals its photo slots only on load, so an
+    instance without a photo renders its photo-less layout. Plain image bytes:
+    an <img> needs no CORS, so this route sends none. The ETag is the content
+    hash and the cache is short, so a new upload reaches the landing within the
+    minute while an unchanged one revalidates for free."""
+    row = await consultant_photo.get(db)
+    if row is None:
+        raise HTTPException(404, "No consultant photo")
+    etag = f'"{row.sha256}"'
+    headers = {"Cache-Control": "public, max-age=60", "ETag": etag}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(content=row.data, media_type=row.content_type, headers=headers)
 
 
 @router.get("/config")
