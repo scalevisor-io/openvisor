@@ -76,3 +76,27 @@ def test_fetch_tools_completes_jsonrpc_handshake(monkeypatch):
                         lambda *a, **k: real_client(transport=httpx.MockTransport(handler)))
     tools = mcp_scan.fetch_tools("https://x.example/mcp", "key")
     assert tools == [{"name": "clean", "description": "a normal tool"}]
+
+
+def test_fingerprint_server_takes_a_url_not_a_tool_list(monkeypatch):
+    """The admin enable path fingerprints a LIVE server, and once called
+    `fingerprint_tools(url, key)` - which takes a tool list, so every enable
+    500ed. Pin the two apart: one hashes a list, one takes a URL and a key."""
+    import inspect
+
+    assert list(inspect.signature(mcp_scan.fingerprint_tools).parameters) == ["tools"]
+    assert list(inspect.signature(mcp_scan.fingerprint_server).parameters) == ["url", "api_key"]
+
+    monkeypatch.setattr(mcp_scan, "fetch_tools",
+                        lambda url, api_key=None, timeout=6.0: [{"name": "t", "description": "d"}])
+    assert mcp_scan.fingerprint_server("http://x/mcp", None) == \
+        mcp_scan.fingerprint_tools([{"name": "t", "description": "d"}])
+
+
+def test_fingerprint_server_is_none_when_unreachable(monkeypatch):
+    # A transient outage must not be recorded as a changed tool set.
+    def _boom(url, api_key=None, timeout=6.0):
+        raise RuntimeError("unreachable")
+
+    monkeypatch.setattr(mcp_scan, "fetch_tools", _boom)
+    assert mcp_scan.fingerprint_server("http://x/mcp") is None

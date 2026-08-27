@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -2174,7 +2174,9 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
     `enabled` unless the project overrides it (tri-state), URL per-project
     overridable (a customer's own self-hosted GitLab MCP endpoint), and the key
     resolved project override → project/org Memory secret (GITHUB_TOKEN /
-    GITLAB_TOKEN) → global tool key."""
+    GITLAB_TOKEN) → global tool key. The §web research row resolves to the
+    sidecar route serving exactly the capabilities it still has enabled, so a
+    capability the admin turned off is missing from the run's tools/list."""
     rows = db.execute(select(Tool).order_by(Tool.created_at)).scalars().all()
     if not rows:
         return []
@@ -2192,6 +2194,10 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
         if not enabled:
             continue
         url = (ov.url if ov and ov.url else t.url)
+        if t.kind == donsetch.KIND:
+            url = donsetch.tool_endpoint(t, url)
+            if url is None:
+                continue  # every capability turned off - nothing to offer
         key = None
         if ov and ov.api_key_enc:
             key = decrypt(ov.api_key_enc)

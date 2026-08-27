@@ -98,6 +98,16 @@ def fingerprint_tools(tools: list) -> str:
     return hashlib.sha256(" ".join(norm).encode("utf-8")).hexdigest()
 
 
+def fingerprint_server(url: str, api_key: str | None = None) -> str | None:
+    """`fingerprint_tools` for a live server: fetch its tools, hash them. None when
+    the server can't be reached - a fingerprint is rug-pull evidence, and a
+    transient outage must not be recorded as a changed tool set."""
+    try:
+        return fingerprint_tools(fetch_tools(url, api_key))
+    except Exception:
+        return None
+
+
 def _parse_jsonrpc(resp: httpx.Response) -> dict:
     """MCP streamable HTTP answers either JSON or an SSE event stream; handle both."""
     if "text/event-stream" in resp.headers.get("content-type", ""):

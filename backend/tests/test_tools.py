@@ -37,7 +37,7 @@ def test_seed_tools_idempotent():
     seed_tools()
     with SyncSession() as db:
         rows = db.execute(select(Tool)).scalars().all()
-        assert sorted(t.slug for t in rows) == ["github", "gitlab"]
+        assert sorted(t.slug for t in rows) == ["donsetch", "github", "gitlab"]
         assert all(not t.enabled for t in rows) or True  # default off unless admin enabled
 
 
@@ -139,10 +139,10 @@ def _admin_login(client):
 def test_admin_tools_flow(client, monkeypatch):
     from app.api import tools as tools_api
     monkeypatch.setattr(tools_api.mcp_scan, "audit_server", lambda url, key: ([], None))
-    monkeypatch.setattr(tools_api.mcp_scan, "fingerprint_tools", lambda url, key: "fp")
+    monkeypatch.setattr(tools_api.mcp_scan, "fingerprint_server", lambda url, key: "fp")
     h = _admin_login(client)
     rows = client.get("/api/admin/tools").json()
-    assert sorted(t["slug"] for t in rows) == ["github", "gitlab"]
+    assert sorted(t["slug"] for t in rows) == ["donsetch", "github", "gitlab"]
     gl = next(t for t in rows if t["slug"] == "gitlab")
     r = client.patch(f"/api/admin/tools/{gl['id']}",
                      json={"url": "https://gitlab.acme.example/api/v4/mcp",

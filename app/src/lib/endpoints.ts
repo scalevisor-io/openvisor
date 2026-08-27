@@ -516,13 +516,17 @@ export type Tool = {
   id: string;
   slug: string;
   name: string;
-  kind: "github" | "gitlab" | "custom";
+  kind: "github" | "gitlab" | "custom" | "donsetch";
   url: string;
   enabled: boolean;
   has_api_key: boolean;
   // §Tools: the MCP server key the agent addresses this tool by - the string to
   // quote in project instructions.
   mcp_server: string;
+  // §web research only: the capabilities builds may call, and the full menu to
+  // render them against. Absent on every other kind.
+  capabilities?: string[];
+  all_capabilities?: { slug: string; label: string }[];
 };
 
 export type ProjectTool = Tool & {
@@ -534,7 +538,8 @@ export type ProjectTool = Tool & {
 
 export const toolsApi = {
   list: () => api.get<Tool[]>("/admin/tools"),
-  patch: (id: string, body: { url?: string; api_key?: string; enabled?: boolean }) =>
+  patch: (id: string,
+          body: { url?: string; api_key?: string; enabled?: boolean; capabilities?: string[] }) =>
     api.patch<Tool>(`/admin/tools/${id}`, body),
   verify: (id: string) =>
     api.post<{ ok: boolean; detail: string }>(`/admin/tools/${id}/verify`, {}),

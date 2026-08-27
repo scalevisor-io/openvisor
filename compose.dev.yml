@@ -28,6 +28,9 @@ services:
       # policy (mcp/main.py) - the sidecar ships as a separate image with no test
       # harness of its own. Dev/test only; the built api image never carries it.
       - ./mcp:/app/mcp_src:ro
+      # Same rationale for the web-research bridge (donsetch/bridge.py): its own
+      # image, so mount the source read-only for the sidecar test.
+      - ./donsetch:/app/donsetch_src:ro
       # Same rationale for the dev runner's pre-publish leak scan (runner/leak_scan.py):
       # a separate image, so mount its source read-only for the leak-scan test.
       - ./runner:/app/runner_src:ro

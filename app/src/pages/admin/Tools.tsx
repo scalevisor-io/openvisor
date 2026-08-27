@@ -16,6 +16,8 @@ const KIND_COPY: Record<string, string> = {
     "Give the agent hands on GitHub: open and update pull requests, read and comment on issues, and review code on connected repositories.",
   gitlab:
     "Give the agent hands on GitLab: merge requests, issues and reviews - on gitlab.com or your own self-hosted instance.",
+  donsetch:
+    "Let the agent research the live web: search, read a page as clean markdown, or crawl a documentation site. Keyless - no account, no API key. Choose below which of the three it may use.",
 };
 
 // Brand tiles in the ProgramIcon duotone family. GitHub sits on the family's
@@ -24,6 +26,7 @@ const KIND_COPY: Record<string, string> = {
 const KIND_GRADIENT: Record<string, [string, string]> = {
   github: ["#64748b", "#334155"],
   gitlab: ["#fc6d26", "#e24329"],
+  donsetch: ["#0ea5e9", "#4338ca"],
 };
 
 const GITHUB_GLYPH = {
@@ -35,9 +38,19 @@ const GITLAB_GLYPH = {
   d: "m23.6 9.593-.033-.086L20.3 1.011a.851.851 0 0 0-.336-.405.875.875 0 0 0-1 .054.875.875 0 0 0-.29.44l-2.207 6.748H7.537L5.33 1.1a.858.858 0 0 0-.29-.441.875.875 0 0 0-1-.054.86.86 0 0 0-.336.405L.437 9.502l-.032.086a6.066 6.066 0 0 0 2.012 7.01l.011.009.03.021 4.977 3.727 2.462 1.863 1.5 1.132a1.009 1.009 0 0 0 1.22 0l1.499-1.132 2.462-1.863 5.006-3.75.013-.01a6.068 6.068 0 0 0 2.003-7.002Z",
 };
 
+// A globe under a magnifier: the web, searched.
+const DONSETCH_GLYPH = {
+  box: 24,
+  d: "M10.5 2a8.5 8.5 0 1 0 5.262 15.176l4.03 4.031a1 1 0 0 0 1.415-1.414l-4.03-4.031A8.5 8.5 0 0 0 10.5 2Zm0 2c.9 0 1.86 1.01 2.4 2.75H8.1C8.64 5.01 9.6 4 10.5 4ZM7.7 8.25h5.6a11.6 11.6 0 0 1 0 4.5H7.7a11.6 11.6 0 0 1 0-4.5Zm-1.55 4.5H4.29a6.53 6.53 0 0 1 0-4.5h1.86a13.6 13.6 0 0 0 0 4.5Zm.5 2h1.45c.29.96.68 1.79 1.15 2.42a6.53 6.53 0 0 1-2.6-2.42Zm4.35 2.75c-.9 0-1.86-1.01-2.4-2.75h4.8c-.54 1.74-1.5 2.75-2.4 2.75Zm2.9-.33c.47-.63.86-1.46 1.15-2.42h1.45a6.53 6.53 0 0 1-2.6 2.42Zm1.55-4.42a13.6 13.6 0 0 0 0-4.5h1.86a6.53 6.53 0 0 1 0 4.5h-1.86Zm-.4-6.5c-.29-.96-.68-1.79-1.15-2.42a6.53 6.53 0 0 1 2.6 2.42h-1.45Zm-6.85 0H6.75a6.53 6.53 0 0 1 2.6-2.42c-.47.63-.86 1.46-1.15 2.42Z",
+};
+
 function ToolIcon({ tool, size = 56 }: { tool: Tool; size?: number }) {
   const grad = KIND_GRADIENT[tool.kind];
-  const glyph = tool.kind === "github" ? GITHUB_GLYPH : tool.kind === "gitlab" ? GITLAB_GLYPH : null;
+  const glyph =
+    tool.kind === "github" ? GITHUB_GLYPH
+    : tool.kind === "gitlab" ? GITLAB_GLYPH
+    : tool.kind === "donsetch" ? DONSETCH_GLYPH
+    : null;
   if (!grad || !glyph) return <ProgramIcon title={tool.name} seed={tool.id} size={size} />;
   return (
     <span
@@ -79,7 +92,7 @@ export default function Tools() {
 
   async function save(
     t: Tool,
-    patch: { url?: string; api_key?: string; enabled?: boolean },
+    patch: { url?: string; api_key?: string; enabled?: boolean; capabilities?: string[] },
     doneMessage?: string,
   ) {
     setBusy(t.id);
@@ -160,6 +173,25 @@ export default function Tools() {
             <div onClick={(e) => e.stopPropagation()}>
               <McpNameChip server={t.mcp_server} />
             </div>
+            {/* Not wrapped in a stopPropagation guard: the chips are read-only,
+                so they must not steal the click that opens the card. */}
+            {t.all_capabilities && (
+              <div className="row gap-sm wrap">
+                {t.all_capabilities.map((c) => (
+                  <span
+                    key={c.slug}
+                    className={`chip tiny ${t.capabilities?.includes(c.slug) ? "" : "faint"}`}
+                    title={
+                      t.capabilities?.includes(c.slug)
+                        ? `${c.label} is available to builds`
+                        : `${c.label} is turned off - builds never see it`
+                    }
+                  >
+                    {t.capabilities?.includes(c.slug) ? "✓" : "✗"} {c.label}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -189,6 +221,47 @@ export default function Tools() {
           <p className="muted small" style={{ marginTop: "0.35rem" }}>
             {KIND_COPY[selected.kind] ?? "An MCP service the development agent can act through during builds."}
           </p>
+          {selected.kind === "donsetch" && selected.all_capabilities && (
+            <div className="field mt">
+              <label>Capabilities</label>
+              <p className="tiny faint" style={{ marginTop: 0 }}>
+                What a build may call. A capability turned off here is absent from the
+                agent's tool list for every run - not merely discouraged.
+              </p>
+              {selected.all_capabilities.map((c) => {
+                const on = selected.capabilities?.includes(c.slug) ?? false;
+                const last = on && (selected.capabilities?.length ?? 0) === 1;
+                return (
+                  <div key={c.slug} className="row gap-sm mt" style={{ alignItems: "center" }}>
+                    <Toggle
+                      checked={on}
+                      disabled={busy === selected.id || (last && selected.enabled)}
+                      title={
+                        last && selected.enabled
+                          ? "The last capability - disable the tool itself instead"
+                          : undefined
+                      }
+                      onChange={(v) => {
+                        const cur = selected.capabilities ?? [];
+                        const next = v ? [...cur, c.slug] : cur.filter((x) => x !== c.slug);
+                        save(
+                          selected,
+                          { capabilities: next },
+                          `${c.label} ${v ? "enabled" : "disabled"}.`,
+                        );
+                      }}
+                    />
+                    <span className="small">{c.label}</span>
+                  </div>
+                );
+              })}
+              <p className="tiny faint mt">
+                Page fetch and site crawl reach arbitrary public pages; private and
+                loopback addresses are refused by the engine. Search alone is the
+                low-blast-radius option.
+              </p>
+            </div>
+          )}
           <div className="field mt">
             <label>
               MCP endpoint URL{" "}
@@ -222,7 +295,14 @@ export default function Tools() {
                 it per customer instance.
               </p>
             )}
+            {selected.kind === "donsetch" && (
+              <p className="tiny faint mt">
+                The web-research sidecar's base URL. The path a build receives is derived
+                from the capabilities above, so it changes when you toggle them.
+              </p>
+            )}
           </div>
+          {selected.kind !== "donsetch" && (
           <div className="field mt">
             <label>
               API key{" "}
@@ -255,6 +335,13 @@ export default function Tools() {
               prefer the project's own Memory token when present.
             </p>
           </div>
+          )}
+          {selected.kind === "donsetch" && (
+            <p className="tiny faint mt">
+              No API key: the engine queries public search backends directly and holds no
+              account. Nothing to configure beyond the capabilities above.
+            </p>
+          )}
           <div className="row gap-sm mt">
             <button className="btn btn-sm" disabled={busy === selected.id} onClick={() => testTool(selected)}>
               {busy === selected.id ? <Spinner /> : "Test connection"}

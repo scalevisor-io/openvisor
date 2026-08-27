@@ -319,10 +319,14 @@ class KnowledgeBaseCreateIn(BaseModel):
 
 class ToolPatchIn(BaseModel):
     """§Tools global row edit: URL (self-hosted GitLab MCP endpoints), key
-    (empty string clears), enable flag (enabling re-scans server-side)."""
+    (empty string clears), enable flag (enabling re-scans server-side).
+    `capabilities` applies to the §web research row only - the subset of
+    search/fetch/crawl a build may call; an empty list leaves it with nothing to
+    offer and is refused while the row is enabled."""
     url: str | None = Field(default=None, max_length=512)
     api_key: str | None = Field(default=None, max_length=4000)
     enabled: bool | None = None
+    capabilities: list[str] | None = Field(default=None, max_length=8)
 
 
 class ProjectToolPatchIn(BaseModel):
