@@ -210,7 +210,7 @@ case "$ACTION" in
         DOCKER_DEFAULT_PLATFORM="$IMAGE_PLATFORM" APP_URL="$APP_URL" SITE_URL="$SITE_URL" \
             docker compose -f compose.base.yml -f compose.prod.yml --profile build-only build
         APP_URL="$APP_URL" SITE_URL="$SITE_URL" docker compose -f compose.base.yml -f compose.prod.yml \
-            push api mcp deployer app landing runner
+            push api mcp donsetch-mcp deployer app landing runner
         echo "SUCCESS: images built + pushed"
         ;;
 
