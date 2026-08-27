@@ -591,7 +591,7 @@ export interface SpecialityFeeRow {
 // only whether one is set (has_api_key).
 export interface KnowledgeBase {
   id: string;
-  kind: "local" | "context7" | "mcp" | "websearch" | "git";
+  kind: "local" | "context7" | "mcp" | "git";
   name: string;
   // §KB: what a dev run calls this source - the string to quote in project
   // instructions. null for retrieval-only kinds (local/git), which are read

@@ -1,4 +1,4 @@
-"""§KB websearch kind: server-side provider-key verification.
+"""§Tools websearch kinds: the provider contract and server-side key verification.
 
 A websearch row can only be enabled once its API key passes a live probe against
 the provider (never trust the client - same discipline as the git-source
@@ -12,8 +12,41 @@ SERPER_API_BASE = "https://google.serper.dev"
 STAAN_API_BASE = "https://api.staan.ai/v2"
 _PROBE_TIMEOUT = 12.0
 
-# Providers an admin can enable; seed.py creates one row per slug.
+# Providers an admin can enable; seed.py creates one §Tools row per slug.
 PROVIDERS = ("serper", "staan")
+
+KIND = "websearch"
+
+# Display names for the seeded rows, and the shelf copy each card carries.
+PROVIDER_NAMES = {
+    "serper": "Web search - Serper (Google)",
+    "staan": "Web search - Staan (European index)",
+}
+
+
+def tool_slug(provider: str) -> str:
+    """The §Tools slug for a provider.
+
+    It keeps the `websearch_` prefix the dispatcher used to derive from the KB
+    row's name, because `mcp_names.tool_server_name` slugs THIS string and that
+    is the name a run addresses the server by - the one project instructions
+    quote. Renaming it to a bare `serper` would silently break every instruction
+    that says `websearch_serper`.
+    """
+    return f"websearch_{provider}"
+
+
+def provider_of(tool) -> str | None:
+    """The provider a §Tools row speaks for, or None when it is not one of ours."""
+    if tool.kind != KIND:
+        return None
+    provider = (tool.params or {}).get("provider")
+    return provider if provider in PROVIDERS else None
+
+
+def endpoint(base_url: str, provider: str) -> str:
+    """The websearch-mcp sidecar route serving one provider."""
+    return f"{base_url.rstrip('/')}/{provider}/mcp"
 
 
 def verify_key(provider: str, key: str) -> tuple[bool, str]:

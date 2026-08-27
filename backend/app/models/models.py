@@ -780,11 +780,15 @@ class Tool(Base):
     """An instance-admin-level MCP tool the dev agent can call during builds
     (§Tools) - distinct from knowledge bases: a tool ACTS (GitHub/GitLab PR,
     issue and review operations), a KB informs. Global rows seeded per kind
-    (github, gitlab, donsetch - disabled until configured); per-project
-    overrides live in ProjectToolConfig. `params` carries per-kind settings: the
-    donsetch row stores {"capabilities": [...]} (§web research), the subset of
-    search/fetch/crawl a build may call, and its `url` is the sidecar BASE
-    because the served path is derived from that subset. The GitLab row's `url` points at the instance's MCP
+    (github, gitlab, donsetch, and one websearch row per provider - all disabled
+    until configured); per-project overrides live in ProjectToolConfig. `params`
+    carries per-kind settings: the donsetch row stores {"capabilities": [...]}
+    (§web research), the subset of search/fetch/crawl a build may call, and its
+    `url` is the sidecar BASE because the served path is derived from that
+    subset; a `websearch` row stores {"provider": "serper"|"staan"} and its `url`
+    is that provider's fixed route on the websearch-mcp sidecar. Enabling a
+    websearch row re-probes its key against the PROVIDER on top of the poisoning
+    scan, the way the KB page did before web search moved here. The GitLab row's `url` points at the instance's MCP
     endpoint (https://<host>/api/v4/mcp), so self-hosted instances are plain
     configuration. `api_key_enc` is envelope-encrypted and never leaves the
     server (the API exposes has_api_key only); `tools_fingerprint` supports the
@@ -821,18 +825,17 @@ class ProjectToolConfig(Base):
 
 class KnowledgeBase(Base):
     """An instance-admin-level knowledge source the dev agent can consult (§KB).
-    Global (spoke-wide, the owner's - not per customer org, no org_id). Five kinds:
+    Global (spoke-wide, the owner's - not per customer org, no org_id). Four kinds:
     `local` (the /knowledge Meilisearch KB), `context7` (the repo's Context7 MCP),
-    `mcp` (a generic MCP endpoint the admin adds by URI + optional API key),
-    `websearch` (a seeded web-search provider - `uri` holds the provider slug, e.g.
-    `serper` - served to dev runs by the websearch-mcp sidecar with the row's key;
-    seeded disabled, non-removable, enable requires a verified key), and `git` (a
-    git repo cloned by the worker and indexed into the local KB index alongside
-    /knowledge). The `local` and `context7` rows are seeded once, non-removable,
-    and only their `enabled` flag is editable; `mcp` and `git` rows are user-added
-    and fully editable/removable. At most one `local` and one `context7` row, and
-    one `websearch` row per provider, is enforced by the seed, the API, and the
-    partial-unique indexes below. `git` rows are unconstrained (many allowed).
+    `mcp` (a generic MCP endpoint the admin adds by URI + optional API key), and
+    `git` (a git repo cloned by the worker and indexed into the local KB index
+    alongside /knowledge). A knowledge base is a CORPUS the agent consults - the
+    web-search providers are `Tool` rows, because a keyed SERP API is a capability
+    the agent HAS, not a corpus anyone owns. The `local` and `context7` rows are
+    seeded once, non-removable, and only their `enabled` flag is editable; `mcp`
+    and `git` rows are user-added and fully editable/removable. At most one `local`
+    and one `context7` row is enforced by the seed, the API, and the partial-unique
+    index below. `git` rows are unconstrained (many allowed).
 
     Git-source columns (all nullable so local/context7/mcp rows are unaffected):
     `auth_kind` ssh|http, `ref` the branch, `ssh_public_key` (the platform-generated
@@ -869,8 +872,6 @@ class KnowledgeBase(Base):
     __table_args__ = (
         Index("uq_kb_singleton_kind", "kind", unique=True,
               postgresql_where=text("kind IN ('local', 'context7')")),
-        Index("uq_kb_websearch_provider", "uri", unique=True,
-              postgresql_where=text("kind = 'websearch'")),
     )
 
 

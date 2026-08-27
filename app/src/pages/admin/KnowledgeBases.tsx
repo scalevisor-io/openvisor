@@ -13,19 +13,6 @@ import type { KbTiers, KnowledgeBase } from "../../types";
 // api_key/PAT or an SSH private key - only whether one is set - so no secret is
 // rendered here (an SSH source's PUBLIC deploy key is shown so it can be installed).
 
-// Provider help shown under a websearch row (kb.uri is the provider slug).
-const WEBSEARCH_HINT: Record<string, { blurb: string; keyUrl: string }> = {
-  serper: {
-    blurb: "Google results through the Serper API, exposed to the dev agent as a web_search tool.",
-    keyUrl: "https://serper.dev",
-  },
-  staan: {
-    blurb:
-      "European search index (Qwant + Ecosia joint venture) - queries stay under EU jurisdiction. Needs the Web-for-AI product.",
-    keyUrl: "https://staan.ai",
-  },
-};
-
 export default function KnowledgeBases() {
   const toast = useToast();
   const [kbs, setKbs] = useState<KnowledgeBase[] | null>(null);
@@ -33,7 +20,6 @@ export default function KnowledgeBases() {
   const [editing, setEditing] = useState<KnowledgeBase | "new" | null>(null);
   const [addingGit, setAddingGit] = useState(false);
   const [gitEditing, setGitEditing] = useState<KnowledgeBase | null>(null);
-  const [keyEditing, setKeyEditing] = useState<KnowledgeBase | null>(null);
   const [tiersFor, setTiersFor] = useState<KnowledgeBase | null>(null);
 
   function load() {
@@ -56,7 +42,7 @@ export default function KnowledgeBases() {
     try {
       await kbApi.update(kb.id, { enabled });
       toast.push(enabled ? "Knowledge base enabled" : "Knowledge base disabled", "ok");
-      if (kb.kind === "git" || kb.kind === "websearch") load();
+      if (kb.kind === "git") load();
     } catch (err) {
       setKbs(previous ?? null); // revert
       toast.push(err instanceof Error ? err.message : "Could not save.", "err");
@@ -142,14 +128,12 @@ export default function KnowledgeBases() {
                     className={`badge ${
                       kb.kind === "git"
                         ? "badge-kb-git"
-                        : kb.kind === "websearch"
-                          ? "badge-kb-websearch"
-                          : builtin
-                            ? "badge-kb-builtin"
-                            : "badge-kb-mcp"
+                        : builtin
+                          ? "badge-kb-builtin"
+                          : "badge-kb-mcp"
                     }`}
                   >
-                    {kb.kind === "git" ? "Git" : kb.kind === "websearch" ? "Web search" : builtin ? "Built-in" : "MCP"}
+                    {kb.kind === "git" ? "Git" : builtin ? "Built-in" : "MCP"}
                   </span>
                   <strong>{kb.name}</strong>
                   {kb.kind === "git" && (
@@ -170,12 +154,6 @@ export default function KnowledgeBases() {
                 {kb.kind === "mcp" && (
                   <div className="muted small mt-xs" style={{ wordBreak: "break-all" }}>
                     {kb.uri}
-                    {kb.has_api_key ? " · API key set" : " · no API key"}
-                  </div>
-                )}
-                {kb.kind === "websearch" && (
-                  <div className="muted small mt-xs">
-                    {WEBSEARCH_HINT[kb.uri ?? ""]?.blurb ?? "Web search for the dev agent."}
                     {kb.has_api_key ? " · API key set" : " · no API key"}
                   </div>
                 )}
@@ -259,16 +237,6 @@ export default function KnowledgeBases() {
                       Edit
                     </button>
                   )}
-                  {kb.kind === "websearch" && (
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      disabled={busyId === kb.id}
-                      onClick={() => setKeyEditing(kb)}
-                    >
-                      {kb.has_api_key ? "Replace API key" : "Set API key"}
-                    </button>
-                  )}
                   {kb.is_removable && (
                     <button
                       type="button"
@@ -283,12 +251,7 @@ export default function KnowledgeBases() {
               </div>
               <Toggle
                 checked={kb.enabled}
-                disabled={busyId === kb.id || (kb.kind === "websearch" && !kb.enabled && !kb.has_api_key)}
-                title={
-                  kb.kind === "websearch" && !kb.enabled && !kb.has_api_key
-                    ? "Set the provider API key first"
-                    : undefined
-                }
+                disabled={busyId === kb.id}
                 onChange={(v) => toggle(kb, v)}
               />
             </div>
@@ -321,16 +284,6 @@ export default function KnowledgeBases() {
           onClose={() => setGitEditing(null)}
           onSaved={() => {
             setGitEditing(null);
-            load();
-          }}
-        />
-      )}
-      {keyEditing && (
-        <WebsearchKeyModal
-          kb={keyEditing}
-          onClose={() => setKeyEditing(null)}
-          onSaved={() => {
-            setKeyEditing(null);
             load();
           }}
         />
@@ -542,66 +495,6 @@ function TiersModal({ kb, onClose }: { kb: KnowledgeBase; onClose: () => void })
 
 // Set/replace a seeded web-search provider's API key. Enabling happens with the
 // row toggle afterwards (the API re-verifies the key server-side at that point).
-function WebsearchKeyModal({
-  kb,
-  onClose,
-  onSaved,
-}: {
-  kb: KnowledgeBase;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const toast = useToast();
-  const [apiKey, setApiKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const hint = WEBSEARCH_HINT[kb.uri ?? ""];
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await kbApi.update(kb.id, { api_key: apiKey.trim() });
-      toast.push("API key saved - enable the source to start using it", "ok");
-      onSaved();
-    } catch (err) {
-      toast.push(err instanceof Error ? err.message : "Could not save the key.", "err");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal title={`API key - ${kb.name}`} onClose={onClose}>
-      {hint && (
-        <p className="muted small mb">
-          {hint.blurb} Get a key at <a href={hint.keyUrl} target="_blank" rel="noreferrer">{hint.keyUrl.replace("https://", "")}</a>.
-        </p>
-      )}
-      <form onSubmit={submit}>
-        <label className="field">
-          <span>API key</span>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={kb.has_api_key ? "••••••••" : ""}
-            autoComplete="new-password"
-            required
-          />
-        </label>
-        <div className="row gap-sm mt">
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            Save key
-          </button>
-          <button type="button" className="btn" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 // Two-step onboarding for a git knowledge source. Step 1 collects the URL + auth
 // mode (SSH: the platform generates a deploy keypair; HTTP: the admin provides a
 // PAT). Step 2 shows the generated SSH public key (for SSH) and runs the live

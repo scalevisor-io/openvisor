@@ -1,7 +1,7 @@
 """What a knowledge source or tool is CALLED inside a dev run.
 
 The agent addresses an MCP server by a key in its `mcp.json`, and that key is
-derived from a display name - so "Web search - Staan (European index)" is
+derived from a display name or a §Tools slug - so the Staan provider is
 `websearch_staan` to the agent and to whoever writes project instructions
 mentioning it. The derivation lived only in the dispatcher, which meant the
 admin pages could show a source without ever showing the one string you have to
@@ -19,7 +19,6 @@ RESERVED = ("browser", "context7")
 # third-party MCP server's tool names are its own business (we only vet them at
 # enable time) - the server key is what the UI can promise.
 KNOWN_TOOLS = {
-    "websearch": ("web_search",),
     "context7": ("resolve-library-id", "get-library-docs"),
 }
 
@@ -49,8 +48,6 @@ def kb_server_name(kb) -> str | None:
         return None
     if kb.kind == "context7":
         return "context7"
-    if kb.kind == "websearch":
-        return server_name(f"websearch-{kb.uri or ''}")
     return server_name(kb.name)
 
 
