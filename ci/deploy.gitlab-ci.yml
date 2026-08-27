@@ -38,7 +38,7 @@
 #   - on the default branch only: build every platform image via compose.prod.yml
 #     (the exact `make prod-build` artifacts - parity by construction) tagged with
 #     the commit SHA (plus `latest`, so the manual `make helm-bpdr` path stays
-#     fresh), push them, then `helm upgrade --reuse-values --set imageTag=<sha>` -
+#     fresh), push them, then `helm upgrade --reset-then-reuse-values --set imageTag=<sha>` -
 #     the per-commit tag guarantees a real rollout and keeps helm history
 #     rollback-able (`helm rollback`), with readiness asserted per Deployment by
 #     `kubectl rollout status` rather than by helm's own --wait.
@@ -50,7 +50,7 @@
 #     `helm status` finds the release, so pointing KUBECONFIG at a
 #     not-yet-migrated cluster never fails the pipeline;
 #   - sync the openvisor-env Secret (.env changes), re-render chart values
-#     (--reuse-values keeps the stored ones), or apply Gateway/Traefik CRDs.
+#     (--reset-then-reuse-values keeps the stored ones), or apply Gateway/Traefik CRDs.
 #     A release that introduces NEW chart values needs one manual deploy.
 #
 # Runner requirements: none beyond a working executor. The build job brings its
@@ -262,7 +262,14 @@ deploy:
     # is then asserted per Deployment by kubectl - the same two-step `make
     # helm-bpdr` runs by hand. --debug keeps the phase log in the job output, so
     # a stall names its own step instead of being a silent 20 minutes.
-    - helm upgrade "$RELEASE_NAME" ./k8s --namespace "$NAMESPACE" --reuse-values --set-string imageTag="$CI_COMMIT_SHORT_SHA" --timeout 12m --debug
+    # --reset-then-reuse-values, not --reuse-values: the latter also reuses the
+    # PREVIOUS chart's built-in defaults, so a key a new template reads for the
+    # first time renders as nil and the upgrade fails before anything is applied
+    # (three consecutive main deploys did, 2026-08-27, on `.Values.donsetch.enabled`).
+    # This one re-reads the chart's defaults and re-applies only the stored
+    # overrides - the values the manual path installed - which is what "keep the
+    # cluster's configuration, take the new chart" means.
+    - helm upgrade "$RELEASE_NAME" ./k8s --namespace "$NAMESPACE" --reset-then-reuse-values --set-string imageTag="$CI_COMMIT_SHORT_SHA" --timeout 12m --debug
     - |
       for d in $(kubectl -n "$NAMESPACE" get deploy -o name); do
         kubectl -n "$NAMESPACE" rollout status "$d" --timeout=300s
