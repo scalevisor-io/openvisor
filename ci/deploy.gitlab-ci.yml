@@ -213,7 +213,7 @@ build-push:
     # keep :latest pointing at the same build so the manual make helm-bpdr
     # path (and compose prod) never runs stale images
     - |
-      for img in backend mcp deployer app landing runner; do
+      for img in backend mcp donsetch-mcp deployer app landing runner; do
         docker tag "$IMAGE_REGISTRY/$img:$CI_COMMIT_SHORT_SHA" "$IMAGE_REGISTRY/$img:latest"
         docker push "$IMAGE_REGISTRY/$img:latest"
       done
