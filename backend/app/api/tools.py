@@ -20,7 +20,7 @@ from app.core.deps import require_admin
 from app.core.encryption import decrypt, encrypt
 from app.models import Project, ProjectToolConfig, Tool
 from app.schemas.schemas import ProjectToolPatchIn, ToolPatchIn
-from app.services import donsetch, mcp_names, mcp_scan
+from app.services import donsetch, mcp_names, mcp_scan, websearch
 
 router = APIRouter(prefix="/api/admin", tags=["tools"],
                    dependencies=[Depends(require_admin)])
@@ -39,6 +39,8 @@ def _tool_out(t: Tool) -> dict:
         out["capabilities"] = donsetch.capabilities(t)
         out["all_capabilities"] = [{"slug": c, "label": donsetch.LABELS[c]}
                                    for c in donsetch.CAPABILITIES]
+    if t.kind == websearch.KIND:
+        out["provider"] = websearch.provider_of(t)
     return out
 
 
@@ -87,9 +89,20 @@ async def patch_tool(tool_id: str, body: ToolPatchIn, db: AsyncSession = Depends
             raise HTTPException(422, "Enable at least one web-research capability, "
                                      "or disable the tool")
         t.params = dict(t.params or {}) | {"capabilities": caps}
+    if t.kind == websearch.KIND and not t.api_key_enc:
+        # A keyless provider can't search; mirror the source rule the KB page had.
+        t.enabled = False
     if body.enabled is not None:
         if body.enabled:
             key = decrypt(t.api_key_enc) if t.api_key_enc else None
+            if t.kind == websearch.KIND:
+                # Never trust the client: the stored key is re-probed against the
+                # PROVIDER on every enable, on top of the sidecar poisoning scan.
+                provider = websearch.provider_of(t)
+                ok, detail = await run_in_threadpool(
+                    websearch.verify_key, provider or "", key or "")
+                if not ok:
+                    raise HTTPException(409, f"Can't enable this web-search source: {detail}")
             url = _scan_url(t)
             await run_in_threadpool(_scan_or_409, t.name, url, key)
             t.tools_fingerprint = await run_in_threadpool(

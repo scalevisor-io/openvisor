@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.db import SyncSession
 from app.core.security import hash_password
 from app.models import Tool, KnowledgeBase, Membership, Organization, User
-from app.services import donsetch
+from app.services import donsetch, websearch
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("seed")
@@ -19,15 +19,6 @@ _BUILTIN_KBS = [
     ("local", "Platform knowledge base (/knowledge)", 0),
     ("context7", "Context7 - library documentation", 1),
 ]
-
-# Built-in web-search sources (§KB websearch kind): (provider slug -> uri, name,
-# sort_order). Seeded DISABLED - enabling requires a provider API key that passes
-# the server-side verification probe.
-_WEBSEARCH_KBS = [
-    ("serper", "Web search - Serper (Google)", 2),
-    ("staan", "Web search - Staan (European index)", 3),
-]
-
 
 def seed_admin() -> None:
     with SyncSession() as db:
@@ -69,20 +60,6 @@ def seed_knowledge_bases() -> None:
                 log.info("seeded knowledge base %s", kind)
             except IntegrityError:
                 db.rollback()  # another booting container won the race - fine
-        for provider, name, order in _WEBSEARCH_KBS:
-            existing = db.execute(select(KnowledgeBase).where(
-                KnowledgeBase.kind == "websearch",
-                KnowledgeBase.uri == provider)).scalar_one_or_none()
-            if existing:
-                continue
-            db.add(KnowledgeBase(kind="websearch", name=name, uri=provider,
-                                 enabled=False, is_removable=False, sort_order=order))
-            try:
-                db.commit()
-                log.info("seeded websearch knowledge base %s", provider)
-            except IntegrityError:
-                db.rollback()  # another booting container won the race - fine
-
 
 _BUILTIN_TOOLS = [
     # (slug, name, kind, url) - disabled until the admin configures a key.
@@ -92,19 +69,31 @@ _BUILTIN_TOOLS = [
     # is the sidecar BASE; the served path carries the enabled capabilities.
     (donsetch.SLUG, "Web research (DonSeTch)", donsetch.KIND,
      settings.donsetch_mcp_url),
+    # Keyed web-search providers: one row per provider, pointing at that
+    # provider's route on the websearch-mcp sidecar. Disabled until a key passes
+    # the server-side probe.
+    *((websearch.tool_slug(p), websearch.PROVIDER_NAMES[p], websearch.KIND,
+       websearch.endpoint(settings.websearch_mcp_url, p))
+      for p in websearch.PROVIDERS),
 ]
 
 
 def seed_tools() -> None:
-    """Ensure the built-in GitHub/GitLab MCP tools exist (§Tools). Idempotent
-    per slug; the unique index absorbs a concurrent double-seed. The GitLab
-    row's URL is editable for self-hosted instances (https://<host>/api/v4/mcp)."""
+    """Ensure the built-in MCP tools exist (§Tools): GitHub, GitLab, the §web
+    research engine and one row per keyed web-search provider. Idempotent per
+    slug; the unique index absorbs a concurrent double-seed. The GitLab row's URL
+    is editable for self-hosted instances (https://<host>/api/v4/mcp)."""
     with SyncSession() as db:
         for slug, name, kind, url in _BUILTIN_TOOLS:
             if db.execute(select(Tool).where(Tool.slug == slug)).scalar_one_or_none():
                 continue
-            params = ({"capabilities": list(donsetch.DEFAULT_CAPABILITIES)}
-                      if kind == donsetch.KIND else None)
+            params = None
+            if kind == donsetch.KIND:
+                params = {"capabilities": list(donsetch.DEFAULT_CAPABILITIES)}
+            elif kind == websearch.KIND:
+                # The provider is the row's identity for verification and for the
+                # sidecar route; derive nothing from the slug at call sites.
+                params = {"provider": slug.removeprefix("websearch_")}
             db.add(Tool(slug=slug, name=name, kind=kind, url=url, enabled=False,
                         params=params))
             try:

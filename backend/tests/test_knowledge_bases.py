@@ -25,12 +25,7 @@ def _seeded_kbs():
     with SyncSession() as db:
         db.execute(delete(KnowledgeBase).where(KnowledgeBase.kind == "mcp"))
         for kb in db.execute(select(KnowledgeBase)).scalars().all():
-            if kb.kind == "websearch":
-                # Back to the seeded state: keyless and disabled.
-                kb.enabled = False
-                kb.api_key_enc = None
-            else:
-                kb.enabled = True
+            kb.enabled = True
         db.commit()
 
 
@@ -44,16 +39,12 @@ def test_seed_is_idempotent_single_builtins():
                                  .group_by(KnowledgeBase.kind)).all())
         assert counts.get("local") == 1
         assert counts.get("context7") == 1
-        assert counts.get("websearch") == 2  # one row per provider (serper, staan)
+        # Web search is not a knowledge base: a keyed SERP API is a capability,
+        # not a corpus, and its rows live in §Tools (test_websearch_tools.py).
+        assert "websearch" not in counts
         local = db.execute(select(KnowledgeBase).where(
             KnowledgeBase.kind == "local")).scalar_one()
         assert local.is_removable is False and local.enabled is True
-        providers = {kb.uri: kb for kb in db.execute(select(KnowledgeBase).where(
-            KnowledgeBase.kind == "websearch")).scalars()}
-        assert set(providers) == {"serper", "staan"}
-        for kb in providers.values():
-            # Seeded opt-in: disabled until the admin brings a verified key.
-            assert kb.enabled is False and kb.is_removable is False
 
 
 def test_disabled_local_kb_skips_retrieval_without_embedding(monkeypatch):
@@ -177,42 +168,6 @@ def test_admin_crud_flow(client, monkeypatch):
     assert client.delete(f"/api/admin/knowledge-bases/{kb['id']}",
                          headers=h).status_code == 200
 
-    # ---- websearch rows (same admin session: the login limiter is shared) ----
-    rows = client.get("/api/admin/knowledge-bases", headers=h).json()
-    ws = next(r for r in rows if r["kind"] == "websearch" and r["uri"] == "serper")
-    base = f"/api/admin/knowledge-bases/{ws['id']}"
-
-    # Seeded, not creatable, not removable, name/uri frozen.
-    assert client.post("/api/admin/knowledge-bases", headers=h,
-                       json={"kind": "websearch", "name": "x", "uri": "serper"}).status_code == 400
-    assert client.delete(base, headers=h).status_code == 400
-    assert client.patch(base, headers=h, json={"name": "hacked"}).status_code == 400
-
-    # Enabling without a key is refused without ever probing the provider.
-    assert client.patch(base, headers=h, json={"enabled": True}).status_code == 409
-
-    # Set the key: encrypted at rest, never returned, row stays disabled.
-    r = client.patch(base, headers=h, json={"api_key": "serper-secret-1"}).json()
-    assert r["has_api_key"] is True and r["enabled"] is False and "api_key" not in r
-    with SyncSession() as db:
-        row = db.get(KnowledgeBase, ws["id"])
-        assert row.api_key_enc != "serper-secret-1"
-        assert decrypt(row.api_key_enc) == "serper-secret-1"
-
-    # Enable re-verifies server-side: a rejected key 409s, a good one enables.
-    monkeypatch.setattr("app.services.websearch.verify_key",
-                        lambda provider, key: (False, "the provider rejected this API key"))
-    resp = client.patch(base, headers=h, json={"enabled": True})
-    assert resp.status_code == 409 and "rejected" in resp.json()["detail"]
-    monkeypatch.setattr("app.services.websearch.verify_key",
-                        lambda provider, key: (True, ""))
-    assert client.patch(base, headers=h, json={"enabled": True}).json()["enabled"] is True
-
-    # Clearing the key force-disables the source.
-    r = client.patch(base, headers=h, json={"api_key": ""}).json()
-    assert r["has_api_key"] is False and r["enabled"] is False
-
-
 def test_new_projects_start_with_no_knowledge_bases():
     """§KB opt-in default: a freshly created project selects NO knowledge bases
     ([]), not the legacy null/all-enabled - KBs are opted in per project."""
@@ -256,8 +211,9 @@ def test_tiers_view_and_block_override(client, monkeypatch):
         db.commit()
         local_id = db.execute(select(KnowledgeBase.id).where(
             KnowledgeBase.kind == "local")).scalar_one()
+        # context7 is a callable source, not a retrieval one - tiers must 400.
         ws_id = db.execute(select(KnowledgeBase.id).where(
-            KnowledgeBase.kind == "websearch")).scalars().first()
+            KnowledgeBase.kind == "context7")).scalars().first()
 
     fake_docs = [
         {"content": rule_text, "file": "local/conv.md", "path": "local/conv.md#0",

@@ -20,6 +20,40 @@ const KIND_COPY: Record<string, string> = {
     "Let the agent research the live web: search, read a page as clean markdown, or crawl a documentation site. Keyless - no account, no API key. Choose below which of the three it may use.",
 };
 
+// Keyed web-search providers. One §Tools row each, so the copy is per PROVIDER
+// rather than per kind - they share the `websearch` kind and differ only in
+// which index they answer from and where you buy the key.
+const PROVIDER_COPY: Record<string, { blurb: string; keyUrl: string; placeholder: string }> = {
+  serper: {
+    blurb:
+      "Google results through the Serper API, exposed to the dev agent as a web_search tool. Billed per search on your Serper account.",
+    keyUrl: "https://serper.dev",
+    placeholder: "your Serper API key",
+  },
+  staan: {
+    blurb:
+      "European search index (the Qwant + Ecosia joint venture) - queries stay under EU jurisdiction. Needs the Web-for-AI product on your Staan account.",
+    keyUrl: "https://staan.ai",
+    placeholder: "your Staan API key",
+  },
+};
+
+function toolCopy(t: Tool): string {
+  if (t.kind === "websearch") {
+    return (
+      PROVIDER_COPY[t.provider ?? ""]?.blurb ??
+      "A web-search provider the development agent can query during builds."
+    );
+  }
+  return KIND_COPY[t.kind] ?? "An MCP service the development agent can act through during builds.";
+}
+
+/** A keyed provider can't search without its key, so the switch stays locked
+ *  until one is stored - the server refuses the enable either way. */
+function needsKey(t: Tool): boolean {
+  return t.kind === "websearch" && !t.has_api_key;
+}
+
 // Brand tiles in the ProgramIcon duotone family. GitHub sits on the family's
 // slate pair; GitLab keeps its tanuki orange - brand recognition beats palette
 // purity on a store shelf.
@@ -27,6 +61,12 @@ const KIND_GRADIENT: Record<string, [string, string]> = {
   github: ["#64748b", "#334155"],
   gitlab: ["#fc6d26", "#e24329"],
   donsetch: ["#0ea5e9", "#4338ca"],
+};
+
+// Per-provider tiles for the websearch rows, which share one kind.
+const PROVIDER_GRADIENT: Record<string, [string, string]> = {
+  serper: ["#4285f4", "#0f9d58"],
+  staan: ["#8b5cf6", "#2563eb"],
 };
 
 const GITHUB_GLYPH = {
@@ -44,12 +84,22 @@ const DONSETCH_GLYPH = {
   d: "M10.5 2a8.5 8.5 0 1 0 5.262 15.176l4.03 4.031a1 1 0 0 0 1.415-1.414l-4.03-4.031A8.5 8.5 0 0 0 10.5 2Zm0 2c.9 0 1.86 1.01 2.4 2.75H8.1C8.64 5.01 9.6 4 10.5 4ZM7.7 8.25h5.6a11.6 11.6 0 0 1 0 4.5H7.7a11.6 11.6 0 0 1 0-4.5Zm-1.55 4.5H4.29a6.53 6.53 0 0 1 0-4.5h1.86a13.6 13.6 0 0 0 0 4.5Zm.5 2h1.45c.29.96.68 1.79 1.15 2.42a6.53 6.53 0 0 1-2.6-2.42Zm4.35 2.75c-.9 0-1.86-1.01-2.4-2.75h4.8c-.54 1.74-1.5 2.75-2.4 2.75Zm2.9-.33c.47-.63.86-1.46 1.15-2.42h1.45a6.53 6.53 0 0 1-2.6 2.42Zm1.55-4.42a13.6 13.6 0 0 0 0-4.5h1.86a6.53 6.53 0 0 1 0 4.5h-1.86Zm-.4-6.5c-.29-.96-.68-1.79-1.15-2.42a6.53 6.53 0 0 1 2.6 2.42h-1.45Zm-6.85 0H6.75a6.53 6.53 0 0 1 2.6-2.42c-.47.63-.86 1.46-1.15 2.42Z",
 };
 
+// A plain magnifier for the keyed search providers.
+const SEARCH_GLYPH = {
+  box: 24,
+  d: "M10 2a8 8 0 1 0 4.9 14.32l4.4 4.39a1 1 0 0 0 1.4-1.42l-4.38-4.39A8 8 0 0 0 10 2Zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12Z",
+};
+
 function ToolIcon({ tool, size = 56 }: { tool: Tool; size?: number }) {
-  const grad = KIND_GRADIENT[tool.kind];
+  const grad =
+    tool.kind === "websearch"
+      ? PROVIDER_GRADIENT[tool.provider ?? ""]
+      : KIND_GRADIENT[tool.kind];
   const glyph =
     tool.kind === "github" ? GITHUB_GLYPH
     : tool.kind === "gitlab" ? GITLAB_GLYPH
     : tool.kind === "donsetch" ? DONSETCH_GLYPH
+    : tool.kind === "websearch" ? SEARCH_GLYPH
     : null;
   if (!grad || !glyph) return <ProgramIcon title={tool.name} seed={tool.id} size={size} />;
   return (
@@ -159,17 +209,21 @@ export default function Tools() {
                 {busy === t.id && <Spinner />}
                 <Toggle
                   checked={t.enabled}
-                  disabled={busy === t.id}
-                  title={t.enabled ? undefined : "Enabling runs the tool-poisoning scan"}
+                  disabled={busy === t.id || (needsKey(t) && !t.enabled)}
+                  title={
+                    needsKey(t) && !t.enabled
+                      ? "Set the provider API key first"
+                      : t.enabled
+                        ? undefined
+                        : "Enabling runs the tool-poisoning scan"
+                  }
                   onChange={(v) =>
                     save(t, { enabled: v }, `${t.name} ${v ? "enabled" : "disabled"}.`)
                   }
                 />
               </div>
             </div>
-            <p className="store-desc">
-              {KIND_COPY[t.kind] ?? "An MCP service the development agent can act through during builds."}
-            </p>
+            <p className="store-desc">{toolCopy(t)}</p>
             <div onClick={(e) => e.stopPropagation()}>
               <McpNameChip server={t.mcp_server} />
             </div>
@@ -210,8 +264,14 @@ export default function Tools() {
               {busy === selected.id && <Spinner />}
               <Toggle
                 checked={selected.enabled}
-                disabled={busy === selected.id}
-                title={selected.enabled ? undefined : "Enabling runs the tool-poisoning scan"}
+                disabled={busy === selected.id || (needsKey(selected) && !selected.enabled)}
+                title={
+                  needsKey(selected) && !selected.enabled
+                    ? "Set the provider API key first"
+                    : selected.enabled
+                      ? undefined
+                      : "Enabling runs the tool-poisoning scan"
+                }
                 onChange={(v) =>
                   save(selected, { enabled: v }, `${selected.name} ${v ? "enabled" : "disabled"}.`)
                 }
@@ -219,7 +279,20 @@ export default function Tools() {
             </div>
           </div>
           <p className="muted small" style={{ marginTop: "0.35rem" }}>
-            {KIND_COPY[selected.kind] ?? "An MCP service the development agent can act through during builds."}
+            {toolCopy(selected)}
+            {selected.kind === "websearch" && PROVIDER_COPY[selected.provider ?? ""] && (
+              <>
+                {" "}Get a key at{" "}
+                <a
+                  href={PROVIDER_COPY[selected.provider ?? ""].keyUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {PROVIDER_COPY[selected.provider ?? ""].keyUrl.replace("https://", "")}
+                </a>
+                .
+              </>
+            )}
           </p>
           {selected.kind === "donsetch" && selected.all_capabilities && (
             <div className="field mt">
@@ -307,7 +380,11 @@ export default function Tools() {
             <label>
               API key{" "}
               <span
-                title={`Personal access token used as the Bearer credential for the ${selected.name} MCP endpoint. Per-project keys fall back to the project's ${selected.kind === "github" ? "GITHUB_TOKEN" : "GITLAB_TOKEN"} Memory secret before this one.`}
+                title={
+                  selected.kind === "websearch"
+                    ? `The provider API key for ${selected.name}. It is re-probed against the provider every time you enable this row, and rides to the sidecar per request - the platform never stores it anywhere else.`
+                    : `Personal access token used as the Bearer credential for the ${selected.name} MCP endpoint. Per-project keys fall back to the project's ${selected.kind === "github" ? "GITHUB_TOKEN" : "GITLAB_TOKEN"} Memory secret before this one.`
+                }
                 style={{ cursor: "help", opacity: 0.7 }}
               >
                 ⓘ
@@ -318,7 +395,15 @@ export default function Tools() {
                 type="password"
                 value={keys[selected.id] ?? ""}
                 onChange={(e) => setKeys((k) => ({ ...k, [selected.id]: e.target.value }))}
-                placeholder={selected.has_api_key ? "••••••••" : selected.kind === "github" ? "ghp_… / github_pat_…" : "glpat-…"}
+                placeholder={
+                  selected.has_api_key
+                    ? "••••••••"
+                    : selected.kind === "websearch"
+                      ? (PROVIDER_COPY[selected.provider ?? ""]?.placeholder ?? "provider API key")
+                      : selected.kind === "github"
+                        ? "ghp_… / github_pat_…"
+                        : "glpat-…"
+                }
                 autoComplete="new-password"
                 style={{ flex: 1 }}
               />
@@ -331,8 +416,10 @@ export default function Tools() {
               </button>
             </div>
             <p className="tiny faint mt">
-              {selected.has_api_key ? "✓ Key set - saving replaces it." : "No key yet."} Builds
-              prefer the project's own Memory token when present.
+              {selected.has_api_key ? "✓ Key set - saving replaces it." : "No key yet."}{" "}
+              {selected.kind === "websearch"
+                ? "Enabling re-verifies it against the provider; clearing it disables the row."
+                : "Builds prefer the project's own Memory token when present."}
             </p>
           </div>
           )}

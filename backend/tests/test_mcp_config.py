@@ -41,10 +41,10 @@ def db():
 
 
 def _reset_kbs(db):
-    """Clear the context7 + mcp + websearch rows so the test owns the exact set
+    """Clear the context7 + mcp rows so the test owns the exact set
     (rolled back)."""
     db.execute(delete(KnowledgeBase).where(
-        KnowledgeBase.kind.in_(("context7", "mcp", "websearch"))))
+        KnowledgeBase.kind.in_(("context7", "mcp"))))
     db.flush()
 
 
@@ -162,39 +162,6 @@ def test_unreachable_mcp_server_kept_as_transient(db, monkeypatch):
     monkeypatch.setattr(mcp_scan, "audit_server",
                         lambda url, api_key=None: ([], "connect timeout"))
     assert "down" in _servers(db)
-
-
-def test_websearch_kb_resolves_to_sidecar_with_bearer(db):
-    _reset_kbs(db)
-    _add(db, kind="websearch", name="Web search - Serper (Google)", uri="serper",
-         api_key_enc=encrypt("serper-key-123"), enabled=True)
-    servers = _servers(db)
-    entry = servers["websearch_serper"]
-    assert entry["url"] == f"{settings.websearch_mcp_url.rstrip('/')}/serper/mcp"
-    assert entry["headers"] == {"Authorization": "Bearer serper-key-123"}
-    # The provider key joins the leak-scan refuse-set like any KB key.
-    assert "serper-key-123" in _secrets(db)
-
-
-def test_websearch_kb_without_key_excluded(db):
-    # Belt-and-braces: the API keeps keyless websearch rows disabled, but even an
-    # enabled keyless row must not produce a server (it could never search).
-    _reset_kbs(db)
-    _add(db, kind="websearch", name="Serper", uri="serper",
-         api_key_enc=None, enabled=True)
-    assert not [s for s in _servers(db) if s.startswith("websearch")]
-
-
-def test_websearch_kb_disabled_or_deselected_excluded(db):
-    _reset_kbs(db)
-    off = _add(db, kind="websearch", name="Serper", uri="serper",
-               api_key_enc=encrypt("k"), enabled=False)
-    assert not [s for s in _servers(db) if s.startswith("websearch")]
-    off.enabled = True
-    db.flush()
-    other = _add(db, kind="mcp", name="Docs", uri="https://docs.example/mcp", enabled=True)
-    assert "websearch_serper" in _servers(db, [off.id])
-    assert not [s for s in _servers(db, [other.id]) if s.startswith("websearch")]
 
 
 def test_browser_always_present(db):

@@ -15,18 +15,17 @@ def _kb(kind, name="Some source", uri=None):
 
 
 def test_names_per_kind():
-    assert mcp_names.kb_server_name(_kb("websearch", "Web search - Staan (European index)",
-                                        uri="staan")) == "websearch_staan"
-    assert mcp_names.kb_server_name(_kb("websearch", "Web search - Serper (Google)",
-                                        uri="serper")) == "websearch_serper"
     assert mcp_names.kb_server_name(_kb("context7", "Context7")) == "context7"
     assert mcp_names.kb_server_name(_kb("mcp", "Notion workspace")) == "notion_workspace"
     # retrieval sources are read into the task, never called
     assert mcp_names.kb_server_name(_kb("local", "Local knowledge")) is None
     assert mcp_names.kb_server_name(_kb("git", "Handbook repo")) is None
-    assert mcp_names.kb_tools(_kb("websearch", uri="staan")) == ["web_search"]
     assert mcp_names.kb_tools(_kb("mcp")) == []
     assert mcp_names.tool_server_name(SimpleNamespace(slug="github")) == "github"
+    # Web search is a §Tools row now, and its slug carries the `websearch_`
+    # prefix precisely so the run-facing name did not move with it - project
+    # instructions quoting `websearch_staan` still address the right server.
+    assert mcp_names.tool_server_name(SimpleNamespace(slug="websearch_staan")) == "websearch_staan"
 
 
 def test_collisions_get_a_suffix_only_within_one_run():
@@ -40,22 +39,27 @@ def test_collisions_get_a_suffix_only_within_one_run():
 
 
 def test_dispatcher_and_admin_payload_agree(monkeypatch):
-    """The one that matters: build a run's mcp.json and check the websearch
-    server key equals what the KB payload advertises."""
+    """The one that matters: build a run's mcp.json and check the web-search
+    server key equals what the admin payload advertises.
+
+    This got MORE load-bearing when web search moved from knowledge bases to
+    §Tools: the row is addressed by its slug now, and the slug keeps the
+    `websearch_` prefix purely so the name a run uses did not move with it.
+    """
     from app.core.db import SyncSession
-    from app.models import KnowledgeBase
+    from app.core.encryption import encrypt
+    from app.models import Tool
     from app.workers import tasks
 
     with SyncSession() as db:
-        kb = db.query(KnowledgeBase).filter(KnowledgeBase.kind == "websearch",
-                                            KnowledgeBase.uri == "staan").first()
-        assert kb is not None, "seed creates the staan row"
-        advertised = mcp_names.kb_server_name(kb)
+        tool = db.query(Tool).filter(Tool.slug == "websearch_staan").first()
+        assert tool is not None, "seed creates the staan row"
+        advertised = mcp_names.tool_server_name(tool)
+        assert advertised == "websearch_staan", "the run-facing name must not drift"
 
-        kb.enabled, kb.api_key_enc = True, __import__(
-            "app.core.encryption", fromlist=["encrypt"]).encrypt("k")
+        tool.enabled, tool.api_key_enc = True, encrypt("k")
         monkeypatch.setattr(tasks, "_vet_mcp_server", lambda *a, **kw: True)
-        cfg, _ = tasks._mcp_config(db, kb_ids=[kb.id])
+        cfg, _ = tasks._mcp_config(db)
         db.rollback()
 
     assert advertised in json.loads(cfg)["mcpServers"], (

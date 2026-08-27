@@ -1,13 +1,13 @@
 """Admin management of the instance's knowledge bases (§KB).
 
 Instance-admin-level (the spoke owner's, not per customer org): one global list.
-Five kinds - `local` (the /knowledge Meilisearch KB), `context7` (the repo's
-Context7 MCP), `mcp` (a generic admin-added MCP endpoint), `websearch` (seeded
-web-search providers - uri is the provider slug; key + enable are the only
-editable fields, and enabling re-verifies the key against the provider) and
-`git` (a git repo cloned by the worker and indexed alongside /knowledge). The
-`local`, `context7` and `websearch` rows are seeded and non-removable; `mcp` and
-`git` rows are user-added, fully editable and removable. API keys / PATs are
+Four kinds - `local` (the /knowledge Meilisearch KB), `context7` (the repo's
+Context7 MCP), `mcp` (a generic admin-added MCP endpoint) and `git` (a git repo
+cloned by the worker and indexed alongside /knowledge). A knowledge base is a
+CORPUS the agent consults; the web-search providers live on /admin/tools with
+the rest of the agent's capabilities. The `local` and `context7` rows are seeded
+and non-removable; `mcp` and `git` rows are user-added, fully editable and
+removable. API keys / PATs are
 envelope-encrypted at rest and NEVER returned (only `has_api_key: bool`). A git
 SSH source exposes its PUBLIC deploy key (safe to show) but never the private half.
 """
@@ -25,7 +25,7 @@ from app.core.encryption import decrypt, encrypt
 from app.models import KnowledgeBase
 from app.schemas.schemas import (KbBlockOverrideIn, KnowledgeBaseCreateIn,
                                  KnowledgeBasePatchIn)
-from app.services import mcp_names, repos, sshkeys, websearch
+from app.services import mcp_names, repos, sshkeys
 
 router = APIRouter(prefix="/api/admin/knowledge-bases", tags=["knowledge-bases"],
                    dependencies=[Depends(require_admin)])
@@ -188,8 +188,6 @@ async def update_knowledge_base(kb_id: str, body: KnowledgeBasePatchIn,
         await db.commit()
         await db.refresh(kb)
         return _kb_out(kb)
-    if kb.kind == "websearch":
-        return await _update_websearch_kb(kb, fields, db)
     if kb.kind == "git":
         return await _update_git_kb(kb, fields, db)
     # mcp rows accept every field.
@@ -202,31 +200,6 @@ async def update_knowledge_base(kb_id: str, body: KnowledgeBasePatchIn,
     if "api_key" in fields:
         # Provided → re-encrypt; empty string → clear the stored key.
         kb.api_key_enc = encrypt(fields["api_key"]) if fields["api_key"] else None
-    await db.commit()
-    await db.refresh(kb)
-    return _kb_out(kb)
-
-
-async def _update_websearch_kb(kb: KnowledgeBase, fields: dict,
-                               db: AsyncSession) -> dict:
-    """Edit a seeded websearch source: only the API key and the enable flag move
-    (name/uri are fixed - uri IS the provider slug). Enabling ALWAYS re-verifies
-    the stored key against the provider server-side and 409s unless it passes -
-    the same never-trust-the-client discipline as git sources."""
-    if set(fields) - {"enabled", "api_key"}:
-        raise HTTPException(400, "Only the API key and the enabled flag are editable for a web-search source")
-    if "api_key" in fields:
-        kb.api_key_enc = encrypt(fields["api_key"]) if fields["api_key"] else None
-        if not kb.api_key_enc:
-            kb.enabled = False  # a keyless source can't stay live
-    if fields.get("enabled"):
-        key = decrypt(kb.api_key_enc) if kb.api_key_enc else ""
-        ok, detail = await run_in_threadpool(websearch.verify_key, kb.uri, key)
-        if not ok:
-            raise HTTPException(409, f"Can't enable this web-search source: {detail}")
-        kb.enabled = True
-    elif fields.get("enabled") is False:
-        kb.enabled = False
     await db.commit()
     await db.refresh(kb)
     return _kb_out(kb)

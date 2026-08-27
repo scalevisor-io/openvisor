@@ -516,7 +516,7 @@ export type Tool = {
   id: string;
   slug: string;
   name: string;
-  kind: "github" | "gitlab" | "custom" | "donsetch";
+  kind: "github" | "gitlab" | "custom" | "donsetch" | "websearch";
   url: string;
   enabled: boolean;
   has_api_key: boolean;
@@ -527,6 +527,8 @@ export type Tool = {
   // render them against. Absent on every other kind.
   capabilities?: string[];
   all_capabilities?: { slug: string; label: string }[];
+  // §Tools websearch rows only: which search provider this row speaks for.
+  provider?: string | null;
 };
 
 export type ProjectTool = Tool & {

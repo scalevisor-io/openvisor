@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -2205,7 +2205,13 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
             key = decrypt(mem[TOOL_MEMORY_KEYS[t.kind]].value_enc)
         elif t.api_key_enc:
             key = decrypt(t.api_key_enc)
-        out.append((t.slug, url, (key or "").strip() or None))
+        key = (key or "").strip() or None
+        if t.kind == websearch.KIND and not key:
+            # A keyless provider could never search. The API keeps these rows
+            # disabled, but an enabled-then-cleared one must not reach a build
+            # either - it would only hand the agent a tool that always errors.
+            continue
+        out.append((t.slug, url, key))
     return out
 
 
@@ -2214,10 +2220,10 @@ def _mcp_config(db: Session, kb_ids: list | None = None,
     """Assemble the dev run's MCP server map from the enabled KnowledgeBase rows
     (§KB). `browser` (the Playwright MCP sidecar, one isolated bundled-chromium
     session per connection) is a TOOL, not a KB, so it is always injected. The
-    enabled `context7` + `mcp` + `websearch` KBs become MCP servers (a websearch
-    row resolves to the websearch-mcp sidecar's per-provider route, its key as the
-    bearer); disabling a KB on the admin
-    page removes it from every subsequent build. A `context7` row is authoritative
+    enabled `context7` + `mcp` KBs become MCP servers; disabling a KB on the admin
+    page removes it from every subsequent build. Web search is NOT here: the
+    providers are §Tools rows (a capability the agent has, not a corpus it
+    consults) and arrive through `_project_tools` with the rest. A `context7` row is authoritative
     when present (inject iff enabled); with no context7 row at all (an unseeded DB)
     we fall back to injecting Context7 from settings. `kb_ids` is the project's KB
     selection (Project.kb_ids: null = all, [] = none, list = exactly those ids) - it
@@ -2235,7 +2241,7 @@ def _mcp_config(db: Session, kb_ids: list | None = None,
     selected = None if kb_ids is None else set(kb_ids)
     kbs = db.execute(
         select(KnowledgeBase)
-        .where(KnowledgeBase.kind.in_(("context7", "mcp", "websearch")))
+        .where(KnowledgeBase.kind.in_(("context7", "mcp")))
         .order_by(KnowledgeBase.sort_order, KnowledgeBase.created_at)
     ).scalars().all()
 
@@ -2253,18 +2259,13 @@ def _mcp_config(db: Session, kb_ids: list | None = None,
 
     used = set(servers)
     for kb in kbs:
-        if kb.kind not in ("mcp", "websearch") or not kb.enabled or not kb.uri or not _sel(kb):
+        if kb.kind != "mcp" or not kb.enabled or not kb.uri or not _sel(kb):
             continue
         key = decrypt(kb.api_key_enc) if kb.api_key_enc else None
-        if kb.kind == "websearch":
-            if not key:
-                continue  # a keyless source can't search; the API keeps them disabled
-            url = f"{settings.websearch_mcp_url.rstrip('/')}/{kb.uri}/mcp"
-        else:
-            url = kb.uri
+        url = kb.uri
         if not _vet_mcp_server(kb.name, url, key):
             continue
-        name = _mcp_server_name(f"websearch-{kb.uri}" if kb.kind == "websearch" else kb.name, used)
+        name = _mcp_server_name(kb.name, used)
         used.add(name)
         server: dict = {"url": url}
         if key:
