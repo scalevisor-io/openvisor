@@ -20,7 +20,8 @@ import re
 from sqlalchemy.orm import Session
 
 from app.agents.pipeline import LLMUnavailable, _project_context, chat_json, load_prompt
-from app.models import Project, Request
+from app.models import Project
+from app.services import dev_concurrency
 from app.services.llm import record_usage
 
 log = logging.getLogger(__name__)
@@ -67,8 +68,8 @@ def generate_checks(db: Session, project: Project) -> list[dict]:
             {"role": "system", "content": load_prompt("acceptance_checks.md")},
             {"role": "user", "content": "Project spec:\n<spec>\n" + spec[:8000] + "\n</spec>"},
         ], max_tokens=800)
-        req = db.get(Request, project.dev_request_id) if project.dev_request_id else None
-        record_usage(db, project, usage, "acceptance checks", request=req)
+        record_usage(db, project, usage, "acceptance checks",
+                     request=dev_concurrency.run_request(db, project))
     except LLMUnavailable:
         return []
     except Exception as exc:  # noqa: BLE001 - generation must never fail a build

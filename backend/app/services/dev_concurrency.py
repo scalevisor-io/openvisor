@@ -47,6 +47,24 @@ def bound_run(project: Project) -> "DevRun | None":
     return getattr(project, "_dev_run", None)
 
 
+def run_request(db: Session, project: Project) -> Request | None:
+    """The SCOPED request this run builds, None for an MVP/unscoped build - the
+    identity every run-pipeline read keys on (task text, branch naming, PR
+    recording, billing, close-out). The bound run's request wins over the
+    Project.dev_request_id mirror: the mirror follows whoever started last and
+    is cleared by whoever finishes first, so a run reading it mid-flight
+    builds, bills, titles and closes a SIBLING's request (prod: a Start fresh
+    on request A, dispatched 50 s after a sibling on B, took B's task off the
+    mirror and shipped B's change under A's row; B's own resume then found the
+    mirror cleared and built the MVP). Same fallback order as _dev_thread, so
+    narration and identity always agree."""
+    row = bound_run(project)
+    rid = (row.request_id if row is not None and row.request_id
+           else project.dev_request_id)
+    req = db.get(Request, rid) if rid else None
+    return None if req is None or req.type == "mvp" else req
+
+
 def run_ws(project: Project, run: DevRun | None = None) -> Path:
     """THE sanctioned workspace join (docs/PARALLEL_BUILDS.md §5): a run with a
     workspace_dir lives under <workspaces>/<workspace_dir> OUTSIDE the project
