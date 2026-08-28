@@ -45,6 +45,7 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
 
 COPY run_dev.py /run_dev.py
 COPY live_events.py /live_events.py
+COPY tool_args.py /tool_args.py
 COPY leak_scan.py /leak_scan.py
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
