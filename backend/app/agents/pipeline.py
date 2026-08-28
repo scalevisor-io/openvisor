@@ -477,8 +477,9 @@ def run_security_review(db: Session, project: Project, pr_diff: str) -> dict:
                 "never lower a security finding:\n<spec>\n" + spec[:8000] + "\n</spec>\n\n"
                 f"Pull request diff to review:\n\n{pr_diff[:200000]}"},
         ], max_tokens=2500)
-        req = db.get(Request, project.dev_request_id) if project.dev_request_id else None
-        record_usage(db, project, usage, "security review", request=req)
+        from app.services import dev_concurrency
+        record_usage(db, project, usage, "security review",
+                     request=dev_concurrency.run_request(db, project))
         if isinstance(result, dict):
             findings += _normalize_findings(result.get("findings"))
     except LLMUnavailable as exc:
