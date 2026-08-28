@@ -90,6 +90,10 @@ spec:
             - 0.0.0.0
             - --allowed-hosts
             - "*"
+          env:
+            # Heartbeat tolerance - see values.yaml browserMcp.pingTimeoutMs.
+            - name: PLAYWRIGHT_MCP_PING_TIMEOUT_MS
+              value: {{ .Values.browserMcp.pingTimeoutMs | quote }}
           ports:
             - name: http
               containerPort: 3000
