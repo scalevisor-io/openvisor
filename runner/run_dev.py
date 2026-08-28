@@ -20,6 +20,7 @@ from openhands.tools.preset.default import get_default_agent
 from openhands.tools.task import TaskToolSet  # importing auto-registers the tool
 
 import live_events
+import tool_args
 
 OPENVISOR = Path("/workspace/.openvisor")
 
@@ -302,6 +303,63 @@ def _discard_token(_chunk) -> None:
     """§streaming: the SDK only streams when a token callback is present."""
 
 
+def _install_stray_argument_repair(conversation) -> None:
+    """§stray arguments: wrap the SDK's per-call argument fixer (the one seam
+    between the parsed tool call and its pydantic validation) with
+    `tool_args.repair`, so a `terminal` call carrying a stray `description`
+    runs instead of costing a round-trip. The roster it needs comes off the
+    agent's `tools_map`, which exists only once the SDK has initialized the
+    agent - lazily, on the first message - so it is read on the first repaired
+    call, not here; if it cannot be read, the shim stands down for the run and
+    calls validate exactly as the SDK shipped them."""
+    try:
+        from openhands.sdk.agent import agent as agent_mod
+        original = agent_mod.fix_malformed_tool_arguments
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: stray-argument repair not installed: {exc}", file=sys.stderr)
+        return
+    roster: set[str] | None = None
+
+    def _roster() -> set[str] | None:
+        nonlocal roster
+        if roster is None:
+            found: set[str] = set()
+            for tool in conversation.agent.tools_map.values():
+                mcp_tool = getattr(tool, "mcp_tool", None)
+                if mcp_tool is not None:
+                    found.update((getattr(mcp_tool, "inputSchema", None) or {})
+                                 .get("properties", {}).keys())
+                found.update(_action_fields(tool.action_type))
+            roster = found
+        return roster
+
+    def _repaired(arguments, action_type):
+        arguments = original(arguments, action_type)
+        try:
+            fields = _roster()
+        except Exception as exc:  # noqa: BLE001 - unknown roster: no repair at all
+            print(f"driver: stray-argument repair stood down: {exc}", file=sys.stderr)
+            agent_mod.fix_malformed_tool_arguments = original
+            return arguments
+        fixed, dropped = tool_args.repair(arguments, _action_fields(action_type),
+                                          fields, action_type.model_validate)
+        if dropped:
+            print(f"driver: dropped stray argument(s) {dropped} from a "
+                  f"{action_type.__name__} call", file=sys.stderr)
+        return fixed
+
+    agent_mod.fix_malformed_tool_arguments = _repaired
+
+
+def _action_fields(action_type) -> set[str]:
+    fields = set()
+    for name, info in getattr(action_type, "model_fields", {}).items():
+        fields.add(name)
+        if getattr(info, "alias", None):
+            fields.add(info.alias)
+    return fields
+
+
 def main() -> int:
     task = (OPENVISOR / "task.md").read_text()
     # A previous session's end-of-run marker must never drive this run's copy.
@@ -487,6 +545,7 @@ def main() -> int:
         resumed = False
     if conversation is None:
         conversation = _construct(conv_kwargs)
+    _install_stray_argument_repair(conversation)
     if max_iters > 0 and getattr(conversation, "max_iteration_per_run", None) != max_iters:
         print("driver: iteration cap NOT applied by this SDK version "
               "(deployer timeout still applies)", file=sys.stderr)
