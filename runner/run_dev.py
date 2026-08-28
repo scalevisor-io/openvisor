@@ -397,6 +397,29 @@ def _install_tool_call_repairs(conversation) -> None:
     mcp_tool_mod.MCPToolDefinition.action_from_arguments = _mcp_action
 
 
+def _keep_mcp_streams_alive() -> None:
+    """§MCP stream keepalive: the MCP client's standalone GET (SSE) stream - the
+    only path a server has to the client between calls - reads with a 300 s
+    timeout and gives up after two reconnects, so an MCP server that stays quiet
+    for ten minutes loses it for the rest of the run. Playwright is quiet until
+    its backend exists, and creates the backend on the FIRST tool call: a run
+    that explores for a while before its first browser call reaches that call
+    with a dead stream, the server's `listRoots()` on the way in cannot reach
+    the client (60 s stall: the server's request timeout), the heartbeat it then
+    starts cannot either, and the session is closed 5 s later - every later
+    browser call of the run dead. Both knobs are module constants read at use:
+    an idle stream is not an error for as long as a run can live, and a dropped
+    one keeps reconnecting (one attempt a second). Set BEFORE the agent builds
+    its MCP client, i.e. before the Conversation exists."""
+    try:
+        from mcp.client import streamable_http
+        from mcp.shared import _httpx_utils
+        streamable_http.MAX_RECONNECTION_ATTEMPTS = 10_000
+        _httpx_utils.MCP_DEFAULT_SSE_READ_TIMEOUT = 24 * 3600
+    except Exception as exc:  # noqa: BLE001 - a client without the knobs keeps its defaults
+        print(f"driver: MCP stream keepalive not applied: {exc}", file=sys.stderr)
+
+
 # §MCP session recovery: how long the run waits before rebuilding its MCP client
 # a second time - a server that is really down must not turn every call into a
 # reconnect attempt.
@@ -577,6 +600,7 @@ def main() -> int:
                   file=sys.stderr)
     except Exception as exc:  # noqa: BLE001 - SDK without the switch: keep streaming
         print(f"driver: Responses-API check skipped: {exc}", file=sys.stderr)
+    _keep_mcp_streams_alive()
     agent = get_default_agent(llm=llm, cli_mode=True)  # cli_mode: no browser GUI deps
     # §Phase 1: add purpose-built grep + glob so the agent navigates the repo with
     # real search tools instead of shelling out (the SWE-agent ACI thesis). They ship
