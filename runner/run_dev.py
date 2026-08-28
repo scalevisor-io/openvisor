@@ -303,24 +303,38 @@ def _discard_token(_chunk) -> None:
     """§streaming: the SDK only streams when a token callback is present."""
 
 
-def _install_stray_argument_repair(conversation) -> None:
-    """§stray arguments: wrap the SDK's per-call argument fixer (the one seam
-    between the parsed tool call and its pydantic validation) with
-    `tool_args.repair`, so a `terminal` call carrying a stray `description`
-    runs instead of costing a round-trip. The roster it needs comes off the
-    agent's `tools_map`, which exists only once the SDK has initialized the
-    agent - lazily, on the first message - so it is read on the first repaired
-    call, not here; if it cannot be read, the shim stands down for the run and
-    calls validate exactly as the SDK shipped them."""
+def _install_tool_call_repairs(conversation) -> None:
+    """§tool-call repairs: wrap the SDK's three seams between a parsed tool
+    call and its validation with the `tool_args` rules - the argument fixer
+    (stray keys, wrong literals), the MCP action builder (schema defaults,
+    stray keys on MCP tools) and the name normalizer (prefixed names) - so a
+    `terminal` call carrying a stray `description` runs instead of costing a
+    round-trip. The roster the rules need comes off the agent's `tools_map`,
+    which exists only once the SDK has initialized the agent - lazily, on the
+    first message - so it is read on the first repaired call, not here; if it
+    cannot be read, every seam is restored and the run validates exactly as
+    the SDK shipped it."""
     try:
         from openhands.sdk.agent import agent as agent_mod
-        original = agent_mod.fix_malformed_tool_arguments
+        from openhands.sdk.mcp import tool as mcp_tool_mod
+        original_fix = agent_mod.fix_malformed_tool_arguments
+        original_normalize = agent_mod.normalize_tool_call
+        original_mcp_action = mcp_tool_mod.MCPToolDefinition.action_from_arguments
     except Exception as exc:  # noqa: BLE001
-        print(f"driver: stray-argument repair not installed: {exc}", file=sys.stderr)
+        print(f"driver: tool-call repairs not installed: {exc}", file=sys.stderr)
         return
     roster: set[str] | None = None
 
-    def _roster() -> set[str] | None:
+    def _log(text: str) -> None:
+        print(f"driver: {text}", file=sys.stderr)
+
+    def _stand_down(exc: Exception) -> None:
+        _log(f"tool-call repairs stood down: {exc}")
+        agent_mod.fix_malformed_tool_arguments = original_fix
+        agent_mod.normalize_tool_call = original_normalize
+        mcp_tool_mod.MCPToolDefinition.action_from_arguments = original_mcp_action
+
+    def _roster() -> set[str]:
         nonlocal roster
         if roster is None:
             found: set[str] = set()
@@ -333,22 +347,71 @@ def _install_stray_argument_repair(conversation) -> None:
             roster = found
         return roster
 
-    def _repaired(arguments, action_type):
-        arguments = original(arguments, action_type)
+    def _fixed(arguments, action_type):
+        arguments = original_fix(arguments, action_type)
         try:
             fields = _roster()
         except Exception as exc:  # noqa: BLE001 - unknown roster: no repair at all
-            print(f"driver: stray-argument repair stood down: {exc}", file=sys.stderr)
-            agent_mod.fix_malformed_tool_arguments = original
+            _stand_down(exc)
             return arguments
-        fixed, dropped = tool_args.repair(arguments, _action_fields(action_type),
-                                          fields, action_type.model_validate)
+        arguments, dropped = tool_args.repair(arguments, _action_fields(action_type),
+                                              fields, action_type.model_validate)
         if dropped:
-            print(f"driver: dropped stray argument(s) {dropped} from a "
-                  f"{action_type.__name__} call", file=sys.stderr)
-        return fixed
+            _log(f"dropped stray argument(s) {dropped} from a {action_type.__name__} call")
+        for name, allowed in _literal_fields(action_type).items():
+            arguments, replacement = tool_args.repair_literal(
+                arguments, name, allowed, action_type.model_validate)
+            if replacement:
+                _log(f"read {name}={replacement!r} on a {action_type.__name__} call")
+        return arguments
 
-    agent_mod.fix_malformed_tool_arguments = _repaired
+    def _mcp_action(self, arguments):
+        try:
+            fields = _roster()
+        except Exception as exc:  # noqa: BLE001
+            _stand_down(exc)
+            return original_mcp_action(self, arguments)
+        schema = getattr(self.mcp_tool, "inputSchema", None) or {}
+        arguments, filled = tool_args.fill_schema_defaults(arguments, schema)
+        if filled:
+            _log(f"filled schema default(s) {filled} on a {self.name} call")
+
+        def _validate(candidate):
+            mcp_tool_mod._create_mcp_action_type(self.mcp_tool).model_validate(
+                {k: v for k, v in candidate.items() if v is not None})
+        arguments, dropped = tool_args.repair(
+            arguments, set((schema.get("properties") or {}).keys()), fields, _validate)
+        if dropped:
+            _log(f"dropped stray argument(s) {dropped} from a {self.name} call")
+        return original_mcp_action(self, arguments)
+
+    def _normalized(tool_name, arguments, available_tools):
+        fixed = tool_args.repair_tool_name(tool_name, available_tools)
+        if fixed:
+            _log(f"tool {tool_name!r} read as {fixed!r}")
+            tool_name = fixed
+        return original_normalize(tool_name, arguments, available_tools)
+
+    agent_mod.fix_malformed_tool_arguments = _fixed
+    agent_mod.normalize_tool_call = _normalized
+    mcp_tool_mod.MCPToolDefinition.action_from_arguments = _mcp_action
+
+
+def _literal_fields(action_type) -> dict[str, set]:
+    """The action's Literal-typed fields and their allowed values."""
+    import types
+    import typing
+    out: dict[str, set] = {}
+    for name, info in getattr(action_type, "model_fields", {}).items():
+        ann = getattr(info, "annotation", None)
+        if typing.get_origin(ann) is typing.Annotated:
+            ann = typing.get_args(ann)[0]
+        if typing.get_origin(ann) in (typing.Union, types.UnionType):
+            members = [a for a in typing.get_args(ann) if a is not type(None)]
+            ann = members[0] if len(members) == 1 else ann
+        if typing.get_origin(ann) is typing.Literal:
+            out[name] = set(typing.get_args(ann))
+    return out
 
 
 def _action_fields(action_type) -> set[str]:
@@ -545,7 +608,7 @@ def main() -> int:
         resumed = False
     if conversation is None:
         conversation = _construct(conv_kwargs)
-    _install_stray_argument_repair(conversation)
+    _install_tool_call_repairs(conversation)
     if max_iters > 0 and getattr(conversation, "max_iteration_per_run", None) != max_iters:
         print("driver: iteration cap NOT applied by this SDK version "
               "(deployer timeout still applies)", file=sys.stderr)
