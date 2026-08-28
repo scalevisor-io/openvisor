@@ -165,9 +165,17 @@ websearchMcp:
 # The dev agent's browser tool: official Playwright MCP image (bundled headless
 # chromium), one isolated in-memory browser per MCP session. Stateless per
 # session - scale with replicas (the Service pins a client to its replica).
+# pingTimeoutMs: the server heartbeats every session (a JSON-RPC ping every
+# 3 s over the session's SSE stream) and CLOSES the session when one answer
+# is late - the image default is 5000 ms, and the sandbox that answers is a
+# Python event loop sharing a busy driver process; on production runs the
+# first browser call after a long exploration lost the session that way and
+# every later call died in 0.1 s. Two minutes still reaps a killed sandbox
+# (it never answers) without a hair trigger on a live one; 0 disables.
 browserMcp:
   image: mcr.microsoft.com/playwright/mcp:v0.0.79
   replicas: 2
+  pingTimeoutMs: 120000
   resources:
     requests: { cpu: 100m, memory: 512Mi }
     limits: { cpu: "2", memory: 2Gi }

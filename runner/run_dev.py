@@ -397,6 +397,76 @@ def _install_tool_call_repairs(conversation) -> None:
     mcp_tool_mod.MCPToolDefinition.action_from_arguments = _mcp_action
 
 
+# §MCP session recovery: how long the run waits before rebuilding its MCP client
+# a second time - a server that is really down must not turn every call into a
+# reconnect attempt.
+MCP_RECONNECT_MIN_INTERVAL_S = 60.0
+
+
+def _install_mcp_session_recovery(conversation) -> None:
+    """§MCP session recovery: an MCP server that drops a session mid-run leaves
+    every later call of that server failing in 0.1 s - "Session terminated"
+    (the transport's 404 path), then "Unknown tool" once the client's proxy
+    loses the mount - and neither the SDK nor its client ever reconnects: a
+    production run burned 25 such calls and 15 minutes retrying. Playwright's
+    heartbeat closes a session whose ping goes unanswered for 5 s (the browser
+    sidecar now tolerates 120 s), a sidecar restart loses them all, and any
+    server may drop one for its own reasons. So the MCP executor is wrapped:
+    on that signature the SDK's MCP client is rebuilt from the agent's own
+    `mcp_config`, every executor of the old client is re-pointed at the new one
+    and the call is retried ONCE. What lived inside the old session (the page
+    the agent had open) is gone - the model sees a fresh browser and
+    re-navigates - the one-turn cost the run could not pay before."""
+    try:
+        from openhands.sdk.mcp import tool as mcp_tool_mod
+        from openhands.sdk.mcp.utils import create_mcp_tools
+        executor_cls = mcp_tool_mod.MCPToolExecutor
+        original_call = executor_cls.__call__
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: MCP session recovery not installed: {exc}", file=sys.stderr)
+        return
+    last_reconnect = [0.0]
+
+    def _lost(observation) -> bool:
+        if not getattr(observation, "is_error", False):
+            return False
+        text = " ".join(getattr(c, "text", "") or ""
+                        for c in (getattr(observation, "content", None) or []))
+        return "Session terminated" in text or "Unknown tool" in text
+
+    def _reconnect(old_client) -> bool:
+        now = time.time()
+        if now - last_reconnect[0] < MCP_RECONNECT_MIN_INTERVAL_S:
+            return False
+        last_reconnect[0] = now
+        fresh = create_mcp_tools(conversation.agent.mcp_config, 30)
+        moved = 0
+        for tool in conversation.agent.tools_map.values():
+            executor = getattr(tool, "executor", None)
+            if isinstance(executor, executor_cls) and executor.client is old_client:
+                executor.client = fresh
+                moved += 1
+        try:
+            old_client.sync_close()
+        except Exception:  # noqa: BLE001 - the old session is dead anyway
+            pass
+        print(f"driver: MCP session lost - client rebuilt, {moved} tool(s) re-pointed",
+              file=sys.stderr)
+        return moved > 0
+
+    def _call(self, action, conversation_=None):
+        observation = original_call(self, action, conversation_)
+        if _lost(observation):
+            try:
+                if _reconnect(self.client):
+                    observation = original_call(self, action, conversation_)
+            except Exception as exc:  # noqa: BLE001 - the original error stands
+                print(f"driver: MCP reconnect failed: {exc}", file=sys.stderr)
+        return observation
+
+    executor_cls.__call__ = _call
+
+
 def _literal_fields(action_type) -> dict[str, set]:
     """The action's Literal-typed fields and their allowed values."""
     import types
@@ -609,6 +679,7 @@ def main() -> int:
     if conversation is None:
         conversation = _construct(conv_kwargs)
     _install_tool_call_repairs(conversation)
+    _install_mcp_session_recovery(conversation)
     if max_iters > 0 and getattr(conversation, "max_iteration_per_run", None) != max_iters:
         print("driver: iteration cap NOT applied by this SDK version "
               "(deployer timeout still applies)", file=sys.stderr)

@@ -197,6 +197,13 @@ services:
       - 0.0.0.0
       - --allowed-hosts
       - "*"
+    environment:
+      # The server heartbeats every session (a JSON-RPC ping every 3 s over its
+      # SSE stream) and CLOSES the session when one answer is late; the image
+      # default of 5000 ms is a hair trigger for a client that is a Python event
+      # loop inside a busy driver process. Two minutes still reaps a killed
+      # sandbox (it never answers). Same knob as the chart's browserMcp.pingTimeoutMs.
+      PLAYWRIGHT_MCP_PING_TIMEOUT_MS: "120000"
     networks: [internal, demos]
     restart: unless-stopped
 
