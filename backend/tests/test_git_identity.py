@@ -52,6 +52,10 @@ def test_dispatch_forwards_the_identity_to_the_runner(monkeypatch):
     monkeypatch.setattr(tasks.dev_concurrency, "bound_run", lambda p: None)
     monkeypatch.setattr(tasks, "_project_reasoning_effort", lambda db, p: "")
     monkeypatch.setattr(tasks.egress, "is_enabled", lambda db: False)  # §egress off
+    # §dev harness: resolved from the db like the egress flag above, and these
+    # dispatch tests run without one - pin the default driver.
+    monkeypatch.setattr(tasks.dev_harness, "resolve",
+                        lambda db, p: tasks.dev_harness.HARNESSES["openhands"])
     monkeypatch.setattr(tasks.deployer_client, "run_dev_job",
                         lambda *a, **kw: sent.update(kw) or {"ok": True})
 

@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -3233,6 +3233,10 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
                      steering_note: str | None = None,
                      consult_question: str | None = None) -> dict:
     base_url, api_key, model = _project_model_config(db, project)
+    # §dev harness: which driver the sandbox runs. Resolved per dispatch (not once
+    # per build) so an admin flipping the instance flag mid-chain takes effect at
+    # the next dispatch instead of at the next project.
+    harness = dev_harness.resolve(db, project)
     approved = (project.dev_plan if (project.dev_plan_status == "approved"
                                      and not plan_only) else None)
     _prepare_runner_inputs(db, project, fix_instruction=fix_instruction,
@@ -3275,6 +3279,7 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
             egress_locked=egress_locked, egress_allowlist=egress_allowlist,
             cpu_request=project.dev_cpu_request or "",
             mem_request=project.dev_mem_request or "",
+            harness=harness.id,
             timeout_s=settings.dev_run_timeout_minutes * 60)
         if not _remote_unreachable(result) or attempt == _GIT_PREFLIGHT_ATTEMPTS - 1:
             return result
@@ -3780,6 +3785,14 @@ def stop_development(project_id: str, run_id: str | None = None) -> None:
             log.warning("dev stop for %s: %s", project_id, exc)
 
 
+def _stamp_harness_version(db: Session, project: Project) -> None:
+    """Record the fingerprint of the harness THIS project resolves to, so a build
+    run on a non-default driver is never compared against a default-driver build
+    (§dev harness; the preset id is what separates them). Caller commits."""
+    project.dev_harness_version = compute_harness_version(
+        settings, tool_preset_id=dev_harness.resolve(db, project).tool_preset_id)
+
+
 def _mark_dispatch_start(db: Session, project: Project) -> None:
     """(Re)stamp the in-flight clock and commit it BEFORE the long-blocking
     _dispatch_runner call, so dev_run_reaper measures staleness from the start of
@@ -3788,7 +3801,7 @@ def _mark_dispatch_start(db: Session, project: Project) -> None:
     multi-dispatch build (boot-fix / CI-retry iterations) could sit past the
     single-run threshold with a live worker and be wrongly reaped."""
     project.dev_run_started_at = utcnow()
-    project.dev_harness_version = compute_harness_version(settings)
+    _stamp_harness_version(db, project)
     db.commit()
 
 
@@ -3974,7 +3987,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
         project.dev_run_started_at = utcnow()
         # Stamp the harness fingerprint at run start so even the scaffold path
         # (which never reaches _mark_dispatch_start) records which harness ran.
-        project.dev_harness_version = compute_harness_version(settings)
+        _stamp_harness_version(db, project)
         # Fresh acceptance state per run: regenerate checks from the current spec and
         # never carry a prior run's pass/total onto this run's eval record (§Phase 1 #5).
         project.dev_acceptance = None

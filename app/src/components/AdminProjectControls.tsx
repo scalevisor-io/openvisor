@@ -3,7 +3,14 @@ import { Link } from "react-router-dom";
 import { adminApi, kbApi, modelEndpointApi, toolsApi, type ProjectTool } from "../lib/endpoints";
 import { useToast } from "../lib/toast";
 import { CollapsibleCard, Modal, Spinner, Toggle, formatCredits } from "./ui";
-import type { KnowledgeBase, ModelEndpoint, Project, ProjectSpend, ProjectStatus } from "../types";
+import type {
+  AdminSettings,
+  KnowledgeBase,
+  ModelEndpoint,
+  Project,
+  ProjectSpend,
+  ProjectStatus,
+} from "../types";
 
 const SPEND_LABELS: Record<string, string> = {
   consumption: "AI usage",
@@ -60,6 +67,11 @@ export default function AdminProjectControls({
   );
   const [devCpu, setDevCpu] = useState(project.dev_cpu_request ?? "");
   const [devMem, setDevMem] = useState(project.dev_mem_request ?? "");
+  // §dev harness: "" = inherit the instance default. The picker only appears once
+  // the admin has enabled selection instance-wide (adminSettings carries both the
+  // flag and the allowed catalog).
+  const [devHarness, setDevHarness] = useState(project.dev_harness ?? "");
+  const [adminSettings, setAdminSettings] = useState<AdminSettings | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [kbOpen, setKbOpen] = useState(false);
@@ -70,6 +82,20 @@ export default function AdminProjectControls({
   useEffect(() => {
     adminApi.projectSpend(project.id).then(setSpend).catch(() => {});
   }, [project.id]);
+
+  useEffect(() => {
+    adminApi.settings().then(setAdminSettings).catch(() => {});
+  }, []);
+
+  // §dev harness: the picker exists only while the instance offers selection, and
+  // lists only what the admin allowed.
+  const harnessPickable = !!adminSettings?.dev_harness_selection_enabled;
+  const harnessOptions = (adminSettings?.dev_harnesses ?? []).filter((h) =>
+    (adminSettings?.dev_harness_allowed ?? []).includes(h.id),
+  );
+  const defaultHarnessLabel =
+    (adminSettings?.dev_harnesses ?? []).find((h) => h.id === adminSettings?.dev_harness_default)
+      ?.label ?? "instance default";
 
   async function saveStatus() {
     setBusy("status");
@@ -118,6 +144,9 @@ export default function AdminProjectControls({
         dev_parallel_limit: plVal,
         dev_cpu_request: cpuVal,
         dev_mem_request: memVal,
+        // Only sent when the instance offers the choice: the API refuses a pin
+        // while selection is disabled, and an unsent field is left untouched.
+        ...(harnessPickable ? { dev_harness: devHarness === "" ? null : devHarness } : {}),
       });
       toast.push("Project settings updated", "ok");
       onUpdated(updated);
@@ -221,6 +250,22 @@ export default function AdminProjectControls({
                 placeholder="instance default"
               />
             </label>
+            {harnessPickable && (
+              <label className="field">
+                <LabelHint
+                  label="Dev harness"
+                  hint="Which agent driver this project's builds run on. Inherit = the instance default. Changing it changes the build's cost and behavior, and runs on different harnesses are never compared with each other."
+                />
+                <select value={devHarness} onChange={(e) => setDevHarness(e.target.value)}>
+                  <option value="">inherit ({defaultHarnessLabel})</option>
+                  {harnessOptions.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="field">
               <LabelHint
                 label="Parallel builds (per project)"

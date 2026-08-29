@@ -19,6 +19,9 @@ PROMPT_DIR = Path(__file__).resolve().parents[2] / "agents" / "prompts"
 # The tool set the runner constructs (runner/run_dev.py: get_default_agent). This is a
 # STRING on purpose: bump it the moment the runner's tool preset changes (e.g. adding
 # grep/glob, or a validate-before-apply editor) so the version moves with the harness.
+# §dev harness: this is the OpenHands driver's id and the default; a run stamps the
+# preset id of the harness it actually resolved to (services/dev_harness.Harness.
+# tool_preset_id), which is what keeps two harnesses from sharing a fingerprint.
 TOOL_PRESET_ID = "openhands-default:terminal+file_editor+task_tracker+grep+glob"
 
 # RAG breadth is hardcoded in workers/tasks.py::_build_task_file (k=6). Kept here so a

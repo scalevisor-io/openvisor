@@ -268,14 +268,28 @@ if [[ "${SKIP_AGENT:-0}" == "1" ]]; then
   emit_event phase "Publishing the prepared workspace (no agent run)"
   STATUS=0
 else
-  echo "runner: starting OpenHands headless build (model=$LLM_MODEL)"
+  # §dev harness: the platform names the driver this build runs on; this image
+  # maps the id to a script. An id this image ships no driver for falls back to
+  # the OpenHands driver rather than failing, so a newer platform dispatching to
+  # an older runner still builds. The build panel's emit_event contract above
+  # takes FIXED strings only, so the resolved name goes to stdout, never to it.
+  DRIVER="/run_dev.py"
+  case "${DEV_HARNESS:-openhands}" in
+    openhands) DRIVER="/run_dev.py" ;;
+    *) echo "runner: WARNING - unknown DEV_HARNESS '${DEV_HARNESS}' - using the OpenHands driver" ;;
+  esac
+  if [[ ! -f "$DRIVER" ]]; then
+    echo "runner: WARNING - driver $DRIVER is not in this image - using /run_dev.py"
+    DRIVER="/run_dev.py"
+  fi
+  echo "runner: starting headless build (harness=${DEV_HARNESS:-openhands}, driver=$DRIVER, model=$LLM_MODEL)"
   emit_event phase "Agent session opened"
   set +e
   # -u: unbuffered driver output so .openvisor/run.log grows live, not at exit.
-  python -u /run_dev.py > "$OPENVISOR_DIR/run.log" 2>&1
+  python -u "$DRIVER" > "$OPENVISOR_DIR/run.log" 2>&1
   STATUS=$?
   set -e
-  echo "runner: openhands driver exited $STATUS"
+  echo "runner: driver $DRIVER exited $STATUS"
   emit_event phase "Agent session closed"
   [[ -f "$OPENVISOR_DIR/run.log" ]] && tail -n 20 "$OPENVISOR_DIR/run.log" || true
 fi

@@ -289,6 +289,12 @@ class AppSettingsIn(BaseModel):
     # probe verdict, so the admin declares it here (saved endpoints are declared or
     # probed on the Model configuration page instead).
     default_model_supports_images: bool | None = None
+    # §dev harness: per-project agent-driver selection. The enable flag is what a
+    # paid tier gates; `allowed` narrows the catalog the runner image ships, and
+    # `default` is what every project with no pin runs on. Applied only when sent.
+    dev_harness_selection_enabled: bool | None = None
+    dev_harness_allowed: list[str] | None = None
+    dev_harness_default: str | None = Field(default=None, max_length=32)
     # §egress: dev-sandbox egress lockdown (K8s-enforced). Applied only when sent.
     egress_lockdown_enabled: bool | None = None
     egress_allowlist: list[str] | None = None  # FQDN / *.fqdn / IP / CIDR entries
@@ -392,6 +398,11 @@ class ProjectPatchIn(BaseModel):
     # (model_fields_set semantics like the caps above).
     dev_cpu_request: str | None = Field(default=None, pattern=_RESOURCE_RE)
     dev_mem_request: str | None = Field(default=None, pattern=_RESOURCE_RE)
+    # §dev harness: pin this project to one agent driver; null resets to the
+    # instance default (model_fields_set semantics like the caps above). The route
+    # rejects an id the admin has not allowed, and rejects any id at all while
+    # harness selection is disabled - a pin resolve() would ignore is not stored.
+    dev_harness: str | None = Field(default=None, max_length=32)
 
 
 # A saved endpoint's provider preset: an auth + base-URL shape, not a capability.

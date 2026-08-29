@@ -147,6 +147,12 @@ class Project(Base):
     # Admin-set per-project agent-iteration cap; null = the instance default
     # (settings.dev_max_iterations_default). Bounded by the run wall-clock either way.
     dev_max_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # §dev harness: which agent driver the sandbox runs for this project; null =
+    # the instance default. Only honored while the admin has harness selection
+    # enabled - services/dev_harness.resolve() ignores a pin made under a flag
+    # that was since switched off, so disabling the feature really does move
+    # every project back onto the default driver.
+    dev_harness: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # §dev-pod resources: admin-set scheduling REQUESTS for this project's dev-run
     # pods, docker-style values like Program resources ("0.5" / "512m" / "4g");
     # null = the deployer's instance defaults. On K8s a request above the instance
