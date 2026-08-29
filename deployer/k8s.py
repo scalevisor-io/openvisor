@@ -718,6 +718,7 @@ def dev_run(body, cpu: str, mem: str) -> dict:
         {"name": "GIT_DEFAULT_BRANCH", "value": body.default_branch},
         {"name": "GIT_USER_NAME", "value": body.git_author_name},
         {"name": "GIT_USER_EMAIL", "value": body.git_author_email},
+        {"name": "BRAND_NAME", "value": body.brand_name},
         {"name": "GIT_PROVIDER", "value": body.provider},
         # §glab api host: the API base, which need not be the host git dials.
         {"name": "GITLAB_HOST", "value": body.gitlab_host},

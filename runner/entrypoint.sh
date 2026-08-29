@@ -362,7 +362,7 @@ if [[ "${GIT_PUSH:-0}" == "1" ]] && git -C /workspace remote get-url origin >/de
     # commit is best-effort, and the PUSH must happen regardless - the §publish
     # gate above already guaranteed there is branch content to publish, and on
     # the platform path this push carries the MR-creating push options.
-    if ! git -C /workspace commit -m "Openvisor agent: MVP build"; then
+    if ! git -C /workspace commit -m "${BRAND_NAME:-Openvisor} agent: MVP build"; then
       echo "runner: nothing new to commit - publishing the branch as the agent committed it"
     fi
     # Commits ship under the configured git identity ALONE: the agent's commit

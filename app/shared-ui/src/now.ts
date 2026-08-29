@@ -42,6 +42,8 @@ export interface ProjectNowInput {
   evaluationVerdict?: string | null; // feasibility verdict when done
   estimateCredits?: number | null;
   prNumber?: number | null;
+  /** §working method plan gate: "proposed" while the implementation plan awaits the customer's answer in the main thread. */
+  planStatus?: string | null;
   /** Consultant display name, e.g. "Consultant"; defaults to a neutral label. */
   consultant?: string;
   /**
@@ -324,6 +326,17 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
               : "Every edit, test and token below is live.",
           owner: "agent",
           secondary: dev === "queued" ? [] : [A("stop", "Stop build")],
+        });
+      }
+      // §working method plan gate: the plan-only pass parks the project here
+      // with the run idle. Without this branch the "interrupted" copy below is
+      // what the customer reads at the exact moment the agent waits for a yes.
+      if (i.planStatus === "proposed") {
+        return withEscalation({
+          headline: "The plan is ready - your call.",
+          body: "Read it in the conversation, then choose Approve & build or ask for changes.",
+          owner: "you",
+          secondary: [],
         });
       }
       if (kind === "auto_dev" && dev !== "failed") {

@@ -63,6 +63,7 @@ def test_dispatch_forwards_the_identity_to_the_runner(monkeypatch):
     tasks._dispatch_runner(None, project, target)
     assert sent["git_author_name"] == "Acme Bot"
     assert sent["git_author_email"] == "bot@acme.example"
+    assert sent["brand_name"] == tasks.settings.brand_name
 
 
 def test_run_dev_job_puts_the_identity_in_the_body(monkeypatch):
@@ -70,9 +71,11 @@ def test_run_dev_job_puts_the_identity_in_the_body(monkeypatch):
     monkeypatch.setattr(deployer_client, "_call",
                         lambda method, path, payload, timeout=0: body.update(payload) or {})
     deployer_client.run_dev_job("pid", llm_model="m", llm_api_key="k", llm_base_url="u",
-                                git_author_name="Acme Bot", git_author_email="bot@acme.example")
+                                git_author_name="Acme Bot", git_author_email="bot@acme.example",
+                                brand_name="Acme")
     assert body["git_author_name"] == "Acme Bot"
     assert body["git_author_email"] == "bot@acme.example"
+    assert body["brand_name"] == "Acme"
 
 
 # ---------------------------------------------------------------- HTTP

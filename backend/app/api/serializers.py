@@ -295,6 +295,7 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
         "cost_credits": round(p.cost_credits or 0.0, 4),
         "quick_devs_enabled": False,
         "dev_run_state": p.dev_run_state,
+        "dev_plan_status": p.dev_plan_status,
         # §threads: the request the in-flight/last run is scoped to (null = the
         # MVP build) - lets the SPA mark which thread is building.
         "dev_request_id": p.dev_request_id,

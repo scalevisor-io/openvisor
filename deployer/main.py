@@ -107,6 +107,9 @@ class DevRunIn(BaseModel):
     # the runner fall back to its own default.
     git_author_name: str = ""
     git_author_email: str = ""
+    # The brand the wrapper commit is titled with ("<brand> agent: MVP build"), so a
+    # white-label instance's commits never carry the upstream name into customer repos.
+    brand_name: str = "Openvisor"
     provider: str = "gitlab"  # gitlab | github (changes the runner's push mode)
     max_iterations: int = 0  # 0 = uncapped; bounds the agent's token spend
     skip_agent: bool = False  # push the pre-populated workspace as-is (no LLM run)
@@ -559,6 +562,7 @@ def dev_run(body: DevRunIn):
         "-e", f"GIT_DEFAULT_BRANCH={body.default_branch}",
         "-e", f"GIT_USER_NAME={body.git_author_name}",
         "-e", f"GIT_USER_EMAIL={body.git_author_email}",
+        "-e", f"BRAND_NAME={body.brand_name}",
         "-e", f"GIT_PROVIDER={body.provider}",
         # §glab api host: the API base, which need not be the host git dials.
         "-e", f"GITLAB_HOST={body.gitlab_host}",
