@@ -4,7 +4,7 @@ The catalog is a CODE constant, not admin data. Every harness is a driver script
 baked into the runner image (`runner/`), so an id the image has no driver for is
 unrunnable and an instance cannot invent one. What IS admin-editable are the three
 AppSetting keys below: whether per-project selection is offered at all (off by
-default - this flag is the seam a paid tier gates), which harnesses the instance
+default), which harnesses the instance
 permits, and the instance-wide default.
 
 `resolve()` is the single source of truth, and it is fail-closed in the direction

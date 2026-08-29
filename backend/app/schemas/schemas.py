@@ -289,8 +289,8 @@ class AppSettingsIn(BaseModel):
     # probe verdict, so the admin declares it here (saved endpoints are declared or
     # probed on the Model configuration page instead).
     default_model_supports_images: bool | None = None
-    # §dev harness: per-project agent-driver selection. The enable flag is what a
-    # paid tier gates; `allowed` narrows the catalog the runner image ships, and
+    # §dev harness: per-project agent-driver selection. The enable flag turns the
+    # whole feature on; `allowed` narrows the catalog the runner image ships, and
     # `default` is what every project with no pin runs on. Applied only when sent.
     dev_harness_selection_enabled: bool | None = None
     dev_harness_allowed: list[str] | None = None
