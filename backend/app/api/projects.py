@@ -26,7 +26,8 @@ from app.schemas.schemas import (
 )
 from app.services import (
     app_settings, dev_concurrency, devfeed, model_prices, naming, project_actions,
-    project_search, repos as repolib, routines as routines_svc, sshkeys, vision,
+    project_defaults, project_search, repos as repolib, routines as routines_svc,
+    sshkeys, vision,
 )
 from app.services.pricing import load_static
 from app.workers.celery_app import celery
@@ -172,6 +173,11 @@ async def create_project(body: ProjectCreateIn, user: User = Depends(require_ver
         project.ssh_public_key = public_line
     db.add(project)
     await db.flush()
+    # §project defaults: the knowledge bases and tools the admin set for this kind
+    # (/admin/settings). Both gates are per-project and default opposite ways, so a
+    # project that nobody has curated yet still starts usable - a chat with no KB
+    # selection can only answer "I don't have anything on that".
+    await project_defaults.apply(db, project)
     if body.kind in ("ai", "auto_dev"):
         project.subdomain = naming.subdomain_for(project.id, project.name)
         project.workspace_path = f"{settings.workspaces_dir}/{project.id}"

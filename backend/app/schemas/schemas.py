@@ -296,6 +296,14 @@ class AppSettingsIn(BaseModel):
     # when sent - {speciality_id: credits}; null clears an id back to the
     # specialities.json default.
     speciality_fee_overrides: dict[str, float | None] | None = None
+    # §project defaults: what a NEW project of each kind starts with, keyed by
+    # Project.kind (ai/auto_dev/direct_quote/chat). `default_kb_ids` is the KB
+    # selection it is given (opt-in, like Project.kb_ids); `default_tools_off` is
+    # the tools switched OFF for it (an explicit ProjectToolConfig row - a tool is
+    # opt-OUT, so listing nothing keeps today's behavior). A sent map replaces the
+    # stored one; omitted leaves it alone.
+    default_kb_ids: dict[str, list[str]] | None = None
+    default_tools_off: dict[str, list[str]] | None = None
     # §legal identity: the operating company named in the landing's Privacy policy
     # and Terms of service. "" clears the override (the landing's built-in value
     # applies again); omitted leaves the stored value alone.
