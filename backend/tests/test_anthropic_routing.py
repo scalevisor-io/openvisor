@@ -66,3 +66,21 @@ def test_registration_is_best_effort():
     i = src.index("def _register_cache_capable_models")
     body = src[i:i + 1200]
     assert "except Exception" in body
+
+
+def test_prompt_cache_key_is_never_sent_to_anthropic():
+    """prompt_cache_key is an OpenAI/Mistral parameter. Anthropic rejects the whole
+    request with "extra_body: Extra inputs are not permitted", which fails EVERY
+    call of the build.
+
+    The trap is that the native route sets base_url to None, and the support check
+    reads "no override" as "LiteLLM's default OpenAI endpoint" - so testing
+    llm_kwargs["base_url"] after the route is chosen concludes the opposite of the
+    truth. It must test the ORIGINAL url and short-circuit on Anthropic. This
+    shipped broken once and only surfaced under a real dispatch, because the
+    deployer sets LLM_CACHE_KEY and a hand-run container does not.
+    """
+    src = _src()
+    assert "if cache_key and not _anthropic and _cache_key_supported(_base_url):" in src
+    # the guard must not consult the post-routing value
+    assert '_cache_key_supported(llm_kwargs["base_url"])' not in src

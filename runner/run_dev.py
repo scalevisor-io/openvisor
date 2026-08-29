@@ -629,7 +629,8 @@ def main() -> int:
         service_id="openvisor-agent",
         stream=True,
     )
-    if _is_anthropic(_base_url):
+    _anthropic = _is_anthropic(_base_url)
+    if _anthropic:
         # The native provider owns its own endpoint and appends its own version
         # segment. Forwarding the platform's OpenAI-shaped base URL (which ends
         # in /v1, because that is what every other provider needs) would ask for
@@ -643,7 +644,13 @@ def main() -> int:
     # fail EVERY call of the build. An overlong key degrades to truncation
     # (worst case a cache miss), never a dead run.
     cache_key = (os.environ.get("LLM_CACHE_KEY") or "").strip()[:64]
-    if cache_key and _cache_key_supported(llm_kwargs["base_url"]):
+    # Test the ORIGINAL base URL, and never send this on the Anthropic route.
+    # prompt_cache_key is an OpenAI/Mistral parameter; Anthropic rejects the whole
+    # request with "extra_body: Extra inputs are not permitted", failing every call
+    # of the build. Reading llm_kwargs["base_url"] here would see the None the
+    # native route just set and conclude "LiteLLM's default OpenAI endpoint" -
+    # which is exactly how this shipped broken.
+    if cache_key and not _anthropic and _cache_key_supported(_base_url):
         llm_kwargs["litellm_extra_body"] = {"prompt_cache_key": cache_key}
     try:
         llm = LLM(**llm_kwargs)
