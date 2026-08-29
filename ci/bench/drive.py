@@ -44,6 +44,10 @@ import e2e  # noqa: E402 - the walkthrough owns the HTTP actor, mail and hooks
 
 CORPUS = Path(__file__).resolve().parents[2] / "backend/app/services/agent_eval/corpus"
 
+# The plan gate's approve option, verbatim - workers/tasks.PLAN_APPROVE_LABEL.
+# Matched case-insensitively by the deterministic branch in classify_chat_message.
+PLAN_APPROVE = "Approve & build"
+
 
 def load_specs(names: str) -> list[dict]:
     specs = [json.loads(p.read_text()) for p in sorted(CORPUS.glob("*.json"))]
@@ -133,22 +137,44 @@ def drive_one(spec: dict, harness: str, endpoint_id: str | None, rep: int,
         admin.post(f"/api/admin/orgs/{org_id}/credits", {"amount": estimate + 200, "reason": "bench"})
         e2e.wait_for("development", lambda: (
             (x := customer.get(f"/api/projects/{pid}")) and x["status"] == "development" and x), 180)
-        # §terminal state: a real build does NOT reliably land on a dev_run_state
-        # from the happy path. On the plain-push provider path it pushes a branch,
-        # hands the project back and the run row resets to idle - measured on a
-        # gpt-5.6-terra build that finished in 64s with the branch pushed. Waiting
-        # only for awaiting_merge/failed/done blocks until the timeout on a run
-        # that is already over, so the project LEAVING development is the signal,
-        # with the run states kept for the paths that do set them.
-        final = e2e.wait_for("build terminal state", lambda: (
-            (x := customer.get(f"/api/projects/{pid}")) and (
-                x.get("dev_run_state") in ("awaiting_merge", "failed", "done")
-                or x["status"] in ("finished", "canceled", "awaiting_customer",
-                                   "awaiting_admin")) and x), build_timeout)
+        def _wait_terminal(label):
+            """A run is over when it reaches a terminal run state OR the project
+            leaves development. The second half matters because several paths hand
+            the project back with the run row reset to idle, and waiting only on the
+            run states blocks until the timeout on a run that already finished."""
+            return e2e.wait_for(label, lambda: (
+                (x := customer.get(f"/api/projects/{pid}")) and (
+                    x.get("dev_run_state") in ("awaiting_merge", "failed", "done")
+                    or x["status"] in ("finished", "canceled", "awaiting_customer",
+                                       "awaiting_admin")) and x), build_timeout)
+
+        final = _wait_terminal("first terminal state")
+
+        # §working method plan gate: a fresh ai-kind MVP does NOT build on the first
+        # dispatch. It runs a PLAN-ONLY pass, writes a plan and parks awaiting the
+        # customer's approval - so a driver that stops at the first terminal state
+        # measures planning, not building, and reports it as a build. (It did: an
+        # entire 12-run sweep turned out to be plan passes, every one of them
+        # scoring pass@1=0 because a proposed plan is correctly not a delivery.)
+        # Approving is a plain chat message on main, handled by the deterministic
+        # branch ahead of the classifier.
+        row["crossed_plan_gate"] = False
+        if (final.get("dev_plan_status") or "") == "proposed":
+            customer.post(f"/api/projects/{pid}/messages",
+                          {"thread": "main", "body": PLAN_APPROVE})
+            row["crossed_plan_gate"] = True
+            e2e.wait_for("build starts after plan approval", lambda: (
+                (x := customer.get(f"/api/projects/{pid}")) and
+                x["status"] == "development" and x), 300)
+            final = _wait_terminal("build terminal state")
         row["final_state"] = final.get("dev_run_state")
+        row["plan_status"] = final.get("dev_plan_status")
+        row["pr_url"] = final.get("dev_pr_url")
         row["harness_version"] = final.get("dev_harness_version")
         row["status"] = final.get("status")
-        print(f"  [{harness}/{spec['id']}#{rep}] {row['final_state']} hv={row['harness_version']}")
+        gate = " (via plan gate)" if row.get("crossed_plan_gate") else ""
+        print(f"  [{harness}/{spec['id']}#{rep}] {row['final_state']}{gate} "
+              f"hv={row['harness_version']}")
     except Exception as exc:  # noqa: BLE001 - a failed arm is data, not a crash
         row["error"] = f"{type(exc).__name__}: {exc}"[:400]
         print(f"  [{harness}/{spec['id']}#{rep}] DRIVER ERROR {row['error']}", file=sys.stderr)

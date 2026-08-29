@@ -53,15 +53,18 @@ Neither price table row encodes prompt-cache WRITES (Anthropic bills 1.25x base 
 
 Run one spec on one arm first and read the credits and wall clock off the report. Per-build cost and duration vary by an order of magnitude across engines, models and specs, so multiply your own measured figure rather than any number written here: the corpus at N repetitions is `specs x arms x N` builds, all of them spending real tokens.
 
-## Blocking defect: the pass gate does not fit every provider path
+## The plan gate is not the finish line
 
-A build that pushes a branch successfully can still score **pass@1 = 0** and land in the failure histogram as `infra-error`.
+A fresh ai-kind MVP does **not** build on its first dispatch. It runs a PLAN-ONLY pass, writes a plan and parks awaiting the customer's approval, with `dev_plan_status='proposed'` and the run row reset to `idle`.
 
-`metrics._PASS_STATES` is `("done", "awaiting_merge", "deploying")`. On the plain-push provider path the runner pushes, the project is handed back to the customer, and `dev_run_state` resets to `idle` - which is not in that tuple. Every build on that path is therefore scored as a failure, and a comparison run today reports a dead heat at zero.
+A driver that stops at the first terminal state therefore measures **planning**, not building, and a report will present it as a build. This is not hypothetical: an entire 12-run sweep was plan passes before `drive.py` learned to approve. Every one scored `pass@1 = 0`, which was correct - a proposed plan is not a delivery - and the zero was misread as a scoring defect rather than as the driver stopping early.
 
-This is not a benchmark-only bug: `capture_run_record` writes the same `final_state` for production builds, so the live `report --db` numbers understate real pass rates on that path too.
+`drive.py` now approves the plan (a plain chat message on `main`, handled by the deterministic branch ahead of the classifier) and waits again for the real terminal state. The manifest records `crossed_plan_gate` so a report can tell the two shapes apart.
 
-Fix before trusting any pass-rate column: decide whether `idle` reached from `development` with a pushed branch is a pass, and encode that in `metrics.is_pass` rather than in the driver. Cost and wall-clock columns are unaffected - they come from the runner's own metering.
+Two consequences worth keeping in mind:
+
+- A plan pass is far cheaper and faster than a build. Comparing a plan-pass sweep against a build sweep is meaningless; check `crossed_plan_gate` before comparing runs.
+- `metrics._PASS_STATES` is fine as it stands. `idle` at the plan gate genuinely is not a pass, and adding it would have scored every parked plan as a delivered build.
 
 ## Holding the model fixed
 
