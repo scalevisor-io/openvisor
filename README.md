@@ -2,9 +2,9 @@
 
 # Openvisor
 
-The AI-native software factory that makes your knowledge available and profitable 24/7 to the world.
+Scale your consulting activities with a profitable, 24/7 agentic software factory.
 
-Self-hosted, white-label platform for AI-assisted consulting. Customers deposit a project, a sandboxed dev agent builds it as pull/merge requests under your review, a live demo ships on your subdomain, and every LLM token is metered against prepaid credits. Optionally connect your spoke to [Scalevisor](https://github.com/scalevisor-io/scalevisor) to offer your services 24/7 to the world.
+Your knowledge profitable 24/7, self-hosted, with a white-label client-facing platform. Customers deposit a project, a sandboxed dev agent builds it as pull/merge requests under your review, a live demo ships on your subdomain, and every LLM token is metered against prepaid credits. Optionally connect your spoke to [Scalevisor](https://github.com/scalevisor-io/scalevisor) to offer your services 24/7 to the world.
 
 ## Quick start (with your AI assistant)
 
