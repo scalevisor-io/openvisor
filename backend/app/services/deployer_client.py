@@ -103,7 +103,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
                 remote_url: str = "", default_branch: str = "main", extra_host: str = "",
                 gitlab_host: str = "", provider: str = "gitlab", max_iterations: int = 0,
                 skip_agent: bool = False, run_dir: str = "", run_name: str = "",
-                git_author_name: str = "", git_author_email: str = "",
+                git_author_name: str = "", git_author_email: str = "", brand_name: str = "",
                 egress_locked: bool = False, egress_allowlist: list[str] | None = None,
                 cpu_request: str = "", mem_request: str = "",
                 timeout_s: int = 1800) -> dict:
@@ -119,6 +119,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
         "provider": provider, "max_iterations": max_iterations,
         "skip_agent": skip_agent, "run_dir": run_dir, "run_name": run_name,
         "git_author_name": git_author_name, "git_author_email": git_author_email,
+        "brand_name": brand_name,
         "egress_locked": egress_locked, "egress_allowlist": egress_allowlist or [],
         "cpu_request": cpu_request, "mem_request": mem_request,
         "timeout_s": timeout_s,

@@ -343,6 +343,7 @@ export default function ProjectDetail() {
     evaluationVerdict: evaluation?.feasibility?.verdict ?? null,
     estimateCredits: evaluation?.estimate?.credits ?? null,
     prNumber: project.dev_pr_number,
+    planStatus: project.dev_plan_status,
     consultant,
     runCounts,
   });
