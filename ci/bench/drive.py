@@ -133,10 +133,18 @@ def drive_one(spec: dict, harness: str, endpoint_id: str | None, rep: int,
         admin.post(f"/api/admin/orgs/{org_id}/credits", {"amount": estimate + 200, "reason": "bench"})
         e2e.wait_for("development", lambda: (
             (x := customer.get(f"/api/projects/{pid}")) and x["status"] == "development" and x), 180)
+        # §terminal state: a real build does NOT reliably land on a dev_run_state
+        # from the happy path. On the plain-push provider path it pushes a branch,
+        # hands the project back and the run row resets to idle - measured on a
+        # gpt-5.6-terra build that finished in 64s with the branch pushed. Waiting
+        # only for awaiting_merge/failed/done blocks until the timeout on a run
+        # that is already over, so the project LEAVING development is the signal,
+        # with the run states kept for the paths that do set them.
         final = e2e.wait_for("build terminal state", lambda: (
             (x := customer.get(f"/api/projects/{pid}")) and (
                 x.get("dev_run_state") in ("awaiting_merge", "failed", "done")
-                or x["status"] in ("finished", "canceled")) and x), build_timeout)
+                or x["status"] in ("finished", "canceled", "awaiting_customer",
+                                   "awaiting_admin")) and x), build_timeout)
         row["final_state"] = final.get("dev_run_state")
         row["harness_version"] = final.get("dev_harness_version")
         row["status"] = final.get("status")
