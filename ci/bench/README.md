@@ -48,3 +48,27 @@ docker compose -f compose.base.yml -f compose.dev.yml exec api \
 ## Known cost caveat
 
 Neither price table row encodes prompt-cache WRITES (Anthropic bills 1.25x base input for a 5-minute write; `gpt-5.6-terra` bills 5.00/M). A measured Claude Sonnet 5 run reported $0.066993 to the provider against $0.0557 computed from the table - a 17% under-bill, entirely that gap. Credits figures are therefore a lower bound, and the gap is larger for whichever harness re-primes a bigger prefix. `run_claude.py` writes the provider's own `total_cost_usd` into `usage.json` as `provider_cost_usd`; use it as ground truth until a `cache_write` column exists.
+
+## Measured pilot (2026-08-29, n=1 - not a result)
+
+One spec (`webapp-url-shortener`), one attempt per arm, against the e2e git server:
+
+| | openhands / gpt-5.6-terra | claude_sdk / claude-sonnet-5 |
+|---|---|---|
+| harness_version | hv_c2ba8c02d426 | hv_99733160b96e |
+| input tokens | 194,919 (165,456 cached) | 423,972 |
+| output tokens | 4,159 | 16,860 |
+| credits | 0.228 | 0.464 |
+| wall clock | 64 s | 216 s |
+
+Both arms pushed a branch. n=1 on one spec measures nothing about quality - it is here to show the apparatus runs end to end and to price a sweep: roughly 0.23-0.46 credits and 1-4 minutes per build, so the full corpus at 3 repetitions per arm (78 builds) lands near 25-35 credits and several hours of wall clock.
+
+## Blocking defect: the pass gate does not fit this provider path
+
+Both builds above score **pass@1 = 0** and land in the failure histogram as `infra-error`, despite each pushing a branch successfully.
+
+`metrics._PASS_STATES` is `("done", "awaiting_merge", "deploying")`. On the plain-push provider path the runner pushes, the project is handed back to the customer, and `dev_run_state` resets to `idle` - which is not in that tuple. So every build on that path is scored as a failure, and any comparison run today reports a dead heat at zero.
+
+This is not a benchmark-only bug: `capture_run_record` writes the same `final_state` for production builds, so the live `report --db` numbers understate real pass rates on this path too.
+
+Fix before trusting any pass-rate column: decide whether `idle` reached from `development` with a pushed branch is a pass, and encode that in `metrics.is_pass` rather than in the driver. The cost and wall-clock columns above are unaffected - they come from the runner's own metering.
