@@ -7,7 +7,8 @@ import Mark from './Mark.astro';
   <div class="container header-inner">
     <a href="/" class="wordmark" aria-label={`${brandName} home`}>
       <Mark size={22} />
-      {wordmarkHead}<span class="gradient-text">{wordmarkTail}</span>
+      {/* one flex item: the row's gap spaces the mark from the name, never the name's own two tones */}
+      <span>{wordmarkHead}<span class="gradient-text">{wordmarkTail}</span></span>
       <span class="alpha-badge" title="This platform is in alpha">alpha</span>
     </a>
 
