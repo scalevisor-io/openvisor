@@ -42,8 +42,8 @@ def test_the_platform_base_url_is_dropped_for_the_native_route():
     endpoint and appends its own version segment, so forwarding it asks for
     /v1/v1/messages - the same trap the claude_sdk driver hits."""
     src = _src()
-    i = src.index("if _is_anthropic(_base_url):")
-    assert 'llm_kwargs["base_url"] = None' in src[i:i + 600]
+    i = src.index("_anthropic = _is_anthropic(_base_url)")
+    assert 'llm_kwargs["base_url"] = None' in src[i:i + 700]
 
 
 def test_current_claude_models_are_registered_as_cache_capable():
