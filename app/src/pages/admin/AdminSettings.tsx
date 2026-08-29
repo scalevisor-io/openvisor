@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { adminApi } from "../../lib/endpoints";
+import { Link } from "react-router-dom";
+import { adminApi, kbApi, toolsApi, type Tool } from "../../lib/endpoints";
 import { useAuth } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
-import { Alert, Loading, Toggle } from "../../components/ui";
-import type { AdminSettings as AdminSettingsT, ConsultantPhoto } from "../../types";
+import { Alert, Loading, Spinner, Toggle } from "../../components/ui";
+import type {
+  AdminSettings as AdminSettingsT, ConsultantPhoto, KnowledgeBase,
+} from "../../types";
 
 // Admin settings: runtime switches that don't need a redeploy.
 // First control - pause new project deposits, independently per kind. Pausing
@@ -144,6 +147,8 @@ export default function AdminSettings() {
         </div>
       </div>
 
+      <ProjectDefaultsCard settings={settings} busy={busy} update={update} />
+
       <LegalIdentityCard settings={settings} busy={busy} update={update} />
 
       <ConsultantPhotoCard
@@ -156,6 +161,163 @@ export default function AdminSettings() {
       <FeesCard settings={settings} busy={busy} update={update} />
 
       <EgressCard settings={settings} busy={busy} update={update} />
+    </div>
+  );
+}
+
+
+// §project defaults: what a NEW project of each kind is created with. The two
+// gates default opposite ways - a knowledge base reaches a project only if its
+// selection names it, a tool reaches every project unless that project says
+// otherwise - so this card reads as one question (what does a new project start
+// with?) while storing a selection for knowledge bases and an exclusion list for
+// tools. Per kind, because what a build may read and what a conversation may read
+// are different decisions.
+const PROJECT_KINDS = [
+  { id: "ai", label: "Curated AI MVP" },
+  { id: "auto_dev", label: "Auto-developer" },
+  { id: "direct_quote", label: "Direct quote" },
+  { id: "chat", label: "Just chat" },
+];
+
+function ProjectDefaultsCard({
+  settings,
+  busy,
+  update,
+}: {
+  settings: AdminSettingsT;
+  busy: string | null;
+  update: (patch: Partial<AdminSettingsT>, field: string) => Promise<void>;
+}) {
+  const toast = useToast();
+  const [kind, setKind] = useState(PROJECT_KINDS[0].id);
+  const [kbs, setKbs] = useState<KnowledgeBase[] | null>(null);
+  const [tools, setTools] = useState<Tool[] | null>(null);
+  const [kbDraft, setKbDraft] = useState<Record<string, string[]>>(settings.default_kb_ids);
+  const [offDraft, setOffDraft] = useState<Record<string, string[]>>(settings.default_tools_off);
+
+  // Re-sync when the server echoes the stored maps back (it sorts them).
+  useEffect(() => setKbDraft(settings.default_kb_ids), [settings.default_kb_ids]);
+  useEffect(() => setOffDraft(settings.default_tools_off), [settings.default_tools_off]);
+
+  useEffect(() => {
+    Promise.all([kbApi.list(), toolsApi.list()])
+      .then(([k, t]) => {
+        setKbs(k);
+        setTools(t);
+      })
+      .catch((err) => {
+        setKbs([]);
+        setTools([]);
+        toast.push(
+          err instanceof Error ? err.message : "Could not load knowledge bases and tools",
+          "err",
+        );
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function flip(map: Record<string, string[]>, id: string): Record<string, string[]> {
+    const next = new Set(map[kind] ?? []);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return { ...map, [kind]: Array.from(next).sort() };
+  }
+
+  const kbSelected = new Set(kbDraft[kind] ?? []);
+  const toolsOff = new Set(offDraft[kind] ?? []);
+  const dirty =
+    JSON.stringify(kbDraft) !== JSON.stringify(settings.default_kb_ids) ||
+    JSON.stringify(offDraft) !== JSON.stringify(settings.default_tools_off);
+  const kindLabel = PROJECT_KINDS.find((k) => k.id === kind)?.label ?? kind;
+
+  return (
+    <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
+      <h3 style={{ marginTop: 0 }}>What a new project starts with</h3>
+      <Alert kind="info">
+        Knowledge bases are opt-in per project: one reaches a project only if its selection names
+        it, so a kind with nothing checked here creates projects that read no knowledge at all - a
+        chat that can only answer "I don't have anything on that". Tools are the opposite: every
+        enabled tool reaches every project, so unchecking one switches it off for new projects of
+        that kind. Applied once, at creation: changing this never touches projects that already
+        exist, and it only ever narrows the global lists (a knowledge base or tool disabled under{" "}
+        <Link to="/admin/knowledge-bases">Knowledge bases</Link> or{" "}
+        <Link to="/admin/tools">Tools</Link> stays off everywhere).
+      </Alert>
+
+      <div className="tabs" style={{ marginTop: "1rem" }}>
+        {PROJECT_KINDS.map((k) => (
+          <div
+            key={k.id}
+            className={`tab${kind === k.id ? " active" : ""}`}
+            onClick={() => setKind(k.id)}
+          >
+            {k.label}
+          </div>
+        ))}
+      </div>
+
+      {(kbs === null || tools === null) && <Spinner />}
+      {kbs !== null && tools !== null && (
+        <>
+          <div className="section-title mt">Knowledge bases a new {kindLabel} project reads</div>
+          <div className="stack" style={{ gap: "0.35rem" }}>
+            {kbs.map((kb) => (
+              <label key={kb.id} className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={kbSelected.has(kb.id)}
+                  onChange={() => setKbDraft(flip(kbDraft, kb.id))}
+                />
+                {kb.name}
+                <span className="tiny faint">
+                  {" "}
+                  ({kb.kind}
+                  {!kb.enabled ? " · disabled globally" : ""})
+                </span>
+              </label>
+            ))}
+            {kbs.length === 0 && <p className="tiny faint">No knowledge bases configured.</p>}
+          </div>
+
+          <div className="section-title mt">Tools a new {kindLabel} project may call</div>
+          <div className="stack" style={{ gap: "0.35rem" }}>
+            {tools.map((t) => (
+              <label key={t.id} className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={!toolsOff.has(t.id)}
+                  onChange={() => setOffDraft(flip(offDraft, t.id))}
+                />
+                {t.name}
+                <span className="tiny faint">
+                  {" "}
+                  ({t.kind}
+                  {!t.enabled ? " · disabled globally" : ""})
+                </span>
+              </label>
+            ))}
+            {tools.length === 0 && <p className="tiny faint">No tools configured.</p>}
+          </div>
+
+          <div className="row gap-sm mt">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={busy !== null || !dirty}
+              onClick={() =>
+                update(
+                  { default_kb_ids: kbDraft, default_tools_off: offDraft },
+                  "project_defaults",
+                )
+              }
+            >
+              Save defaults
+            </button>
+            {dirty && <span className="muted small">Unsaved changes</span>}
+          </div>
+        </>
+      )}
     </div>
   );
 }

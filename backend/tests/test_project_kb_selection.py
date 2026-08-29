@@ -227,9 +227,11 @@ def test_every_project_scoped_kb_read_goes_through_the_resolver():
             if re.search(r"(?<!rag\.)project_kb_ids", line):
                 continue
             if re.search(r"\bproject\.kb_ids\b", line) and "rag.project_kb_ids" not in line:
-                # the resolver itself, plus the admin write path and the
-                # serializer, which read the stored column on purpose
-                if f.name in ("rag.py", "admin.py", "serializers.py"):
+                # the resolver itself, plus the two write paths (the admin
+                # PATCH and the §project defaults creation stamp) and the
+                # serializer, which touch the stored column on purpose
+                if f.name in ("rag.py", "admin.py", "project_defaults.py",
+                              "serializers.py"):
                     continue
                 offenders.append(f"{f.relative_to(root)}:{i}: {line.strip()}")
     assert not offenders, "pass rag.project_kb_ids(project), not project.kb_ids:\n" + "\n".join(offenders)
