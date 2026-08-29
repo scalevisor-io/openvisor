@@ -3789,8 +3789,10 @@ def _stamp_harness_version(db: Session, project: Project) -> None:
     """Record the fingerprint of the harness THIS project resolves to, so a build
     run on a non-default driver is never compared against a default-driver build
     (§dev harness; the preset id is what separates them). Caller commits."""
+    harness = dev_harness.resolve(db, project)
     project.dev_harness_version = compute_harness_version(
-        settings, tool_preset_id=dev_harness.resolve(db, project).tool_preset_id)
+        settings, tool_preset_id=harness.tool_preset_id,
+        driver_revision=harness.driver_revision)
 
 
 def _mark_dispatch_start(db: Session, project: Project) -> None:

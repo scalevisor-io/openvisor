@@ -24,6 +24,17 @@ PROMPT_DIR = Path(__file__).resolve().parents[2] / "agents" / "prompts"
 # tool_preset_id), which is what keeps two harnesses from sharing a fingerprint.
 TOOL_PRESET_ID = "openhands-default:terminal+file_editor+task_tracker+grep+glob"
 
+# The DRIVER BUILD, hashed separately from the tool preset. The preset says which
+# tools the agent has; this says which implementation hands them to it, including
+# the pinned agent-SDK versions. It exists because a driver change can move cost by
+# multiples without touching a prompt, a cap or a tool: enabling Anthropic prompt
+# caching cut a build's input bill by roughly 4x and, before this field, produced a
+# byte-identical fingerprint - so the cheap runs and the expensive ones aggregated
+# as one harness. Bump the harness's driver_revision for ANY change to its driver
+# script or pinned agent dependency. The default keeps a caller that passes neither
+# argument on the OpenHands identity.
+DRIVER_REVISION = "openhands-sdk1.8.0+drv2"
+
 # RAG breadth is hardcoded in workers/tasks.py::_build_task_file (k=6). Kept here so a
 # change to it shifts the fingerprint even though it lives elsewhere.
 RAG_K = 6
@@ -37,13 +48,21 @@ def _file_hash(p: Path) -> str:
 
 
 def harness_config(settings, prompt_dir: Path | None = None,
-                   tool_preset_id: str = TOOL_PRESET_ID) -> dict:
+                   tool_preset_id: str = TOOL_PRESET_ID,
+                   driver_revision: str = DRIVER_REVISION) -> dict:
     """The canonical, hashable description of the current harness (model excluded).
-    Returned as a plain dict so it can be logged next to a run for transparency."""
+    Returned as a plain dict so it can be logged next to a run for transparency.
+
+    Adding `driver_revision` moved every fingerprint once, on purpose: runs recorded
+    before it were produced by a harness whose driver build was not part of its
+    identity, so they are genuinely not comparable with runs after it. Schema bumped
+    to 2 to say so out loud rather than let the change look like a silent reshuffle.
+    """
     pd = prompt_dir or PROMPT_DIR
     return {
-        "schema": 1,
+        "schema": 2,
         "tool_preset": tool_preset_id,
+        "driver_revision": driver_revision,
         "prompts": {
             "development_system.md": _file_hash(pd / "development_system.md"),
             "security_review.md": _file_hash(pd / "security_review.md"),
@@ -73,12 +92,13 @@ def harness_config(settings, prompt_dir: Path | None = None,
 
 
 def compute_harness_version(settings=None, prompt_dir: Path | None = None,
-                            tool_preset_id: str = TOOL_PRESET_ID) -> str:
+                            tool_preset_id: str = TOOL_PRESET_ID,
+                            driver_revision: str = DRIVER_REVISION) -> str:
     """A short, stable id like 'hv_1a2b3c4d5e6f'. Same config -> same id (order-
     independent); any covered change -> a different id."""
     if settings is None:
         from app.core.config import settings as _s
         settings = _s
-    cfg = harness_config(settings, prompt_dir, tool_preset_id)
+    cfg = harness_config(settings, prompt_dir, tool_preset_id, driver_revision)
     blob = json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode()
     return "hv_" + hashlib.blake2b(blob, digest_size=6).hexdigest()

@@ -49,7 +49,8 @@ def second_harness(monkeypatch):
     """A second registered harness, so the multi-harness paths are exercised while
     the image really ships one driver. Same shape as a real registry entry."""
     extra = dev_harness.Harness(id="probe", label="Probe", description="test-only driver",
-                                driver="/run_probe.py", tool_preset_id="probe:terminal")
+                                driver="/run_probe.py", tool_preset_id="probe:terminal",
+                                driver_revision="probe-drv1")
     monkeypatch.setitem(dev_harness.HARNESSES, "probe", extra)
     return extra
 
@@ -89,6 +90,8 @@ def test_every_registered_harness_has_a_distinct_tool_preset():
     would be silently compared against each other by agent_eval."""
     presets = [h.tool_preset_id for h in dev_harness.HARNESSES.values()]
     assert len(presets) == len(set(presets))
+    revisions = [h.driver_revision for h in dev_harness.HARNESSES.values()]
+    assert len(revisions) == len(set(revisions))
 
 
 # ------------------------------------------------------------------------- resolve
@@ -144,12 +147,27 @@ def test_allowed_ids_drops_junk_and_never_empties():
 
 # --------------------------------------------------------------------- fingerprint
 
+def _hv(h):
+    return compute_harness_version(settings, tool_preset_id=h.tool_preset_id,
+                                   driver_revision=h.driver_revision)
+
+
 def test_harnesses_fingerprint_differently(second_harness):
-    openhands = compute_harness_version(
-        settings, tool_preset_id=dev_harness.HARNESSES["openhands"].tool_preset_id)
-    probe = compute_harness_version(settings, tool_preset_id=second_harness.tool_preset_id)
+    openhands = _hv(dev_harness.HARNESSES["openhands"])
+    probe = _hv(second_harness)
     assert openhands != probe
     assert openhands == compute_harness_version(settings)  # the default is unchanged
+
+
+def test_a_driver_change_moves_the_fingerprint(second_harness):
+    """The reason this field exists: enabling Anthropic prompt caching cut a build's
+    input bill by roughly 4x while touching no tool, prompt or cap, and produced a
+    byte-identical fingerprint - so cheap runs and expensive ones aggregated as one
+    harness. Only driver_revision differs between these two."""
+    import dataclasses
+    bumped = dataclasses.replace(second_harness, driver_revision="probe-drv2")
+    assert _hv(second_harness) != _hv(bumped)
+    assert second_harness.tool_preset_id == bumped.tool_preset_id  # nothing else moved
 
 
 def test_stamp_uses_the_resolved_harness(second_harness):
@@ -158,8 +176,7 @@ def test_stamp_uses_the_resolved_harness(second_harness):
         _settings(db, enabled=True, allowed=["openhands", "probe"])
         p = _project(db, harness="probe")
         tasks._stamp_harness_version(db, p)
-        assert p.dev_harness_version == compute_harness_version(
-            settings, tool_preset_id=second_harness.tool_preset_id)
+        assert p.dev_harness_version == _hv(second_harness)
         db.rollback()
 
 
@@ -258,10 +275,10 @@ def test_the_runner_image_pins_both_halves_of_the_claude_harness():
     df = RUNNER_DOCKERFILE.read_text()
     assert "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" in df
     assert "claude-agent-sdk==${CLAUDE_SDK_VERSION}" in df
-    preset = dev_harness.HARNESSES["claude_sdk"].tool_preset_id
+    revision = dev_harness.HARNESSES["claude_sdk"].driver_revision
     for arg in ("CLAUDE_SDK_VERSION=", "CLAUDE_CLI_VERSION="):
         version = df.split(arg, 1)[1].split("\n", 1)[0].strip()
-        assert version in preset, f"{arg}{version} missing from {preset}"
+        assert version in revision, f"{arg}{version} missing from {revision}"
 
 
 # ------------------------------------------------------------------- admin surface

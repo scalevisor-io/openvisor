@@ -27,7 +27,10 @@ from sqlalchemy.orm import Session
 
 from app.models import Project
 from app.services import app_settings
-from app.services.agent_eval.harness_version import TOOL_PRESET_ID as _OPENHANDS_PRESET
+from app.services.agent_eval.harness_version import (
+    DRIVER_REVISION as _OPENHANDS_DRIVER,
+    TOOL_PRESET_ID as _OPENHANDS_PRESET,
+)
 
 
 @dataclass(frozen=True)
@@ -36,7 +39,13 @@ class Harness:
     label: str
     description: str
     driver: str  # absolute path of the driver script INSIDE the runner image
-    tool_preset_id: str  # distinct per harness: this is what moves the fingerprint
+    tool_preset_id: str  # which tools the agent gets; distinct per harness
+    # Which implementation hands them over, including the pinned agent-SDK version.
+    # Hashed into the fingerprint separately from the preset because a driver change
+    # can move cost by multiples without touching a tool, a prompt or a cap - the
+    # Anthropic prompt-caching fix cut a build's input bill ~4x and left the preset
+    # untouched. Bump on ANY change to the driver script or its pinned dependency.
+    driver_revision: str
 
 
 DEFAULT_ID = "openhands"
@@ -48,6 +57,7 @@ HARNESSES: dict[str, Harness] = {
         description="The default agent loop: the OpenHands SDK v1 driver (runner/run_dev.py).",
         driver="/run_dev.py",
         tool_preset_id=_OPENHANDS_PRESET,
+        driver_revision=_OPENHANDS_DRIVER,
     ),
     "claude_sdk": Harness(
         id="claude_sdk",
@@ -57,9 +67,11 @@ HARNESSES: dict[str, Harness] = {
                     "OpenAI-compatible endpoint the other harness uses.",
         driver="/run_claude.py",
         # Distinct from the OpenHands preset, which is what stops agent_eval from
-        # comparing the two as one harness. The pinned SDK + CLI versions ride in
-        # it so a dependency bump moves the fingerprint too.
-        tool_preset_id="claude-sdk:0.2.148+cli2.1.251:builtin(read+write+edit+bash+glob+grep+websearch)",
+        # comparing the two as one harness.
+        tool_preset_id="claude-sdk:builtin(read+write+edit+bash+glob+grep+websearch)",
+        # Both halves of this harness are the agent: the SDK and the CLI it drives
+        # as a subprocess, pinned together in runner/Dockerfile.
+        driver_revision="claude-sdk0.2.148+cli2.1.251+drv1",
     ),
 }
 
