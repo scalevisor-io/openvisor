@@ -163,9 +163,14 @@ def drive_one(spec: dict, harness: str, endpoint_id: str | None, rep: int,
             customer.post(f"/api/projects/{pid}/messages",
                           {"thread": "main", "body": PLAN_APPROVE})
             row["crossed_plan_gate"] = True
+            # The approved build dispatches WITHOUT returning the project to
+            # `development` - it stays awaiting_customer and only dev_run_state
+            # moves. Waiting on the status is how this timed out on a build that
+            # was already running.
             e2e.wait_for("build starts after plan approval", lambda: (
-                (x := customer.get(f"/api/projects/{pid}")) and
-                x["status"] == "development" and x), 300)
+                (x := customer.get(f"/api/projects/{pid}")) and (
+                    x.get("dev_run_state") == "running"
+                    or x["status"] == "development") and x), 300)
             final = _wait_terminal("build terminal state")
         row["final_state"] = final.get("dev_run_state")
         row["plan_status"] = final.get("dev_plan_status")
