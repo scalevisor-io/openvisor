@@ -142,6 +142,12 @@ class Actor:
     def post(self, path: str, body: dict | None = None, **kw) -> Any:
         return self.call("POST", path, json=body if body is not None else {}, **kw).json()
 
+    def put(self, path: str, body: dict | None = None, **kw) -> Any:
+        return self.call("PUT", path, json=body if body is not None else {}, **kw).json()
+
+    def patch(self, path: str, body: dict | None = None, **kw) -> Any:
+        return self.call("PATCH", path, json=body if body is not None else {}, **kw).json()
+
     def altcha(self) -> str | None:
         """Solve one proof-of-work challenge (single use: one per signup/login)."""
         if not ALTCHA_ENABLED:
@@ -197,6 +203,33 @@ def run_hook(name: str, cmd: str, stdin: str = "", env: dict | None = None) -> N
 # --- the walkthrough ---------------------------------------------------------
 
 
+def build_answers(questions: list[dict]) -> list[dict]:
+    """The plainest MVP's onboarding answers.
+
+    These option ids stay clear of the catalog's deterministic review triggers:
+    sensitive / classified / air-gapped work is flagged for the consultant, which
+    is a different path than the one under test. Shared with the harness benchmark
+    (ci/bench/drive.py) so a corpus build and the walkthrough enter the pipeline
+    through the same door - a benchmark whose projects get routed to review
+    measures nothing.
+    """
+    preferred = {"project_type": "web_app", "audience": "internal_team",
+                 "data_sensitivity": "public_non_sensitive",
+                 "hosting_target": "no_preference", "auth_needs": "email_password",
+                 "expected_scale": "prototype_demo", "timeline": "asap_quick_mvp"}
+    trigger = re.compile(r"classified|defen[cs]e|air.?gap|on.?prem|regulated|health|payment|personal", re.I)
+    answers = []
+    for q in questions:
+        opts = q.get("options") or []
+        if not opts or q.get("show_if"):
+            continue  # conditional questions only show for other answers
+        ids = [o["id"] for o in opts]
+        pick = preferred.get(q["id"]) if preferred.get(q["id"]) in ids else next(
+            (o["id"] for o in opts if not trigger.search(o["id"] + " " + o.get("label", ""))), ids[0])
+        answers.append({"question_id": q["id"], "option_ids": [pick]})
+    return answers
+
+
 def main() -> int:
     t0 = time.monotonic()
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -242,23 +275,7 @@ def main() -> int:
     verify = customer.post(f"/api/projects/{pid}/repos/{repo['id']}/verify-ssh")
     check(verify.get("ok") is True, "2 verify SSH (read + push preflight)", json.dumps(verify)[:200])
 
-    questions = customer.get("/api/meta/questions")["questions"]
-    # The plainest MVP: these option ids stay clear of the catalog's deterministic
-    # review triggers (sensitive / classified / air-gapped work is flagged for the
-    # consultant, which is a different path than the one under test).
-    preferred = {"project_type": "web_app", "audience": "internal_team", "data_sensitivity": "public_non_sensitive",
-                 "hosting_target": "no_preference", "auth_needs": "email_password",
-                 "expected_scale": "prototype_demo", "timeline": "asap_quick_mvp"}
-    trigger = re.compile(r"classified|defen[cs]e|air.?gap|on.?prem|regulated|health|payment|personal", re.I)
-    answers = []
-    for q in questions:
-        opts = q.get("options") or []
-        if not opts or q.get("show_if"):
-            continue  # conditional questions only show for other answers
-        ids = [o["id"] for o in opts]
-        pick = preferred.get(q["id"]) if preferred.get(q["id"]) in ids else next(
-            (o["id"] for o in opts if not trigger.search(o["id"] + " " + o.get("label", ""))), ids[0])
-        answers.append({"question_id": q["id"], "option_ids": [pick]})
+    answers = build_answers(customer.get("/api/meta/questions")["questions"])
     customer.post(f"/api/projects/{pid}/answers", {"answers": answers})
     customer.post(f"/api/projects/{pid}/evaluate")
     ev = wait_for("2 evaluation finished",

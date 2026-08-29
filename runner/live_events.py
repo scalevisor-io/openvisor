@@ -156,6 +156,15 @@ class LiveFeed:
         except Exception:  # noqa: BLE001
             pass
 
+    def append(self, ev: dict) -> None:
+        """Public entry for a driver that composes its own events. __call__ is the
+        OpenHands Conversation callback; the Claude driver (§dev harness) has no
+        such event objects and summarises SDK messages itself."""
+        try:
+            self._append(ev)
+        except Exception:  # noqa: BLE001 - the feed must never fail the build
+            pass
+
     def _append(self, ev: dict) -> None:
         if self._truncated:
             return

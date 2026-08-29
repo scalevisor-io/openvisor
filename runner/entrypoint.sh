@@ -276,6 +276,7 @@ else
   DRIVER="/run_dev.py"
   case "${DEV_HARNESS:-openhands}" in
     openhands) DRIVER="/run_dev.py" ;;
+    claude_sdk) DRIVER="/run_claude.py" ;;
     *) echo "runner: WARNING - unknown DEV_HARNESS '${DEV_HARNESS}' - using the OpenHands driver" ;;
   esac
   if [[ ! -f "$DRIVER" ]]; then

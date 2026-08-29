@@ -2,6 +2,8 @@
 
   version               print the current harness version + its config (no side effects)
   validate [dir]        load + validate the corpus, print the per-speciality stratification
+  compare <manifest.json>  side-by-side harness comparison over the builds a
+                        benchmark run drove (ci/bench/drive.py writes the manifest)
   report <records.json> aggregate captured run records into a markdown report
   report --db [hv]      aggregate the DevRunRecords captured from live builds (optionally
                         scoped to one harness version hv - never mix versions)
@@ -55,6 +57,17 @@ def _cmd_report(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_compare(argv: list[str]) -> int:
+    if not argv:
+        print("usage: compare <manifest.json>", file=sys.stderr)
+        return 2
+    from app.core.db import SyncSession
+    from app.services.agent_eval.compare import load_manifest, render_comparison
+    with SyncSession() as db:
+        print(render_comparison(load_manifest(db, argv[0])))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -67,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_validate(rest)
     if cmd == "report":
         return _cmd_report(rest)
+    if cmd == "compare":
+        return _cmd_compare(rest)
     print(f"unknown command: {cmd}\n{__doc__}", file=sys.stderr)
     return 2
 

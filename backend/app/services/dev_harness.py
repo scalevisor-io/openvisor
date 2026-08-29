@@ -49,6 +49,18 @@ HARNESSES: dict[str, Harness] = {
         driver="/run_dev.py",
         tool_preset_id=_OPENHANDS_PRESET,
     ),
+    "claude_sdk": Harness(
+        id="claude_sdk",
+        label="Claude Agent SDK",
+        description="The Claude Code agent loop as a library (runner/run_claude.py). "
+                    "Anthropic models only - it speaks the Messages API, not the "
+                    "OpenAI-compatible endpoint the other harness uses.",
+        driver="/run_claude.py",
+        # Distinct from the OpenHands preset, which is what stops agent_eval from
+        # comparing the two as one harness. The pinned SDK + CLI versions ride in
+        # it so a dependency bump moves the fingerprint too.
+        tool_preset_id="claude-sdk:0.2.148+cli2.1.251:builtin(read+write+edit+bash+glob+grep+websearch)",
+    ),
 }
 
 # AppSetting keys (runtime, admin-editable - core/config.py stays env-only).

@@ -196,6 +196,74 @@ def test_the_entrypoint_dispatches_on_the_harness_and_falls_back():
     assert entry.index("is not in this image") < entry.index('python -u "$DRIVER"')
 
 
+# ------------------------------------------------------- the second driver's contract
+
+RUN_CLAUDE = Path("/app/runner_src/run_claude.py")
+RUNNER_DOCKERFILE = Path("/app/runner_src/Dockerfile")
+
+
+def test_the_entrypoint_maps_every_registered_harness_to_a_driver():
+    """A registered id the image cannot dispatch is a build that silently runs on
+    the wrong agent - the fallback hides it, so pin the mapping here instead."""
+    if not RUNNER_ENTRYPOINT.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    entry = RUNNER_ENTRYPOINT.read_text()
+    for h in dev_harness.HARNESSES.values():
+        assert f"{h.id}) DRIVER=\"{h.driver}\"" in entry, h.id
+
+
+def test_the_claude_driver_reproduces_the_openvisor_artifact_contract():
+    """The worker reads a build's outcome off .openvisor/ and cannot tell which
+    harness wrote it. A driver that skips one of these does not fail loudly - it
+    bills nothing, or narrates nothing, or loses the plan gate."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    src = RUN_CLAUDE.read_text()
+    for artifact in ("usage.json", "error.json", "exit_reason.json", "task.md",
+                     "steering.md", "mcp.json"):
+        assert artifact in src, artifact
+    # usage.json must be written atomically or a kill mid-write leaves a torn file
+    assert "os.replace(tmp, path)" in src
+    # every input token the provider charges for has to reach the meter
+    assert "cache_creation_input_tokens" in src and "cache_read_input_tokens" in src
+    # the run must be billed even when it errors or hits the cap
+    assert "finally:" in src and "_dump_usage(usage)" in src
+
+
+def test_the_claude_driver_never_asks_for_permission_as_root():
+    """bypassPermissions maps to the CLI's --dangerously-skip-permissions, which
+    refuses to run as root - and the runner IS root. Regressing to it turns every
+    Claude build into an immediate exit 1."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    src = RUN_CLAUDE.read_text()
+    assert 'permission_mode="bypassPermissions"' not in src
+    assert "can_use_tool=_approve" in src and "PermissionResultAllow()" in src
+
+
+def test_the_claude_driver_does_not_load_customer_repo_settings():
+    """/workspace is the CUSTOMER's repository. Letting the SDK read its .claude/
+    would let a customer repo inject hooks and skills into a build running with
+    platform credentials."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    assert "setting_sources=[]" in RUN_CLAUDE.read_text()
+
+
+def test_the_runner_image_pins_both_halves_of_the_claude_harness():
+    """The SDK drives the `claude` CLI as a subprocess, so both are the harness.
+    Unpinned, the fingerprint claims a configuration the image no longer has."""
+    if not RUNNER_DOCKERFILE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    df = RUNNER_DOCKERFILE.read_text()
+    assert "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" in df
+    assert "claude-agent-sdk==${CLAUDE_SDK_VERSION}" in df
+    preset = dev_harness.HARNESSES["claude_sdk"].tool_preset_id
+    for arg in ("CLAUDE_SDK_VERSION=", "CLAUDE_CLI_VERSION="):
+        version = df.split(arg, 1)[1].split("\n", 1)[0].strip()
+        assert version in preset, f"{arg}{version} missing from {preset}"
+
+
 # ------------------------------------------------------------------- admin surface
 
 @pytest.fixture(scope="module")
