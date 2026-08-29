@@ -1,0 +1,10 @@
+# CI e2e: overlay for the end-to-end workflow (.github/workflows/e2e.yml).
+# Adds the throwaway SSH git server the customer project connects to, on the
+# platform `internal` network so the worker (push preflight, merge sweep) and
+# the runner sandbox (branch push) both resolve `gitserver` by name.
+# Usage: docker compose -f compose.base.yml -f compose.dev.yml -f ci/compose.e2e.yml ...
+services:
+  gitserver:
+    build: ./ci/e2e/gitserver
+    networks: [internal]
+    restart: unless-stopped

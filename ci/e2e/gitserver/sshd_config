@@ -1,0 +1,12 @@
+# Key-only sshd for the e2e git server. StrictModes off: authorized_keys is
+# appended at runtime by the deploy-key hook (ci/e2e/hooks/install-key.sh).
+Port 22
+AddressFamily inet
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+StrictModes no
+AllowUsers git
+LogLevel VERBOSE
