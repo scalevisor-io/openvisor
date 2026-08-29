@@ -1,0 +1,102 @@
+# CI e2e: the customer <-> consultant walkthrough of .claude/commands/e2e-check.md,
+# replayed headless (ci/e2e/e2e.py) against the real compose stack on a GitHub
+# runner: signup -> deposit -> evaluation -> pricing -> credits -> the §14
+# pipeline pushes the build to an SSH remote -> merge -> demo -> delivery
+# approval. Scaffold mode (OPENHANDS_ENABLED=0): zero LLM tokens, no external
+# forge, no secrets. Runbook and local replay: ci/e2e/README.md.
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COMPOSE: docker compose -f compose.base.yml -f compose.dev.yml -f ci/compose.e2e.yml
+      # Only the services the walkthrough needs. Left out on purpose: the SPA,
+      # landing, MCP sidecars and the web-research image (8-10 GB the runner's
+      # disk does not have) - none of them is on the deposit -> demo path.
+      SERVICES: postgres redis meilisearch api worker beat deployer traefik mailpit gitserver
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The scaffold path still launches the runner sandbox for the git publish
+      # (deployer /dev/run), so the image is required. It is the heavy one
+      # (openhands-ai via uv); the layer cache keeps rebuilds to seconds.
+      - name: Build the runner image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./runner
+          tags: openvisor-runner
+          load: true
+          cache-from: type=gha,scope=runner
+          cache-to: type=gha,scope=runner,mode=max
+
+      - name: Start the stack
+        run: |
+          cp ci/e2e/env.ci .env
+          $COMPOSE up -d --build $SERVICES
+          for i in $(seq 1 60); do
+            curl -sf -H 'Host: app.openvisor.local' http://127.0.0.1:8080/api/health >/dev/null && break
+            sleep 5
+          done
+          curl -sf -H 'Host: app.openvisor.local' http://127.0.0.1:8080/api/health
+          $COMPOSE ps
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the walkthrough
+        env:
+          E2E_BASE: http://127.0.0.1:8080
+          E2E_APP_HOST: app.openvisor.local
+          E2E_MAIL_HOST: mail.openvisor.local
+          ADMIN_EMAIL: admin@example.org
+          ADMIN_PASSWORD: ci-only-admin-password
+          E2E_REPO_SSH_URI: ssh://git@gitserver/srv/git/todo.git
+          E2E_INSTALL_KEY_CMD: sh ci/e2e/hooks/install-key.sh
+          E2E_MERGE_CMD: sh ci/e2e/hooks/merge.sh
+        run: |
+          pip install -q requests
+          python3 ci/e2e/e2e.py
+
+      - name: Collect stack logs
+        if: always()
+        run: |
+          $COMPOSE logs --no-color --timestamps > stack.log 2>&1 || true
+          docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' > containers.txt || true
+          echo "::group::worker (tail)"; $COMPOSE logs --no-color --tail 150 worker || true; echo "::endgroup::"
+          echo "::group::deployer (tail)"; $COMPOSE logs --no-color --tail 80 deployer || true; echo "::endgroup::"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-stack-logs
+          path: |
+            stack.log
+            containers.txt
+          retention-days: 7
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f $(docker ps -aq --filter name=demo- --filter name=dev- --filter name=verify-) 2>/dev/null || true
+          $COMPOSE down -v --remove-orphans || true
