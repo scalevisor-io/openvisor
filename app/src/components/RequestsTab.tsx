@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { adminApi, billingApi, projectsApi, quotesApi, requestsApi } from "../lib/endpoints";
 import { useAuth } from "../lib/auth";
@@ -159,14 +159,26 @@ export default function RequestsTab({
       .then(setRequests)
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load requests."));
   }
-  useEffect(load, [projectId]);
+  // The list is fetched once per project and again whenever the project's own
+  // state moved, because a request can be filed while this tab sits open (the
+  // §12 classifier files one from chat) and would otherwise never appear.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [projectId, project?.status, project?.dev_run_state]);
 
-  // Deep link to a request that doesn't exist (deleted, wrong project): fall
-  // back to the list URL instead of a dead detail view.
+  // Deep link to a request the loaded list doesn't have. It is usually just
+  // stale - the chat ack links to the request the classifier filed seconds ago
+  // - so refetch once and only fall back to the list URL if it is still
+  // missing, or the link lands back on the list it came from.
+  const probed = useRef<string | null>(null);
   useEffect(() => {
-    if (requestId && requests && !requests.some((r) => r.id === requestId)) {
+    if (!requestId || !requests || requests.some((r) => r.id === requestId)) return;
+    if (probed.current === requestId) {
       navigate(`/projects/${projectId}/requests`, { replace: true });
+      return;
     }
+    probed.current = requestId;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId, requests, navigate, projectId]);
 
   async function create(e: React.FormEvent) {
