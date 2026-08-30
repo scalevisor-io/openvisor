@@ -577,6 +577,12 @@ export interface AdminSettings {
   // speciality_fee_overrides ({id: credits}, null clears back to the default).
   speciality_fees?: SpecialityFeeRow[];
   speciality_fee_overrides?: Record<string, number | null>;
+  // §project defaults: what a NEW project of each kind starts with, keyed by kind
+  // (ai/auto_dev/direct_quote/chat). default_kb_ids is the knowledge selection it
+  // is given (opt-in, like Project.kb_ids); default_tools_off is the tools
+  // switched off for it (a tool is opt-out, so an empty list keeps every tool).
+  default_kb_ids: Record<string, string[]>;
+  default_tools_off: Record<string, string[]>;
   // §legal identity: the operating company the landing's Privacy policy and Terms
   // of service name. Empty = the landing keeps the value it was built with.
   legal_name: string;

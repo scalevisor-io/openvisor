@@ -32,7 +32,10 @@ from app.schemas.schemas import (
     HubEvalIn, HubGrantIn, HubOrgCreateIn, HubProjectActionIn, HubProjectCreateIn,
     HubProjectMessageIn, HubRequestIn, MemoryIn,
 )
-from app.services import app_settings, devfeed, kb_audit, naming, project_actions, repos as repolib, speciality as speciality_svc, sshkeys
+from app.services import (
+    app_settings, devfeed, kb_audit, naming, project_actions, project_defaults,
+    repos as repolib, speciality as speciality_svc, sshkeys,
+)
 from app.services.pricing import load_static
 from app.workers.celery_app import celery
 
@@ -375,6 +378,9 @@ async def create_hub_project(body: HubProjectCreateIn, request: Request,
         project.ssh_public_key = public_line
     db.add(project)
     await db.flush()
+    # §project defaults: same stamp as the customer create - the defaults belong to
+    # the instance whose knowledge is being read, not to whoever clicked create.
+    await project_defaults.apply(db, project)
     if body.kind == "ai":
         project.subdomain = naming.subdomain_for(project.id, "project")
         project.workspace_path = f"{settings.workspaces_dir}/{project.id}"

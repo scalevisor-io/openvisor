@@ -13,15 +13,16 @@ from app.core.deps import require_admin
 from app.core.security import new_api_token
 from app.models import (
     ApiToken, CreditTransaction, KnowledgeBase, ModelEndpoint, Organization,
-    Project, ProjectModelConfig, Quote, QuoteAttachment, Request, User, utcnow,
+    Project, ProjectModelConfig, Quote, QuoteAttachment, Request, Tool, User, utcnow,
 )
 from app.schemas.schemas import (
     AdminUserPatchIn, AppSettingsIn, CreditAdjustIn, ModelConfigIn, PriceIn,
     ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, consultant_photo, dev_concurrency, dev_harness, egress, hub_events,
-    routines as routines_svc, speciality as speciality_svc, stripe_svc, vision,
+    app_settings, brand, consultant_photo, dev_concurrency, dev_harness, egress,
+    hub_events, project_defaults, routines as routines_svc,
+    speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
 from app.services.lifecycle import TransitionError, transition_async
@@ -102,6 +103,7 @@ async def _settings_out(db: AsyncSession) -> dict:
     out.update(await dev_harness.admin_state(db))
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
+    out.update(await project_defaults.describe(db))
     out.update(await app_settings.get_legal_identity(db))
     out["consultant_photo"] = await consultant_photo.describe(db)
     return out
@@ -111,8 +113,9 @@ async def _settings_out(db: AsyncSession) -> dict:
 async def get_settings(db: AsyncSession = Depends(get_db)):
     """Runtime, admin-editable global settings: the deposit-pause flags, the
     instance-default model's image-support declaration (§chat images), the
-    dev-sandbox egress lockdown (§egress) and the legal identity the landing's
-    legal pages print (§legal identity)."""
+    dev-sandbox egress lockdown (§egress), the per-kind knowledge-base and tool
+    defaults a new project starts with (§project defaults) and the legal identity
+    the landing's legal pages print (§legal identity)."""
     return await _settings_out(db)
 
 
@@ -179,6 +182,23 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
                 raise HTTPException(422, f"Invalid fee for {sid}: a non-negative number of credits")
             cleaned[sid] = val
         await app_settings.set_value(db, speciality_svc.FEE_OVERRIDES_KEY, cleaned)
+    # §project defaults: what a NEW project of each kind starts with. A sent map
+    # replaces the stored one, and every id is checked against a live row here so a
+    # stale selection can't become a dangling override at a customer's create click.
+    if body.default_kb_ids is not None:
+        known = set((await db.execute(select(KnowledgeBase.id))).scalars().all())
+        try:
+            defaults = project_defaults.normalize(body.default_kb_ids, known)
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid default knowledge bases: {exc}")
+        await app_settings.set_value(db, project_defaults.KB_KEY, defaults)
+    if body.default_tools_off is not None:
+        known = set((await db.execute(select(Tool.id))).scalars().all())
+        try:
+            defaults = project_defaults.normalize(body.default_tools_off, known)
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid default tools: {exc}")
+        await app_settings.set_value(db, project_defaults.TOOLS_OFF_KEY, defaults)
     # §legal identity: what the landing's Privacy policy and Terms of service name
     # as the operating company. "" clears the override back to the built-in value.
     await app_settings.set_legal_identity(
