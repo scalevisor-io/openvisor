@@ -20,9 +20,9 @@ from app.schemas.schemas import (
     ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, consultant_photo, dev_concurrency, egress, hub_events,
-    project_defaults, routines as routines_svc, speciality as speciality_svc,
-    stripe_svc, vision,
+    app_settings, brand, consultant_photo, dev_concurrency, dev_harness, egress,
+    hub_events, project_defaults, routines as routines_svc,
+    speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
 from app.services.lifecycle import TransitionError, transition_async
@@ -100,6 +100,7 @@ async def _settings_out(db: AsyncSession) -> dict:
     out["routines_disabled"] = await app_settings.get_flag(
         db, routines_svc.ROUTINES_DISABLED)
     out["default_model"] = settings.openai_model
+    out.update(await dev_harness.admin_state(db))
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
     out.update(await project_defaults.describe(db))
@@ -132,6 +133,34 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
         # customer write, so flipping it takes effect without a deploy.
         await app_settings.set_flag(db, routines_svc.ROUTINES_DISABLED,
                                     body.routines_disabled)
+    # §dev harness: validate the pair together - a default outside the allowed set
+    # would resolve back to the built-in default and read as the setting being
+    # ignored. Both are checked against the list being written, not the stored one.
+    if body.dev_harness_allowed is not None or body.dev_harness_default is not None:
+        # The body's list is validated as sent (an unknown id is a 422, never a
+        # silent drop); a STORED list is normalized, so a hand-edited row cannot
+        # 500 the settings page.
+        allowed = (body.dev_harness_allowed
+                   if body.dev_harness_allowed is not None
+                   else dev_harness.normalize_ids(
+                       await app_settings.get_value(db, dev_harness.ALLOWED_KEY, None),
+                       [dev_harness.DEFAULT_ID]))
+        unknown = sorted({h for h in allowed if h not in dev_harness.HARNESSES})
+        if unknown:
+            raise HTTPException(422, f"Unknown dev harness(es): {', '.join(unknown)}")
+        if not allowed:
+            raise HTTPException(422, "At least one dev harness must be allowed")
+        if body.dev_harness_allowed is not None:
+            await app_settings.set_value(db, dev_harness.ALLOWED_KEY, list(allowed))
+        if body.dev_harness_default is not None:
+            if body.dev_harness_default not in allowed:
+                raise HTTPException(
+                    422, f"Default harness {body.dev_harness_default} is not in the allowed set")
+            await app_settings.set_value(db, dev_harness.DEFAULT_KEY, body.dev_harness_default)
+    if body.dev_harness_selection_enabled is not None:
+        # The gate itself: with it off, resolve() ignores every per-project pin.
+        await app_settings.set_flag(db, dev_harness.SELECTION_ENABLED,
+                                    body.dev_harness_selection_enabled)
     if body.egress_allowlist is not None:
         try:
             cleaned = egress.normalize_list(body.egress_allowlist)
@@ -263,6 +292,18 @@ async def patch_project(project_id: str, body: ProjectPatchIn,
         project.dev_max_iterations = body.dev_max_iterations
     if "dev_parallel_limit" in body.model_fields_set:
         project.dev_parallel_limit = body.dev_parallel_limit
+    if "dev_harness" in body.model_fields_set:
+        if body.dev_harness is None:
+            project.dev_harness = None  # back to the instance default
+        else:
+            selectable = await dev_harness.selectable_ids(db)
+            if not selectable:
+                raise HTTPException(422, "Dev-harness selection is disabled on this instance")
+            if body.dev_harness not in selectable:
+                raise HTTPException(
+                    422, f"Dev harness not allowed here: {body.dev_harness} "
+                         f"(allowed: {', '.join(selectable)})")
+            project.dev_harness = body.dev_harness
     if "dev_cpu_request" in body.model_fields_set:
         project.dev_cpu_request = body.dev_cpu_request
     if "dev_mem_request" in body.model_fields_set:

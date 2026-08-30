@@ -9,6 +9,10 @@
       "Prompt-cache READ rates are now encoded per row as `cached_input` (billing bills reported cached tokens at that rate; rows without it give no discount) - keep them verified alongside input/output. Still NOT encoded: cache-write surcharges, Anthropic & Scaleway Batch API (-50%), OpenAI Flex/Priority tiers.",
       "Scaleway also hosts Mistral/Qwen/Llama/gpt-oss at EUR rates; add scaleway/* rows if you route those models through Scaleway instead of the native provider.",
       "Add context_window / max_output columns if the estimator needs them.",
+      "Anthropic + OpenAI rows now carry cached_input (the cache-READ rate). Cache WRITES are still unencoded everywhere: Anthropic charges 1.25x base input for a 5-minute write (2x for 1-hour) and gpt-5.6-terra charges 5.00/M. Any harness that re-primes a large prefix per run is under-billed by exactly that. Add a cache_write column before harness cost comparisons are treated as final.",
+      "gpt-5.6-terra: cache WRITES bill 5.00 per 1M (2.5x its input rate) and this table has no column for them, so a run that primes a large prompt prefix is under-billed. The dev pipeline sends LLM_CACHE_KEY per workspace, so this is on the hot path - add a cache_write column before Terra costs drive a decision.",
+      "gpt-5.6-terra: one secondary source reported a long-context meter (4.00/18.00 for requests over ~272K input tokens); NOT confirmed by the owner-supplied rates and NOT encoded. Verify before trusting long-run cost figures.",
+      "gpt-5.6-terra has a LONG-CONTEXT meter (~272K+ input tokens bills the entire request at 4.00 in / 18.00 out) that this flat-rate table cannot express - a dev run that crosses the threshold is under-billed here. Encode a context-tiered rate, or bill Terra long runs manually, before pricing decisions rest on it.",
       "Bill by `api_model` (the exact usage-reported model string), NOT `id`; an unknown model string must fail loud, never bill 0. The in-use Mistral rows now carry `api_model`; add it (and `type` if embedding) to the anthropic/openai/scaleway rows before routing projects to them.",
       "Embedding tokens are billable and now included: pgvector RAG ingestion (whole knowledge repo + CVE feeds) and every retrieval query run through mistral-embed - meter them like chat input tokens. Reranker (currently unset in .env) has no row yet; add one if you route to a token-billed reranker."
     ],
@@ -32,11 +36,13 @@
     }
   },
   "models": [
-    { "id": "anthropic/claude-opus-4-8", "provider": "anthropic", "model": "Claude Opus 4.8", "input": 5.00, "output": 25.00, "currency": "USD", "notes": "Flagship; 1M context." },
-    { "id": "anthropic/claude-fable-5", "provider": "anthropic", "model": "Claude Fable 5", "input": 10.00, "output": 50.00, "currency": "USD", "notes": "Most capable." },
-    { "id": "anthropic/claude-sonnet-5", "provider": "anthropic", "model": "Claude Sonnet 5", "input": 3.00, "output": 15.00, "currency": "USD", "notes": "Standard rate; introductory $2/$10 ended 2026-08-31." },
-    { "id": "anthropic/claude-haiku-4-5", "provider": "anthropic", "model": "Claude Haiku 4.5", "input": 1.00, "output": 5.00, "currency": "USD", "notes": "Cheapest/fastest." },
+    {"id": "anthropic/claude-opus-5", "provider": "anthropic", "model": "Claude Opus 5", "api_model": "claude-opus-5", "type": "chat", "input": 5.0, "cached_input": 0.5, "output": 25.0, "currency": "USD", "notes": "Current flagship; 1M context. Verified 2026-08-29."},
+    {"id": "anthropic/claude-opus-4-8", "provider": "anthropic", "model": "Claude Opus 4.8", "api_model": "claude-opus-4-8", "type": "chat", "input": 5.0, "cached_input": 0.5, "output": 25.0, "currency": "USD", "notes": "1M context. Verified 2026-08-29."},
+    {"id": "anthropic/claude-fable-5", "provider": "anthropic", "model": "Claude Fable 5", "api_model": "claude-fable-5", "type": "chat", "input": 10.0, "cached_input": 1.0, "output": 50.0, "currency": "USD", "notes": "Most capable. Verified 2026-08-29."},
+    {"id": "anthropic/claude-sonnet-5", "provider": "anthropic", "model": "Claude Sonnet 5", "api_model": "claude-sonnet-5", "type": "chat", "input": 2.0, "cached_input": 0.2, "output": 10.0, "currency": "USD", "notes": "2.00/10.00 is the STANDARD price: the increase to 3.00/15.00 scheduled for 2026-09-01 was cancelled and the launch rate made permanent. Verified 2026-08-29."},
+    {"id": "anthropic/claude-haiku-4-5", "provider": "anthropic", "model": "Claude Haiku 4.5", "api_model": "claude-haiku-4-5", "type": "chat", "input": 1.0, "cached_input": 0.1, "output": 5.0, "currency": "USD", "notes": "Cheapest/fastest; 200K context. Verified 2026-08-29."},
 
+    { "id": "openai/gpt-5.6-terra", "provider": "openai", "model": "GPT-5.6 Terra", "api_model": "gpt-5.6-terra", "type": "chat", "input": 2.00, "cached_input": 0.40, "output": 12.00, "currency": "USD", "notes": "Rates supplied by the instance owner 2026-08-29. Cache WRITES bill 5.00/M on top and have no column here - see owner_todo; on a dev run that is not a rounding error." },
     { "id": "openai/gpt-5.6-luna", "provider": "openai", "model": "GPT-5.6 Luna", "api_model": "gpt-5.6-luna", "type": "chat", "input": 0.20, "cached_input": 0.02, "output": 1.20, "currency": "USD", "notes": "Verified 2026-08-10; OpenAI cut Luna -80% on 2026-07-30 (was 1.00/6.00)." },
     { "id": "openai/gpt-5.5", "provider": "openai", "model": "GPT-5.5", "input": 5.00, "output": 30.00, "currency": "USD", "notes": "Flagship." },
     { "id": "openai/gpt-5.4", "provider": "openai", "model": "GPT-5.4", "input": 2.50, "output": 15.00, "currency": "USD", "notes": "Balanced." },

@@ -486,6 +486,7 @@ export const adminApi = {
       dev_parallel_limit?: number | null;
       dev_cpu_request?: string | null;
       dev_mem_request?: string | null;
+      dev_harness?: string | null;
     },
   ) => api.patch<Project>(`/admin/projects/${id}`, body),
   getModelConfig: (id: string) => api.get<ModelConfig>(`/admin/projects/${id}/model-config`),

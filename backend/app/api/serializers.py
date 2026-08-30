@@ -251,6 +251,10 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
         # [] = none) - names/kinds stay behind the admin KB API.
         "kb_ids": p.kb_ids,
         "dev_max_iterations": p.dev_max_iterations,
+        # §dev harness: the raw pin only (null = inheriting the instance default).
+        # What it resolves to depends on instance state the admin Settings payload
+        # already carries, so the effective value is composed client-side.
+        "dev_harness": p.dev_harness,
         "dev_cpu_request": p.dev_cpu_request,
         "dev_mem_request": p.dev_mem_request,
         "issue_watch": p.issue_watch,

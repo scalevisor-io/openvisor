@@ -32,6 +32,10 @@ def _dispatch(monkeypatch, results: list[dict]) -> list[dict]:
     monkeypatch.setattr(tasks, "_project_reasoning_effort", lambda db, p: "")
     monkeypatch.setattr(tasks.dev_concurrency, "bound_run", lambda p: None)
     monkeypatch.setattr(tasks.egress, "is_enabled", lambda db: False)
+    # §dev harness: resolved from the db like the egress flag above, and these
+    # dispatch tests run without one - pin the default driver.
+    monkeypatch.setattr(tasks.dev_harness, "resolve",
+                        lambda db, p: tasks.dev_harness.HARNESSES["openhands"])
     monkeypatch.setattr(tasks.devfeed, "append_event", lambda *a, **k: None)
     monkeypatch.setattr(tasks.deployer_client, "run_dev_job", fake_run)
 
@@ -110,7 +114,7 @@ def test_entrypoint_proves_the_remote_before_building():
     pre = src.index("ls-remote origin")
     assert src.index("GIT_REMOTE_UNREACHABLE") > pre  # verdict follows the probe
     assert "GIT_REMOTE_DENIED" in src
-    assert src.index("exit 6") < src.index("starting OpenHands headless build")
+    assert src.index("exit 6") < src.index("starting headless build")
     # an empty/new remote answers ls-remote and must still build
     assert 'REMOTE_ERR="reachable"' in src
     # a run that publishes nothing keeps exploring on the seeded workspace

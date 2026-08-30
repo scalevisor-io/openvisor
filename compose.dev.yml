@@ -34,6 +34,10 @@ services:
       # Same rationale for the dev runner's pre-publish leak scan (runner/leak_scan.py):
       # a separate image, so mount its source read-only for the leak-scan test.
       - ./runner:/app/runner_src:ro
+      # And for the deployer (deployer/main.py, deployer/k8s.py): the backend suite
+      # pins the sandbox env contract it builds - what the runner is handed is a
+      # platform invariant, not the deployer image's private business.
+      - ./deployer:/app/deployer_src:ro
       - workspaces:/workspaces
 
   worker:

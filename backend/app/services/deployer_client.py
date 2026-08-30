@@ -106,6 +106,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
                 git_author_name: str = "", git_author_email: str = "", brand_name: str = "",
                 egress_locked: bool = False, egress_allowlist: list[str] | None = None,
                 cpu_request: str = "", mem_request: str = "",
+                harness: str = "openhands",
                 timeout_s: int = 1800) -> dict:
     # Give the deployer its full wall-clock budget plus a margin so the HTTP
     # client never times out before the deployer's own watchdog fires (the old
@@ -122,5 +123,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
         "brand_name": brand_name,
         "egress_locked": egress_locked, "egress_allowlist": egress_allowlist or [],
         "cpu_request": cpu_request, "mem_request": mem_request,
+        # §dev harness: the driver the runner image executes for this dispatch.
+        "harness": harness,
         "timeout_s": timeout_s,
     }, timeout=timeout_s + 120)

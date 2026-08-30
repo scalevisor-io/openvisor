@@ -132,6 +132,9 @@ export interface Project extends ProjectSummary {
   sovereign_comment?: string | null;
   block_auto_development: boolean;
   dev_max_iterations?: number | null;
+  // §dev harness: the project's pinned agent driver; null = the instance default.
+  // Only honored while the admin has harness selection enabled.
+  dev_harness?: string | null;
   // §dev-pod resources: per-project dev-run pod scheduling requests (docker-style
   // 0.5 / 512m / 4g); null = the deployer's instance defaults.
   dev_cpu_request?: string | null;
@@ -559,6 +562,13 @@ export interface AdminSettings {
   pause_chat_deposits: boolean;
   // §routines: instance kill switch (the feature is on unless this is true).
   routines_disabled: boolean;
+  // §dev harness: per-project agent-driver selection. The flag gates the whole
+  // feature; `allowed` narrows the catalog the runner image ships; `default` is
+  // what a project with no pin runs on. `dev_harnesses` is the catalog itself.
+  dev_harness_selection_enabled: boolean;
+  dev_harness_allowed: string[];
+  dev_harness_default: string;
+  dev_harnesses: DevHarness[];
   // §egress: dev-sandbox egress lockdown (enforced on Kubernetes deployments).
   egress_lockdown_enabled: boolean;
   egress_allowlist: string[];
@@ -581,6 +591,12 @@ export interface AdminSettings {
   // name - metadata only, the bytes are served by GET /meta/consultant-photo.
   // null = none uploaded (the landing keeps its photo-less layout).
   consultant_photo: ConsultantPhoto | null;
+}
+
+export interface DevHarness {
+  id: string;
+  label: string;
+  description: string;
 }
 
 export interface ConsultantPhoto {

@@ -43,7 +43,22 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
       "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-$(uname -m)" \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
+# §dev harness: the claude_sdk driver. The Agent SDK is a Python wrapper that
+# runs the `claude` CLI as a SUBPROCESS, so both halves are required - the npm
+# CLI and the Python package. Node comes from NodeSource because Debian slim's
+# nodejs is too old for the CLI. Placed after the openhands layer so bumping one
+# harness never invalidates the other's cache.
+ARG NODE_MAJOR=22
+ARG CLAUDE_CLI_VERSION=2.1.251
+ARG CLAUDE_SDK_VERSION=0.2.148
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
+    && uv pip install --system --no-cache claude-agent-sdk==${CLAUDE_SDK_VERSION}
+
 COPY run_dev.py /run_dev.py
+COPY run_claude.py /run_claude.py
 COPY live_events.py /live_events.py
 COPY tool_args.py /tool_args.py
 COPY leak_scan.py /leak_scan.py

@@ -128,6 +128,11 @@ class DevRunIn(BaseModel):
     # and cannot honor a cpu request.
     cpu_request: str = ""
     mem_request: str = ""
+    # §dev harness: which driver script in the runner image runs this build. The
+    # entrypoint dispatches on it and falls back to the OpenHands driver on an id
+    # this image does not ship, so an older runner never fails a newer platform's
+    # dispatch - it just builds on the default.
+    harness: str = "openhands"
     timeout_s: int = 1800
 
 
@@ -570,6 +575,7 @@ def dev_run(body: DevRunIn):
         "-e", f"SKIP_AGENT={'1' if body.skip_agent else '0'}",
         "-e", f"PLAN_ONLY={'1' if body.plan_only else '0'}",
         "-e", f"LLM_REASONING_EFFORT={body.reasoning_effort or ''}",
+        "-e", f"DEV_HARNESS={body.harness}",
         # Stable per-workspace id (resume chains share it): the runner sends it as
         # prompt_cache_key so providers with opt-in prompt caching (Mistral) serve
         # + report cache reads, billed at the §18 cached rate. Last path segment

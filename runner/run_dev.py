@@ -184,10 +184,65 @@ def _tuned_condenser(agent):
         return agent
 
 
-def _model_for_litellm(model: str) -> str:
-    # Route any custom OpenAI-compatible endpoint through LiteLLM's openai
-    # provider (honours base_url); leave already-prefixed models untouched.
-    return model if "/" in model else f"openai/{model}"
+ANTHROPIC_HOST = "api.anthropic.com"
+
+# §anthropic caching: model ids the PINNED SDK's capability table predates.
+# openhands-ai 1.8.0 stops at claude-opus-4-8 / claude-sonnet-4-6, so every newer
+# Claude id reports supports_prompt_cache=False and the SDK emits NO cache_control
+# breakpoints - measured: a Sonnet 5 build reached 595k input tokens at a 0.00%
+# cache hit rate, where the same task through a caching path cached 86% of its
+# input. At Anthropic's 0.1x cache-read rate that is most of the bill. The table
+# is a plain module-level list and the lookup is not memoised, so appending to it
+# at startup is enough; keep this list in sync when the SDK pin moves, and drop
+# entries once the SDK ships them.
+_CACHE_CAPABLE_ADDITIONS = ("claude-sonnet-5", "claude-opus-5", "claude-fable-5")
+
+
+def _register_cache_capable_models() -> None:
+    """Teach the pinned SDK that current Claude models support prompt caching.
+    Best-effort: on any SDK drift the run proceeds uncached rather than dying."""
+    try:
+        import openhands.sdk.llm.utils.model_features as mf
+        added = [m for m in _CACHE_CAPABLE_ADDITIONS if m not in mf.PROMPT_CACHE_MODELS]
+        if not added:
+            return
+        mf.PROMPT_CACHE_MODELS.extend(added)
+        for fn in (getattr(mf, "get_features", None),
+                   getattr(mf, "_normalized_supported_openai_params", None)):
+            if fn is not None and hasattr(fn, "cache_clear"):
+                fn.cache_clear()
+        print(f"driver: registered prompt-cache support for {', '.join(added)}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"driver: could not extend the prompt-cache model table: {exc}",
+              file=sys.stderr)
+
+
+def _is_anthropic(base_url: str | None) -> bool:
+    if not base_url:
+        return False
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(base_url).hostname or "").lower() == ANTHROPIC_HOST
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _model_for_litellm(model: str, base_url: str | None = None) -> str:
+    """The LiteLLM routing name.
+
+    Anthropic is special-cased because provider choice decides whether prompt
+    caching can work at all. Anthropic serves an OpenAI-compatible surface, so
+    the generic `openai/` route SUCCEEDS against it and silently drops the
+    cache_control breakpoints the SDK emits - the request is OpenAI-shaped and
+    those blocks are not part of that shape. Routing through LiteLLM's native
+    anthropic provider is what makes them mean something. Everything else keeps
+    the openai provider, which honours base_url for arbitrary gateways.
+    """
+    if "/" in model:
+        return model  # already provider-qualified; the caller meant it
+    if _is_anthropic(base_url):
+        return f"anthropic/{model}"
+    return f"openai/{model}"
 
 
 # Providers where sending prompt_cache_key is known-safe: Mistral needs it to
@@ -565,13 +620,23 @@ def main() -> int:
             setattr(LLM, _name, _with_token_sink)
     except Exception as exc:  # noqa: BLE001 - an SDK without these methods
         print(f"driver: streaming shim not installed: {exc}", file=sys.stderr)
+    _register_cache_capable_models()
+    _base_url = os.environ.get("LLM_BASE_URL") or None
     llm_kwargs = dict(
-        model=_model_for_litellm(os.environ["LLM_MODEL"]),
+        model=_model_for_litellm(os.environ["LLM_MODEL"], _base_url),
         api_key=os.environ["LLM_API_KEY"],
-        base_url=os.environ.get("LLM_BASE_URL") or None,
+        base_url=_base_url,
         service_id="openvisor-agent",
         stream=True,
     )
+    _anthropic = _is_anthropic(_base_url)
+    if _anthropic:
+        # The native provider owns its own endpoint and appends its own version
+        # segment. Forwarding the platform's OpenAI-shaped base URL (which ends
+        # in /v1, because that is what every other provider needs) would ask for
+        # /v1/v1/messages. Same trap the claude_sdk driver hits, same answer.
+        llm_kwargs["base_url"] = None
+        print("driver: routing natively to Anthropic (prompt caching enabled)")
     effort = (os.environ.get("LLM_REASONING_EFFORT") or "").strip()
     if effort:
         llm_kwargs["reasoning_effort"] = effort
@@ -579,7 +644,13 @@ def main() -> int:
     # fail EVERY call of the build. An overlong key degrades to truncation
     # (worst case a cache miss), never a dead run.
     cache_key = (os.environ.get("LLM_CACHE_KEY") or "").strip()[:64]
-    if cache_key and _cache_key_supported(llm_kwargs["base_url"]):
+    # Test the ORIGINAL base URL, and never send this on the Anthropic route.
+    # prompt_cache_key is an OpenAI/Mistral parameter; Anthropic rejects the whole
+    # request with "extra_body: Extra inputs are not permitted", failing every call
+    # of the build. Reading llm_kwargs["base_url"] here would see the None the
+    # native route just set and conclude "LiteLLM's default OpenAI endpoint" -
+    # which is exactly how this shipped broken.
+    if cache_key and not _anthropic and _cache_key_supported(_base_url):
         llm_kwargs["litellm_extra_body"] = {"prompt_cache_key": cache_key}
     try:
         llm = LLM(**llm_kwargs)

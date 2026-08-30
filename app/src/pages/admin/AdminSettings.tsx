@@ -160,6 +160,8 @@ export default function AdminSettings() {
 
       <FeesCard settings={settings} busy={busy} update={update} />
 
+      <DevHarnessCard settings={settings} busy={busy} update={update} />
+
       <EgressCard settings={settings} busy={busy} update={update} />
     </div>
   );
@@ -611,6 +613,98 @@ function FeesCard({
         </button>
         {invalid && <span className="muted small">Fees must be non-negative numbers</span>}
         {!invalid && dirty && <span className="muted small">Unsaved changes</span>}
+      </div>
+    </div>
+  );
+}
+
+// §dev harness: which agent driver a dev build runs on. Off by default, and the
+// switch is the whole feature: while it is off every project builds on the
+// instance default and any per-project pin is ignored (not just hidden). The
+// catalog comes from the server because a harness only exists if the runner image
+// ships its driver - the admin narrows that list, never extends it.
+function DevHarnessCard({
+  settings,
+  busy,
+  update,
+}: {
+  settings: AdminSettingsT;
+  busy: string | null;
+  update: (patch: Partial<AdminSettingsT>, field: string) => Promise<void>;
+}) {
+  const allowed = settings.dev_harness_allowed;
+  const enabled = settings.dev_harness_selection_enabled;
+
+  function toggleAllowed(id: string, on: boolean) {
+    const next = on ? [...allowed, id] : allowed.filter((h) => h !== id);
+    if (next.length === 0) return; // the backend refuses an empty set too
+    const patch: Partial<AdminSettingsT> = { dev_harness_allowed: next };
+    // Keep the pair consistent: a default outside the allowed set would silently
+    // resolve back to the built-in one.
+    if (!next.includes(settings.dev_harness_default)) patch.dev_harness_default = next[0];
+    void update(patch, `harness_allowed_${id}`);
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
+      <h3 style={{ marginTop: 0 }}>Dev harness</h3>
+      <div className="between" style={{ alignItems: "flex-start" }}>
+        <div style={{ paddingRight: "1rem" }}>
+          <strong>Per-project harness selection</strong>
+          <div className="muted small">
+            Lets a project be pinned to a specific agent driver. While this is off, every project
+            builds on the instance default below and a previously pinned project falls back to it.
+          </div>
+        </div>
+        <Toggle
+          checked={enabled}
+          disabled={busy !== null}
+          onChange={(v) => update({ dev_harness_selection_enabled: v }, "harness_enabled")}
+        />
+      </div>
+
+      <div style={{ marginTop: "1rem", opacity: enabled ? 1 : 0.6 }}>
+        <div className="muted small" style={{ marginBottom: "0.5rem" }}>
+          Harnesses this instance allows. A driver has to be in the runner image to appear here.
+        </div>
+        {settings.dev_harnesses.map((h) => (
+          // A div, not a label, with the name in an inner <label>: the base label
+          // style is uppercase mono, and only `.checkbox-row label` restores the
+          // body face a sentence needs.
+          <div
+            key={h.id}
+            className="checkbox-row"
+            style={{ alignItems: "flex-start", marginBottom: "0.6rem" }}
+          >
+            <input
+              id={`harness-${h.id}`}
+              type="checkbox"
+              checked={allowed.includes(h.id)}
+              disabled={busy !== null || (allowed.length === 1 && allowed.includes(h.id))}
+              onChange={(e) => toggleAllowed(h.id, e.target.checked)}
+            />
+            <div>
+              <label htmlFor={`harness-${h.id}`}>{h.label}</label>
+              <div className="muted small">{h.description}</div>
+            </div>
+          </div>
+        ))}
+        <label className="field" style={{ marginTop: "1rem" }}>
+          Instance default
+          <select
+            value={settings.dev_harness_default}
+            disabled={busy !== null}
+            onChange={(e) => update({ dev_harness_default: e.target.value }, "harness_default")}
+          >
+            {settings.dev_harnesses
+              .filter((h) => allowed.includes(h.id))
+              .map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.label}
+                </option>
+              ))}
+          </select>
+        </label>
       </div>
     </div>
   );
