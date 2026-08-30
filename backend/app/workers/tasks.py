@@ -652,7 +652,7 @@ def _classify_chat_message(project_id: str, message_id: str, outcome: dict) -> N
             db.flush()
             # Seed the request thread with the ask so it has context and the async
             # title pass has a first message to refine from (as create_request does).
-            _post_message(db, project_id, f"request:{req.id}", msg.author, msg.body)
+            _seed_request_thread(db, project_id, req, msg)
             label = {"feature": "feature", "edit": "edit", "bug": "bug fix"}[rtype]
             # §12 one-click confirm: the meta renders ✓/✗ buttons in the SPA and
             # hub chat (shared-ui ConfirmPrompt) wired to the deterministic
@@ -730,7 +730,7 @@ def _classify_chat_message(project_id: str, message_id: str, outcome: dict) -> N
             db.flush()
             # Seed the request thread with the ask so it has context and the async
             # title pass has a first message to refine from (as create_request does).
-            _post_message(db, project_id, f"request:{req.id}", msg.author, msg.body)
+            _seed_request_thread(db, project_id, req, msg)
             label = {"feature": "feature", "edit": "edit", "bug": "bug fix"}[rtype]
             # §12 one-click confirm: the meta renders ✓/✗ buttons in the SPA and
             # hub chat (shared-ui ConfirmPrompt) wired to the deterministic
@@ -3887,6 +3887,49 @@ def _dispatch_gated(db: Session, project: Project, *, fix_only: bool,
     run_development.apply_async(args=[project.id],
                                 kwargs={"fix_only": fix_only, "run_id": rid})
     return True
+
+
+def _seed_request_thread(db: Session, project_id: str, req: Request,
+                         msg: Message) -> Message:
+    """Copy a main-chat ask into its request's own thread - the words AND the
+    pictures.
+
+    Main is where work gets described, screenshot included, and the §12
+    classifier files the request by copying that ask down. Everything after that
+    reads the REQUEST thread: both `_steering_note` and `_stage_chat_images`
+    exclude main for a scoped request, and §steering scope justifies the
+    exclusion precisely because the ask "was already classified into its own
+    request". It was - but only its text was. The images stayed on a main-thread
+    message no build ever reads, so "fix what this screenshot shows" reached the
+    agent as prose. In production on 2026-08-30, 11 of the 13 images customers
+    had ever sent sat on main, including the one attached to "There's a display
+    problem in this price table, fix it" - a request that is not describable
+    without the picture, built without it.
+
+    A ChatImage belongs to exactly one immutable message, so the rows are COPIED,
+    never moved: the main thread keeps showing what the customer sent. They are
+    created unlinked and linked after the message exists, the same order
+    api/chat_images uses, so `meta["images"]` is already on the payload the WS
+    publish and the hub event carry.
+    """
+    from app.api.chat_images import MAX_PER_MESSAGE, image_out
+    copies = [ChatImage(project_id=img.project_id, author=img.author,
+                        filename=img.filename, content_type=img.content_type,
+                        size_bytes=img.size_bytes, data=img.data)
+              for img in (db.query(ChatImage)
+                          .filter(ChatImage.message_id == msg.id)
+                          .order_by(ChatImage.created_at)
+                          .limit(MAX_PER_MESSAGE).all())]
+    for copy in copies:
+        db.add(copy)
+    if copies:
+        db.flush()  # ids for the meta the SPA and the hub read
+    seeded = _post_message(db, project_id, f"request:{req.id}", msg.author, msg.body,
+                           meta={"images": [image_out(c) for c in copies]} if copies
+                           else None)
+    for copy in copies:
+        copy.message_id = seeded.id
+    return seeded
 
 
 def _dispatch_revision(db: Session, project: Project,

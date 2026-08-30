@@ -2,7 +2,10 @@
 run are staged into .openvisor/images/ with a manifest the runner attaches to
 its first message. Vision-gated per dispatch; thread scope mirrors §steering
 scope (a scoped request stages its OWN thread, MVP adds main); a chained run
-stages only images its predecessor never saw; staging always resets first."""
+stages only images its predecessor never saw; staging always resets first.
+
+The scope rule only works if filing a request from main carries the pictures
+down with the words, which is the second half of this file."""
 import json
 import uuid
 from datetime import timedelta
@@ -124,3 +127,81 @@ def test_unknown_content_type_is_skipped(world, tmp_path, monkeypatch):
         row = _run(db, world)
         manifest = _stage(db, world, row, tmp_path, monkeypatch=monkeypatch)
     assert manifest == []
+
+
+# ------------------------------------------- filing from main carries the pictures
+
+def _seed(db, ids, msg_id):
+    from app.models import Request as Req
+    return tasks._seed_request_thread(db, ids["project"], db.get(Req, ids["req"]),
+                                      db.get(Message, msg_id))
+
+
+def test_filing_a_request_carries_the_main_chat_pictures_down(world):
+    """Main is where work is described, screenshot included, and the classifier
+    files the request by copying that ask down. It copied only the text."""
+    with SyncSession() as db:
+        src = _msg_with_image(db, world, "main", "this price table is broken, fix it")
+        seeded = _seed(db, world, src)
+        db.commit()
+
+        carried = db.query(ChatImage).filter(ChatImage.message_id == seeded.id).all()
+        assert len(carried) == 1
+        assert carried[0].data == PNG and carried[0].content_type == "image/png"
+        assert carried[0].filename == "s.png" and carried[0].author == "admin"
+        # the meta the SPA and the hub read, on the payload the WS publish carried
+        assert [i["id"] for i in seeded.meta["images"]] == [carried[0].id]
+        # COPIED, never moved: the main thread still shows what the customer sent
+        assert db.query(ChatImage).filter(ChatImage.message_id == src).count() == 1
+        assert seeded.body == "this price table is broken, fix it"
+
+
+def test_the_carried_picture_is_what_the_scoped_run_then_stages(world, tmp_path,
+                                                                monkeypatch):
+    """The point of the whole thing: a scoped run stages its OWN thread, so an
+    image left on main reaches no build. Same conversation, both ways."""
+    with SyncSession() as db:
+        src = _msg_with_image(db, world, "main", "fix what this screenshot shows")
+        row = _run(db, world)
+        assert _stage(db, world, row, tmp_path, monkeypatch=monkeypatch) == []
+
+        _seed(db, world, src)
+        # flush, not commit: _stage binds project.dev_request_id, and persisting
+        # that leaves the fixture unable to delete its own Request
+        db.flush()
+        manifest = _stage(db, world, row, tmp_path, monkeypatch=monkeypatch)
+    assert len(manifest) == 1
+    assert manifest[0]["note"].startswith("fix what this screenshot shows")
+    assert (tmp_path / "images" / "img-1.png").read_bytes() == PNG
+
+
+def test_a_text_only_ask_seeds_exactly_as_before(world):
+    with SyncSession() as db:
+        m = Message(project_id=world["project"], thread="main", author="customer",
+                    body="add a dark mode toggle")
+        db.add(m)
+        db.commit()
+        seeded = _seed(db, world, m.id)
+        db.commit()
+        assert seeded.meta is None
+        assert db.query(ChatImage).filter(ChatImage.message_id == seeded.id).count() == 0
+
+
+def test_the_carry_is_capped_like_an_upload(world):
+    """Defensive: the upload route already caps a message at MAX_PER_MESSAGE, so
+    the copy must not be the place a cap goes missing."""
+    from app.api.chat_images import MAX_PER_MESSAGE
+    with SyncSession() as db:
+        m = Message(project_id=world["project"], thread="main", author="admin",
+                    body="several shots")
+        db.add(m)
+        db.flush()
+        for _ in range(MAX_PER_MESSAGE + 2):
+            db.add(ChatImage(project_id=world["project"], message_id=m.id,
+                             author="admin", filename="s.png", content_type="image/png",
+                             size_bytes=len(PNG), data=PNG))
+        db.commit()
+        seeded = _seed(db, world, m.id)
+        db.commit()
+        carried = db.query(ChatImage).filter(ChatImage.message_id == seeded.id).count()
+    assert carried == MAX_PER_MESSAGE
