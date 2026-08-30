@@ -200,6 +200,25 @@ def _mcp_servers() -> dict:
         return {}
 
 
+# What this agent loop is, in the agent's own terms. The CLI's default system
+# prompt is written for an INTERACTIVE Claude Code session, where a background
+# task notifies its user and the turn resumes. Nothing here does: `query()` ends
+# when the agent stops acting, and the entrypoint publishes whatever is on disk.
+# Production, 2026-08-30: the agent started `make dev` in the background, reached
+# for ScheduleWakeup (refused - "/loop mode only"), then said "I'll wait for the
+# background build to notify me" four times and ENDED THE SESSION, shipping a
+# branch it had never verified.
+_HEADLESS_NOTE = """\
+Operating environment: this is a single headless session. Nothing will wake you \
+up - there are no notifications, no scheduled resumes, and no turn after the one \
+you are in. If you start work in the background, poll it yourself until it \
+finishes. The session ends the moment you stop taking actions, and whatever is in \
+the workspace at that point is what gets published, so finish your verification \
+before you stop.
+
+"""
+
+
 def _prompt() -> str:
     """The task, plus any steering the worker left for a resumed run.
 
@@ -210,7 +229,7 @@ def _prompt() -> str:
     difference between the harnesses - do not read a resume-heavy cost comparison
     as a like-for-like result until sessions are wired up.
     """
-    task = (OPENVISOR / "task.md").read_text()
+    task = _HEADLESS_NOTE + (OPENVISOR / "task.md").read_text()
     steering = OPENVISOR / "steering.md"
     if steering.is_file():
         note = steering.read_text(errors="replace").strip()
@@ -234,8 +253,39 @@ def _counter(obj, *names) -> int:
     return 0
 
 
+def _absorb_turn(usage: _Usage, message) -> None:
+    """Fold ONE assistant turn's usage into the running counters.
+
+    ResultMessage carries the session TOTAL and arrives only at the very end, so
+    until this existed the counters were zero for the whole run. Two consequences,
+    both live in production on 2026-08-30: the build console showed 0 output
+    tokens and ~0 credits while the agent worked, and - the serious one - a run
+    stopped by the customer or killed by the deployer's wall clock never reached
+    the ResultMessage, so the incremental usage.json snapshot the worker meters
+    from reported zeros and `_bill_dev_run` bailed on `not (input_tokens or
+    output_tokens)`. A 4M-token build would have billed NOTHING.
+
+    Each API response's usage is what that call was charged, so summing across
+    turns is the run's real total; `_absorb_usage` then OVERWRITES with the
+    provider's own session figure, which is authoritative and covers turns this
+    loop never sees (a subagent's, say).
+    """
+    raw = getattr(message, "usage", None)
+    if not raw:
+        return
+    fresh = _counter(raw, "input_tokens", "inputTokens")
+    created = _counter(raw, "cache_creation_input_tokens", "cacheCreationInputTokens")
+    read = _counter(raw, "cache_read_input_tokens", "cacheReadInputTokens")
+    usage.prompt_tokens += fresh + created + read
+    usage.completion_tokens += _counter(raw, "output_tokens", "outputTokens")
+    usage.cache_read_tokens += read
+    usage.cache_write_tokens += created
+
+
 def _absorb_usage(usage: _Usage, result) -> None:
-    """Fold a ResultMessage's totals into the running counters."""
+    """Fold a ResultMessage's totals into the running counters. Assignment, not
+    addition: this is the session total, and it REPLACES whatever `_absorb_turn`
+    accumulated on the way."""
     raw = getattr(result, "usage", None)
     if raw is None:
         return
@@ -282,23 +332,77 @@ def _report_session(feed, message) -> None:
                      "title": f"Tool server unavailable: {', '.join(lost[:6])}"})
 
 
-def _event_for(message) -> dict | None:
-    """One sanitized build-console line per SDK message. Deliberately coarse: the
-    feed is customer-visible and passes through devfeed's secret/KB stripping, so
-    it carries what the agent DID, never raw tool payloads."""
+# The build console's vocabulary, shared with the OpenHands driver's summarizer
+# (live_events._summarize_action). The FEED KINDS ARE A CONTRACT: shared-ui's
+# BuildFeed renders `title` and picks its icon off `kind`, so an event carrying
+# `text`, or a kind outside this set, renders as a BLANK ROW with the fallback
+# icon - which is exactly what the first Claude build looked like, every thought
+# an empty line and every tool call an identical clock.
+_TOOL_KINDS: tuple[tuple[tuple[str, ...], str, str], ...] = (
+    (("Bash", "BashOutput", "KillShell"), "command", "Running a command"),
+    (("Write", "Edit", "MultiEdit", "NotebookEdit"), "edit", "Editing a file"),
+    (("Read", "Glob", "Grep", "LS"), "read", "Exploring the code"),
+    (("WebFetch",), "browse", "Reading a page"),
+    (("WebSearch",), "browse", "Searching the web"),
+    (("TodoWrite", "ExitPlanMode"), "plan", "Updating the work plan"),
+    (("Task",), "action", "Delegating to a subagent"),
+)
+
+# Tool inputs that name a target the customer can read without leaking anything a
+# path or a command does not already leak - the OpenHands summarizer puts exactly
+# these in its titles, and devfeed's redaction/withhold pass covers both drivers.
+# A model-composed free-text argument (a web-search query, an MCP tool's args) is
+# NOT here: it can carry knowledge-base text, and the leak-scan threat model keeps
+# it out of the feed.
+_TOOL_TARGETS = ("command", "file_path", "path", "pattern", "url", "notebook_path")
+
+
+def _tool_event(name: str, args) -> dict:
+    """One feed line for a tool call: the same kind/title vocabulary the other
+    driver produces, so one console reads the same whichever harness ran."""
+    if name.startswith("mcp__"):
+        # Name only, never args: an MCP tool's arguments can embed KB/RAG text.
+        parts = name.split("__")
+        label = "/".join(p for p in parts[1:] if p) or name
+        return {"kind": "action", "title": f"MCP tool: {label}"[:live_events.TITLE_MAX]}
+    kind, fallback = "action", f"Using {name}"
+    for names, k, default in _TOOL_KINDS:
+        if name in names:
+            kind, fallback = k, default
+            break
+    target = ""
+    if isinstance(args, dict) and name != "WebSearch":
+        for key in _TOOL_TARGETS:
+            if args.get(key):
+                target = live_events._clip(args[key], live_events.TITLE_MAX)
+                break
+    return {"kind": kind, "title": target or fallback}
+
+
+def _events_for(message) -> list[dict]:
+    """The sanitized build-console lines for one SDK message. Deliberately coarse:
+    the feed is customer-visible and passes through devfeed's secret/KB stripping,
+    so it carries what the agent DID, never raw tool payloads.
+
+    Every block is reported, not just the first: an assistant turn that thinks and
+    then calls a tool is two lines, and returning one used to drop the other.
+    """
     kind = type(message).__name__
     if kind == "AssistantMessage":
+        out = []
         for block in getattr(message, "content", []) or []:
             name = getattr(block, "name", None)
             if name:  # a tool use block
-                return {"kind": "action", "title": f"Using {name}"}
+                out.append(_tool_event(name, getattr(block, "input", None)))
+                continue
             text = getattr(block, "text", None)
             if text:
-                return {"kind": "thought", "text": live_events._clip(text, 400)}
-        return None
+                out.append({"kind": "think",
+                            "title": live_events._clip(text, live_events.DETAIL_MAX)})
+        return out
     if kind == "ResultMessage":
-        return {"kind": "phase", "title": "Agent session finished"}
-    return None
+        return [{"kind": "phase", "title": "Agent session finished"}]
+    return []
 
 
 async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
@@ -322,9 +426,23 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
 
     max_turns = int(os.environ.get("LLM_MAX_ITERATIONS") or 0)
     budget = float(os.environ.get("DEV_RUN_MAX_USD") or 0)
+    # §dev harness: the endpoint's configured reasoning effort, which this driver
+    # used to drop on the floor - an admin who set an endpoint to "xhigh" got the
+    # provider default on every Claude build. Whitelisted rather than forwarded:
+    # a value the SDK's literal does not accept would fail the session, and the
+    # platform's own column is free text.
+    effort = (os.environ.get("LLM_REASONING_EFFORT") or "").strip().lower()
     options = ClaudeAgentOptions(
         model=_model(),
         cwd="/workspace",
+        effort=effort if effort in ("low", "medium", "high", "xhigh", "max") else None,
+        # Tools that only mean something inside an interactive Claude Code
+        # session: they either promise a wake-up that cannot happen here (see
+        # _HEADLESS_NOTE), address agents and people this run has no channel to,
+        # or - Workflow - fan out to a swarm of agents on a customer's bill.
+        disallowed_tools=["ScheduleWakeup", "CronCreate", "CronDelete", "CronList",
+                          "PushNotification", "SendMessage", "ListAgents",
+                          "DesignSync", "Workflow"],
         # Edits are settled by the mode so they never round-trip through the
         # callback; everything else (Bash above all) lands on _approve.
         permission_mode="acceptEdits",
@@ -347,8 +465,9 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
         if (type(message).__name__ == "SystemMessage"
                 and str(getattr(message, "subtype", "")) == "init"):
             _report_session(feed, message)
-        ev = _event_for(message)
-        if ev:
+        if type(message).__name__ == "AssistantMessage":
+            _absorb_turn(usage, message)
+        for ev in _events_for(message):
             feed.append(ev)
         feed.dump_progress()
         if type(message).__name__ == "ResultMessage":
