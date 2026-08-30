@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import re
 import sys
 from collections import defaultdict
@@ -116,12 +117,41 @@ def _ask(prompt: str) -> str:
     return (text or "").strip()
 
 
+def _root(doc: dict) -> str:
+    return (doc.get("file") or "").split("/", 1)[0]
+
+
+def _sample(docs: list[dict], per_root: int) -> list[dict]:
+    """At most `per_root` chunks from each KB source, seeded so a re-run picks the
+    same ones. Stratified rather than uniform because the corpus is wildly
+    unbalanced - a uniform sample of prod would be ~94% one book and would say
+    nothing about the small client corpus, which is the one that matters most."""
+    if per_root <= 0:
+        return docs
+    by_root: dict[str, list[dict]] = defaultdict(list)
+    for d in docs:
+        by_root[_root(d)].append(d)
+    rng = random.Random(20260830)
+    out = []
+    for root, group in sorted(by_root.items()):
+        picked = sorted(group, key=lambda d: d["id"])
+        rng.shuffle(picked)
+        out.extend(picked[:per_root])
+    return out
+
+
 def build(args) -> int:
     docs = _all_docs()
     if not docs:
         print("kb index is empty - run the ingest first", file=sys.stderr)
         return 2
     print(f"indexed chunks: {len(docs)}")
+    if args.sample:
+        docs = _sample(docs, args.sample)
+        counts = defaultdict(int)
+        for d in docs:
+            counts[_root(d)] += 1
+        print(f"sampled {len(docs)} (<= {args.sample} per source): {dict(counts)}")
     items, skipped = [], 0
     if True:
         for i, d in enumerate(docs, 1):
@@ -147,6 +177,7 @@ def build(args) -> int:
             overlap = len(_tokens(q) & _tokens(chunk)) / max(1, len(_tokens(q)))
             items.append({
                 "query": q,
+                "root": _root(d),
                 "gold_path": d["path"],
                 "gold_file": d["file"],
                 "gold_block": d.get("block_hash"),
@@ -270,6 +301,67 @@ def run(args) -> int:
               f"the weakest legitimate query. No single floor divides them, so a score "
               f"threshold cannot be the anti-extraction defence on its own.")
 
+    # --- per source: a GLOBAL floor is only viable if every source clears it ---
+    by_root: dict[str, list] = defaultdict(list)
+    for item in positives:
+        by_root[item.get("root") or "?"].append(item)
+    if len(by_root) > 1:
+        print("\nper source (a global floor must clear the worst one, not the mean):")
+        print(f"  {'source':<40} {'n':>4} {'recall@k':>9} {'min top-1':>10} {'median':>8}")
+        worst = None
+        for root, items in sorted(by_root.items(), key=lambda kv: -len(kv[1])):
+            m = _metrics(items, cache, live_floor, k, "gold_block")
+            tops = sorted((cache[i["query"]][0]["score"] or 0.0)
+                          for i in items if cache[i["query"]])
+            lo = min(tops) if tops else float("nan")
+            worst = lo if worst is None else min(worst, lo)
+            print(f"  {root[:40]:<40} {len(items):>4} {m['recall']:>9.3f} "
+                  f"{lo:>10.3f} {_pct(tops, .5):>8.3f}")
+        probe_max = max(neg_top)
+        if worst > probe_max:
+            print(f"  -> a single floor still works: worst source floors at {worst:.3f}, "
+                  f"probes top out at {probe_max:.3f}")
+        else:
+            print(f"  -> a single floor does NOT work: the weakest source's legitimate "
+                  f"queries ({worst:.3f}) sink below the probes' best ({probe_max:.3f}). "
+                  f"Any floor that blocks the sweep also blinds that source.")
+
+    # --- shape signals: is the SEPARATOR relative rather than absolute? ---
+    # A real question has one clearly-best match; a corpus sweep scores everything
+    # equally mediocre. If so the distributions separate on the SHAPE of the ranked
+    # scores even where the absolute top-1 does not - and shape is scale-free, so it
+    # does not drift as the corpus grows the way a hard threshold does.
+    def _shape(hits: list[dict]) -> dict | None:
+        tops = [(h.get("score") or 0.0) for h in hits[:k]]
+        if len(tops) < 2:
+            return None
+        rest = tops[1:]
+        return {"top1-top2": tops[0] - tops[1],
+                "top1-mean(rest)": tops[0] - sum(rest) / len(rest),
+                "top1/top2": (tops[0] / tops[1]) if tops[1] else float("inf")}
+
+    pos_shapes = [x for x in (_shape(cache[i["query"]]) for i in positives) if x]
+    neg_shapes = [x for x in (_shape(cache[q]) for q in negatives) if x]
+    print("\nshape signals (positives should sit HIGH, probes LOW):")
+    print(f"  {'signal':<18} {'pos min':>9} {'pos med':>9} {'probe med':>10} "
+          f"{'probe max':>10} {'verdict':>26}")
+    for sig in ("top1-top2", "top1-mean(rest)", "top1/top2"):
+        pv = sorted(x[sig] for x in pos_shapes)
+        nv = sorted(x[sig] for x in neg_shapes)
+        headroom = min(pv) - max(nv)
+        if headroom > 0:
+            verdict = f"SEPARATES by {headroom:.4f}"
+        else:
+            over = sum(1 for v in nv if v >= min(pv))
+            verdict = f"overlaps ({over}/{len(nv)} probes)"
+        print(f"  {sig:<18} {min(pv):>9.4f} {_pct(pv, .5):>9.4f} {_pct(nv, .5):>10.4f} "
+              f"{max(nv):>10.4f} {verdict:>26}")
+    # For reference, the absolute signal measured the same way.
+    ab_head = min(pos_top) - max(neg_top)
+    print(f"  {'top1 (absolute)':<18} {min(pos_top):>9.4f} {_pct(pos_top, .5):>9.4f} "
+          f"{_pct(neg_top, .5):>10.4f} {max(neg_top):>10.4f} "
+          f"{('SEPARATES by %.4f' % ab_head) if ab_head > 0 else 'overlaps':>26}")
+
     # --- where retrieval fails, by tier ---
     by_class: dict[str, list] = defaultdict(list)
     for item in positives:
@@ -298,6 +390,8 @@ def main() -> int:
     b.add_argument("--out", default="/app/evalset.json")
     b.add_argument("--gen", choices=("llm", "heuristic"), default="llm")
     b.add_argument("--min-chars", type=int, default=120)
+    b.add_argument("--sample", type=int, default=0,
+                   help="at most N chunks per KB source (0 = every chunk)")
     b.set_defaults(fn=build)
 
     r = sub.add_parser("run", help="score retrieval against the query set")
