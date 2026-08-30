@@ -560,7 +560,7 @@ class HubProjectActionIn(BaseModel):
     """One customer-actor action on a from-hub project, wrapping the SAME
     services/project_actions functions the SPA routes use."""
     action: str = Field(
-        pattern="^(evaluate|submit|approve-delivery|retry-build|stop-build|require-admin|demo-start|demo-stop)$")
+        pattern="^(evaluate|submit|approve-delivery|retry-build|stop-build|require-admin|request-help|demo-start|demo-stop)$")
 
 
 class HubProjectMessageIn(BaseModel):

@@ -146,6 +146,7 @@ export default function BuildConsole({
   const [devLogs, setDevLogs] = useState<DevLogs | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const [helpBusy, setHelpBusy] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const offsetRef = useRef(0);
   const stateRef = useRef(project.dev_run_state);
@@ -255,6 +256,26 @@ export default function BuildConsole({
       await projectsApi.stopBuild(project.id, runId);
     } catch {
       setStopBusy(false);
+    }
+  }
+
+  // §request help: the free escalation. Offered only over a platform fault, so
+  // the confirm names the one consequence that is not obvious - the project
+  // moves to the consultant and Resume waits for their answer.
+  async function requestHelp() {
+    if (
+      !window.confirm(
+        `This build failed on our side, so asking for help costs nothing. ${consultant} picks it ` +
+          "up from here and answers in this project's chat; the build stays paused until then.",
+      )
+    )
+      return;
+    setHelpBusy(true);
+    try {
+      await projectsApi.requestHelp(project.id);
+      onStale();
+    } finally {
+      setHelpBusy(false);
     }
   }
 
@@ -415,8 +436,19 @@ export default function BuildConsole({
       )}
       {project.dev_run_error && (
         <Alert kind="warn">
-          Last run: {project.dev_run_error}. Use <strong>Resume development</strong> to try again,
-          or request {consultant}'s review.
+          Last run: {project.dev_run_error}.{" "}
+          {project.dev_run_fault === "platform" ? (
+            <>
+              That's a fault on our side, not something your instructions caused.{" "}
+              <strong>Request help</strong> hands it to {consultant} at no charge, or use{" "}
+              <strong>Resume development</strong> to try again.
+            </>
+          ) : (
+            <>
+              Use <strong>Resume development</strong> to try again, or request {consultant}'s
+              review.
+            </>
+          )}
         </Alert>
       )}
 
@@ -460,6 +492,16 @@ export default function BuildConsole({
             title="Discards the failed build's work in progress and starts a clean build"
           >
             Start fresh
+          </button>
+        )}
+        {!readOnly && project.dev_can_request_help && (
+          <button
+            className="btn btn-sm"
+            onClick={requestHelp}
+            disabled={helpBusy}
+            title={`Free - this build failed on our side, so ${consultant} takes it from here`}
+          >
+            {helpBusy ? <Spinner /> : "Request help"}
           </button>
         )}
         <button

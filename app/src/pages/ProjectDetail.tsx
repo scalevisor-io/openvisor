@@ -344,6 +344,8 @@ export default function ProjectDetail() {
     estimateCredits: evaluation?.estimate?.credits ?? null,
     prNumber: project.dev_pr_number,
     planStatus: project.dev_plan_status,
+    // §request help: a platform fault swaps the paid escalation for the free one.
+    devFault: project.dev_run_fault,
     consultant,
     runCounts,
   });
@@ -399,6 +401,18 @@ export default function ProjectDetail() {
             `${consultant} has been notified.`,
           )
       : undefined,
+    // §request help: only ever offered while the server says so - the panel
+    // renders no action without a handler, so an unavailable escalation simply
+    // isn't there rather than 409ing on click.
+    "request-help":
+      !isAdmin && project.dev_can_request_help
+        ? () =>
+            act(
+              "request-help",
+              () => projectsApi.requestHelp(id),
+              `${consultant} has been notified - nothing was charged.`,
+            )
+        : undefined,
   };
 
   // The rail follows the route: inside a request, it IS that request's thread.
@@ -539,6 +553,10 @@ export default function ProjectDetail() {
           "require-review": {
             sublabel: reviewFee,
             title: reviewFee ? `Refundable by ${consultant}` : undefined,
+          },
+          "request-help": {
+            sublabel: "· free",
+            title: project.dev_help_blocker ?? "This build failed on our side - no charge",
           },
           fund: { title: "Opens billing - the build starts on its own once funded" },
         }}

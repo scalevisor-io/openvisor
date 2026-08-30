@@ -548,6 +548,29 @@ async def require_review(project: Project = Depends(get_project_for_user),
     return project_out(project)
 
 
+@router.post("/{project_id}/request-help")
+async def request_help(project: Project = Depends(get_project_for_user),
+                       user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    """§request help: escalate a build that failed on a PLATFORM fault, free.
+
+    The free twin of require-review, and the narrowness is the point: it is
+    offered only while the last run parked with `dev_run_fault == "platform"`
+    (the agent driver crashed, the model endpoint refused the model, the sandbox
+    lost the git remote, a worker died). Gated by the same `dev_help_capability`
+    the button renders, so the affordance and the endpoint can't drift.
+    Customer-only, exactly like require-review: the admin IS the reviewer."""
+    if user.role == "admin":
+        raise HTTPException(403, "Admins can't request their own help - customers use "
+                                 f"this to hand a broken build to {settings.consultant_first_name}.")
+    try:
+        await project_actions.request_help(db, project)
+    except project_actions.ActionError as exc:
+        raise HTTPException(exc.status, exc.detail)
+    await db.refresh(project, ["repos"])
+    return project_out(project)
+
+
 @router.post("/{project_id}/retry-build")
 async def retry_build(body: RetryBuildIn | None = None,
                       project: Project = Depends(get_project_for_user),

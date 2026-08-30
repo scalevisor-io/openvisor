@@ -8,7 +8,7 @@ from app.core.encryption import decrypt
 from app.models import (
     DevRun, Message, Organization, Project, ProjectShare, Quote, Request, User,
 )
-from app.services import countries
+from app.services import countries, dev_faults
 from app.services import repos as repolib
 
 
@@ -86,6 +86,31 @@ def dev_run_resume_capability(p: Project, run: DevRun, *, inflight_request_ids: 
         return False, "A later build of this request took over - resume that one"
     if run.request_id in inflight_request_ids:
         return False, "This request already has a build in flight"
+    return True, None
+
+
+def dev_help_capability(p: Project) -> tuple[bool, str | None]:
+    """§request help: whether the free "Request help" button is offered.
+
+    Offered ONLY over a platform fault (services/dev_faults.py) - the failures
+    the customer cannot act on, stamped by the park that knows which path it
+    took. Every other failed build keeps Resume and Start fresh as its answer,
+    which is what they are for; handing those to the consultant free would
+    price consulting at zero for work the pipeline is built to do.
+
+    One more rule, and it is the reason the action needs no idempotency column:
+    a project already sitting in awaiting_admin IS the escalation, so the button
+    goes away rather than filing a second one. Shared by the serializer (button
+    + tooltip) and `project_actions.request_help` so the two cannot drift."""
+    if p.dev_run_fault != dev_faults.PLATFORM:
+        return False, ("This build failed on its own terms - Resume with a note, "
+                       "or Start fresh")
+    if p.status == "awaiting_admin":
+        return False, (f"{settings.consultant_first_name} already has this project - "
+                       "the answer comes back in chat")
+    blocker = _resume_closed_blocker(p)
+    if blocker:
+        return False, blocker
     return True, None
 
 
@@ -239,6 +264,7 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
     if include_secrets and p.demo_basic_auth_pass_enc:
         demo_pass = decrypt(p.demo_basic_auth_pass_enc)
     can_resume, resume_blocker = dev_resume_capability(p)
+    can_ask_help, help_blocker = dev_help_capability(p)
     git_name, git_email = repolib.git_identity(p)
     return {
         **project_summary(p),
@@ -315,6 +341,11 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
         # payloads without the stamp keep the mirror derivation.
         "dev_branch_url": getattr(p, "dev_branch_url_pinned", None) or branch_url(p),
         "dev_run_error": p.dev_run_error,
+        # §request help: the fault class behind a failed run ("platform" = ours),
+        # and the free-escalation affordance it gates.
+        "dev_run_fault": p.dev_run_fault,
+        "dev_can_request_help": can_ask_help,
+        "dev_help_blocker": help_blocker,
         "dev_run_started_at": p.dev_run_started_at,
         "dev_harness_version": p.dev_harness_version,
         "dev_pr_number": p.dev_pr_number,

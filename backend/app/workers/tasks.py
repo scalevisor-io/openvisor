@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
+from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, dev_faults, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -2758,11 +2758,16 @@ def _remote_denied(result: dict | None) -> bool:
             and "GIT_REMOTE_DENIED" in ((result or {}).get("logs") or ""))
 
 
-def _runner_exit_copy(project: Project, result: dict | None = None) -> tuple[str, str]:
-    """(chat message, dev_run_error) for a non-zero runner exit: the sandbox's own
-    preflight verdict first (the repository was never reachable, so the agent is
-    blameless), then the driver's error report when it left one, else the generic
-    copy."""
+def _runner_exit_copy(project: Project,
+                      result: dict | None = None) -> tuple[str, str, str | None]:
+    """(chat message, dev_run_error, fault) for a non-zero runner exit: the
+    sandbox's own preflight verdict first (the repository was never reachable, so
+    the agent is blameless), then the driver's error report when it left one, else
+    the generic copy.
+
+    §request help: the third element is the fault class (services/dev_faults.py).
+    A remote the sandbox could not REACH is ours; a remote that refused the key is
+    the customer's to fix, and stays unstamped however sympathetic the copy is."""
     if _remote_denied(result):
         devfeed.append_event(project, "error", "The repository refused the sandbox's key")
         hint = _push_failure_hint((result or {}).get("logs") or "")
@@ -2770,23 +2775,25 @@ def _runner_exit_copy(project: Project, result: dict | None = None) -> tuple[str
                 "stopped before starting." + (hint or " Check that the deploy key is "
                                               "still installed with write access, "
                                               "then hit Resume."),
-                "Git remote refused the sandbox's deploy key")
+                "Git remote refused the sandbox's deploy key", None)
     if _remote_unreachable(result):
         devfeed.append_event(project, "error", "Cannot reach the code repository from the sandbox")
         return ("The build couldn't reach your code repository from its sandbox, "
                 "so it stopped before spending anything. That's an infrastructure "
                 "fault on our side - hit Resume to run it again.",
-                "Sandbox could not reach the git remote (retried)")
+                "Sandbox could not reach the git remote (retried)", dev_faults.PLATFORM)
     err = _runner_error(project)
     if err:
         msg = str(err["message"])[:300]
         chat = (f"The build stopped: {msg} You can fix the cause and Resume, or ask "
                 f"for {settings.consultant_first_name}'s review.")
         devfeed.append_event(project, "error", f"Build failed - {msg}")
-        return chat, msg[:400]
+        return chat, msg[:400], dev_faults.from_runner_category(err.get("category"))
+    # No report at all: the driver died without managing to write one, which is
+    # our machinery failing without even leaving a note - never the customer's.
     return ("The build agent exited with an error before publishing its work. "
             f"You can Resume it, or ask for {settings.consultant_first_name}'s review.",
-            "")
+            "", dev_faults.PLATFORM)
 
 
 def _push_repo(db: Session, project: Project) -> ProjectRepo | None:
@@ -3580,9 +3587,14 @@ def _set_run_pr(project: Project) -> None:
 
 
 def _save_run(project: Project, state: str, logs: str | None = None,
-              error: str | None = None) -> None:
+              error: str | None = None, fault: str | None = None) -> None:
     """Persist the dev-run outcome so admin/customer can see progress + logs and
-    the resume affordance knows the sub-state."""
+    the resume affordance knows the sub-state.
+
+    §request help: `fault` is stamped by the park that KNOWS which path it took -
+    dev_faults.PLATFORM for the failures the customer cannot act on, absent for
+    an ordinary build outcome. Written unconditionally, exactly like `error`, so
+    the next state a run reaches clears the previous one's verdict."""
     if state != project.dev_run_state:
         if state in DEV_STATE_FEED:
             kind, title = DEV_STATE_FEED[state]
@@ -3612,6 +3624,7 @@ def _save_run(project: Project, state: str, logs: str | None = None,
     if logs is not None:
         project.dev_run_log = logs[-16000:]
     project.dev_run_error = (error or None) and error[:512]
+    project.dev_run_fault = fault or None
     # §parallel-builds MR1 shadow ledger: mirror the scalars onto the project's
     # active DevRun row (dark - nothing reads it for behavior yet; terminal
     # rows are never resurrected). Must never break a run.
@@ -3629,6 +3642,7 @@ def _save_run(project: Project, state: str, logs: str | None = None,
                 if logs is not None:
                     row.run_log = logs[-16000:]
                 row.run_error = project.dev_run_error
+                row.run_fault = project.dev_run_fault
                 # Backfill the branch for CHAINED rows only (legacy resumes,
                 # whose branch genuinely is the project scalar). An unchained
                 # row - a fresh retry, the first run of a unit - must stay
@@ -4031,7 +4045,8 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                 _safe_transition(db, project, "awaiting_customer",
                                  "Model endpoint unavailable" if outage
                                  else "Model endpoint rejected the configured model")
-                _save_run(project, "failed", error=f"Model preflight: {model_err}"[:400])
+                _save_run(project, "failed", error=f"Model preflight: {model_err}"[:400],
+                          fault=dev_faults.PLATFORM)
                 db.commit()
                 return
 
@@ -4084,7 +4099,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
             except Exception as exc:
                 log.exception("dev job failed for %s", project_id)
                 _fail_to_admin(db, project, f"The build hit an error: {str(exc)[:200]}",
-                               "Build error")
+                               "Build error", fault=dev_faults.PLATFORM)
                 db.commit()
                 return
 
@@ -4125,12 +4140,13 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                     _park_stopped(db, project, logs=(result or {}).get("logs"))
                     db.commit()
                     return
-                chat, err_detail = _runner_exit_copy(project, result)
+                chat, err_detail, fault = _runner_exit_copy(project, result)
                 _post_message(db, project_id, _dev_thread(db, project), "agent", chat)
                 _safe_transition(db, project, "awaiting_customer", "Runner exited with error")
                 _save_run(project, "failed", logs=(result or {}).get("logs"),
                           error=err_detail
-                          or f"Runner exited {(result or {}).get('exit_code')}")
+                          or f"Runner exited {(result or {}).get('exit_code')}",
+                          fault=fault)
                 db.commit()
                 return
 
@@ -4173,7 +4189,8 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                     _safe_transition(db, project, "awaiting_customer",
                                      "No merge request found after the build")
                     _save_run(project, "failed", logs=(result or {}).get("logs"),
-                              error="No merge request found for the build's branch")
+                              error="No merge request found for the build's branch",
+                              fault=dev_faults.PLATFORM)
                     db.commit()
                     return
                 _publish_after_screenshots(
@@ -4188,7 +4205,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                 log.warning("auto-merge error for %s: %s", project_id, exc)
                 _fail_to_admin(db, project,
                                "The build is ready but couldn't be merged automatically.",
-                               "Auto-merge error")
+                               "Auto-merge error", fault=dev_faults.PLATFORM)
                 db.commit()
                 return
 
@@ -4771,7 +4788,7 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
             _post_message(db, project.id, thread, "agent",
                           f"The build hit an error: {str(exc)[:200]}. You can Resume it.")
             _safe_transition(db, project, "awaiting_customer", "Build error")
-            _save_run(project, "failed", error=str(exc)[:400])
+            _save_run(project, "failed", error=str(exc)[:400], fault=dev_faults.PLATFORM)
             _bill_dev_run(db, project)
             db.commit()
             raise _DevRunHandled
@@ -4834,12 +4851,13 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
             # PR/MR carries it, adopt the change instead of declaring failure.
             if _adopt_landed_work(db, project, target, thread, logs):
                 raise _DevRunHandled
-            chat, err_detail = _runner_exit_copy(project, result)
+            chat, err_detail, fault = _runner_exit_copy(project, result)
             _post_message(db, project.id, thread, "agent", chat)
             _safe_transition(db, project, "awaiting_customer", "Runner exited with error")
             _save_run(project, "failed", logs=logs,
                       error=err_detail
-                      or f"Runner exited {(result or {}).get('exit_code')}")
+                      or f"Runner exited {(result or {}).get('exit_code')}",
+                      fault=fault)
             db.commit()
             raise _DevRunHandled
 
@@ -5093,7 +5111,8 @@ def _run_development_customer(db: Session, project: Project, target: dict,
                       f"The build finished but I couldn't open a {noun} automatically "
                       f"({str(exc)[:160]}). Check the repository and Resume once ready.")
         _safe_transition(db, project, "awaiting_customer", f"{noun} creation failed")
-        _save_run(project, "failed", logs=logs, error=f"{noun} creation failed: {exc}")
+        _save_run(project, "failed", logs=logs, error=f"{noun} creation failed: {exc}",
+                  fault=dev_faults.PLATFORM)
         db.commit()
         return
 
@@ -5249,7 +5268,7 @@ def _remote_auto_merge(db: Session, project: Project, target: dict, ops: dict,
             _post_message(db, project.id, thread, "agent",
                           f"A security-fix build hit an error: {str(exc)[:200]}. You can Resume it.")
             _safe_transition(db, project, "awaiting_customer", "Security-fix build error")
-            _save_run(project, "failed", error=str(exc)[:400])
+            _save_run(project, "failed", error=str(exc)[:400], fault=dev_faults.PLATFORM)
             _bill_dev_run(db, project)
             db.commit()
             return
@@ -5316,10 +5335,11 @@ def _safe_transition(db: Session, project: Project, to: str, reason: str) -> Non
         pass
 
 
-def _fail_to_admin(db: Session, project: Project, message: str, reason: str) -> None:
+def _fail_to_admin(db: Session, project: Project, message: str, reason: str,
+                   fault: str | None = None) -> None:
     _post_message(db, project.id, _dev_thread(db, project), "agent", message)
     _safe_transition(db, project, "awaiting_admin", reason)
-    _save_run(project, "failed", error=reason)
+    _save_run(project, "failed", error=reason, fault=fault)
 
 
 STEERING_MAX_MESSAGES = 10   # newest messages kept in the transcript
@@ -5672,7 +5692,8 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
                       "to run it again once the cause is fixed, or ask for "
                       f"{settings.consultant_first_name}'s review.")
         _safe_transition(db, project, "awaiting_customer", "Build agent crashed")
-        _save_run(project, "failed", logs=logs, error=msg[:400])
+        _save_run(project, "failed", logs=logs, error=msg[:400],
+                  fault=dev_faults.from_runner_category(err.get("category")))
         return
     reason = _exit_reason(project)
     if reason.get("reason") == "max_iterations":
@@ -5858,7 +5879,7 @@ def _run_plan_pass(db: Session, project: Project, target: dict) -> None:
         _post_message(db, project.id, _dev_thread(db, project), "agent",
                       f"The planning pass hit an error: {str(exc)[:200]}. You can Resume it.")
         _safe_transition(db, project, "awaiting_customer", "Plan pass error")
-        _save_run(project, "failed", error=str(exc)[:400])
+        _save_run(project, "failed", error=str(exc)[:400], fault=dev_faults.PLATFORM)
         _bill_dev_run(db, project)
         db.commit()
         return
@@ -5866,13 +5887,14 @@ def _run_plan_pass(db: Session, project: Project, target: dict) -> None:
     plan = _read_plan(project)
     logs = (result or {}).get("logs") or ""
     if str((result or {}).get("exit_code", "0")) != "0" or not plan:
-        chat, err_detail = _runner_exit_copy(project, result)
+        chat, err_detail, fault = _runner_exit_copy(project, result)
         _post_message(db, project.id, _dev_thread(db, project), "agent",
                       chat if err_detail else
                       "The planning pass finished without producing a plan. You can "
                       "Resume to retry it.")
         _safe_transition(db, project, "awaiting_customer", "Plan pass failed")
-        _save_run(project, "failed", logs=logs, error=err_detail or "Plan pass produced no plan")
+        _save_run(project, "failed", logs=logs, error=err_detail or "Plan pass produced no plan",
+                  fault=fault)
         db.commit()
         return
     project.dev_plan = plan[:20000]
@@ -6260,7 +6282,8 @@ def _reap_dev_run(db: Session, project: Project) -> None:
                   f"{settings.consultant_first_name}'s review.")
     _safe_transition(db, project, "awaiting_customer", "Build run lost (worker interrupted)")
     _save_run(project, "failed",
-              error="Build run lost (worker interrupted); resumable." + unmetered)
+              error="Build run lost (worker interrupted); resumable." + unmetered,
+              fault=dev_faults.PLATFORM)
     log.warning("dev_run_reaper: reaped orphaned %s run for %s (started_at=%s, had_usage=%s)",
                 prior, project.id, project.dev_run_started_at, had_report)
 
@@ -6346,6 +6369,7 @@ def dev_run_reaper() -> None:
                                   "to continue.")
                     row.state = "failed"
                     row.run_error = "Build run lost (worker interrupted); resumable."
+                    row.run_fault = dev_faults.PLATFORM
                     _recompute_mirror(db, project)
                 db.commit()
         except Exception:
@@ -6623,7 +6647,7 @@ def _demo_start_impl(project_id: str, action: str = "start",
             db.refresh(project)
             if project.dev_run_state == "deploying":
                 _save_run(project, "failed", logs=str(exc),
-                          error=f"Demo start failed: {exc}")
+                          error=f"Demo start failed: {exc}", fault=dev_faults.PLATFORM)
             db.commit()
             return
         project.demo_state = "running"

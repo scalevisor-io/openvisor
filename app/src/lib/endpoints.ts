@@ -219,6 +219,9 @@ export const projectsApi = {
   evaluation: (id: string) => api.get<Evaluation>(`/projects/${id}/evaluation`),
   submit: (id: string) => api.post<Project>(`/projects/${id}/submit`),
   requireReview: (id: string) => api.post<Project>(`/projects/${id}/require-review`),
+  // §request help: the FREE escalation, offered only over a platform fault
+  // (dev_can_request_help). require-review above is the paid one.
+  requestHelp: (id: string) => api.post<Project>(`/projects/${id}/request-help`),
   // fresh (§run chains Start fresh) discards the failed chain - new workspace,
   // new branch - instead of resuming it.
   // runId (§parallel-builds) resumes THAT failed run - the request-thread

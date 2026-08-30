@@ -94,20 +94,26 @@ def test_runner_error_report_drives_the_park_copy(tmp_path, monkeypatch):
          "message": "the model endpoint rejected the configured model (400 invalid model name)"}))
     feed: list = []
     monkeypatch.setattr(tasks.devfeed, "append_event", lambda *a, **k: feed.append(a))
-    chat, err = tasks._runner_exit_copy(p)
+    chat, err, fault = tasks._runner_exit_copy(p)
     assert "rejected the configured model" in chat and "Resume" in chat
     assert "invalid model name" in err
     assert feed and feed[0][1] == "error"
+    # §request help: the model a project runs on is the admin's choice, so an
+    # endpoint refusing it is a platform fault, not the customer's build.
+    assert fault == "platform"
     # read-and-unlink: a second park doesn't reuse the stale report
-    chat2, err2 = tasks._runner_exit_copy(p)
+    chat2, err2, _ = tasks._runner_exit_copy(p)
     assert err2 == "" and "exited with an error" in chat2
 
 
 def test_runner_exit_copy_without_report_is_generic(tmp_path):
     p = _P()
     p.workspace_path = str(tmp_path)
-    chat, err = tasks._runner_exit_copy(p)
+    chat, err, fault = tasks._runner_exit_copy(p)
     assert err == "" and "exited with an error" in chat
+    # A driver that died without managing to write a report is still our
+    # machinery failing - it just failed to leave a note.
+    assert fault == "platform"
 
 
 def test_resolve_base_branch_overrides_and_falls_back(monkeypatch):

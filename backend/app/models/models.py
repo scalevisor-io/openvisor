@@ -214,6 +214,14 @@ class Project(Base):
     dev_run_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     dev_run_log: Mapped[str | None] = mapped_column(Text, nullable=True)  # last runner log tail
     dev_run_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # §request help: WHOSE fault the last failure was. "platform" marks the
+    # faults the customer cannot act on - the agent driver crashed, the model
+    # endpoint refused the configured model, the sandbox lost the git remote,
+    # a worker died mid-run - and is the sole thing that offers the free
+    # Request-help button (services/dev_faults.py owns the vocabulary). Null =
+    # an ordinary build outcome the customer steers with Resume, and every
+    # non-failed state clears it.
+    dev_run_fault: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # The harness fingerprint (agent_eval.compute_harness_version) that produced
     # the current/last run - stamped at run start. Recorded next to the model id
     # so a build's outcome can be attributed to the harness config that made it
@@ -627,6 +635,7 @@ class DevRun(Base):
     pr_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     run_log: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    run_fault: Mapped[str | None] = mapped_column(String(16), nullable=True)
     harness_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     security_review: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     acceptance: Mapped[dict | None] = mapped_column(JSON, nullable=True)

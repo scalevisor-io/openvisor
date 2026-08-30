@@ -178,6 +178,11 @@ export interface Project extends ProjectSummary {
   dev_pr_url: string | null;
   dev_can_resume: boolean;
   dev_resume_blocker: string | null;
+  // §request help: whose fault the last failure was ("platform" = ours) and the
+  // free-escalation affordance it gates.
+  dev_run_fault: string | null;
+  dev_can_request_help: boolean;
+  dev_help_blocker: string | null;
   dev_security_review: SecurityReview | null;
   // §parallel-builds MR4: the active DevRun rows behind the stacked consoles
   // (dev_run_out shape, oldest started first). Only the project DETAIL payload
