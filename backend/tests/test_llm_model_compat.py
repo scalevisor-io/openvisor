@@ -4,6 +4,8 @@
   the dev-build SDK (LiteLLM) translates this, so the raw client must retry too.
 - The chat-intent classifier must survive an unpriced model: a metering failure
   (UnknownModelError) must not drop the customer's classified request.
+- Anthropic's OpenAI-compatible surface refuses `response_format: json_object`,
+  which every structured call on the platform sets.
 """
 import httpx
 import pytest
@@ -144,7 +146,10 @@ def test_classify_fail_safes_to_none_on_null_content(monkeypatch):
         id = "p1"
 
     out = pipeline.classify_chat_intent(None, _P(), "ctx", "Please develop this issue")
-    assert out == {"intent": "none"}
+    # none, so a failure still triggers no side effect - and flagged, so the
+    # caller can tell an outage from "the model read it and there is nothing to
+    # do" and refuse to let the answering model narrate the first one.
+    assert out == {"intent": "none", "unavailable": True}
 
 
 _EFFORT_400 = "Unknown parameter: 'reasoning_effort'."
@@ -188,3 +193,51 @@ def test_chat_sends_cache_key_only_to_supporting_hosts(monkeypatch):
     llm.chat([{"role": "user", "content": "hi"}], model="m",
              base_url="https://api.mistral.ai/v1", api_key="k", cache_key="proj-1")
     assert "prompt_cache_key" in posts[0] and "prompt_cache_key" not in posts[1]
+
+
+# ------------------------------------------------- response_format (Anthropic)
+
+# The verbatim body Anthropic's OpenAI-compatible surface returns for
+# `response_format: {"type": "json_object"}` - captured from production on
+# 2026-08-30, where it silently broke every structured call on the instance.
+_JSON_400 = ('{"error":{"code":"invalid_request_error","message":'
+             '"response_format.type: Input should be \'json_schema\'",'
+             '"type":"invalid_request_error","param":null}}')
+
+
+def test_json_mode_retries_without_response_format(monkeypatch):
+    """Every structured call the platform makes sets json_mode, so an endpoint
+    that refuses `json_object` takes out the chat classifier, the evaluation, the
+    request titles and the plan gate at once - silently, because each caller
+    fail-safes. The prompts already specify their JSON shape."""
+    posts = _script(monkeypatch, [_Resp(400, text=_JSON_400), _Resp(200, json_data=_OK)])
+    content, _ = llm.chat([{"role": "user", "content": "hi"}], model="claude-sonnet-5",
+                          base_url="http://x", api_key="k", json_mode=True)
+    assert content == '{"ok": true}'
+    assert posts[0]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in posts[1]
+    assert posts[1]["messages"] == posts[0]["messages"]  # nothing else changed
+
+
+def test_chat_json_survives_the_refusal_end_to_end(monkeypatch):
+    _script(monkeypatch, [_Resp(400, text=_JSON_400), _Resp(200, json_data=_OK)])
+    result, _ = llm.chat_json([{"role": "user", "content": "hi"}],
+                              model="claude-sonnet-5", base_url="http://x", api_key="k")
+    assert result == {"ok": True}
+
+
+def test_a_400_that_names_nothing_we_know_still_raises(monkeypatch):
+    """The strip-and-retry is keyed on the provider naming the parameter, so an
+    unrelated 400 must not be retried into a second charge."""
+    posts = _script(monkeypatch, [_Resp(400, text="model not found")])
+    with pytest.raises(llm.LLMUnavailable):
+        llm.chat([{"role": "user", "content": "hi"}], model="nope",
+                 base_url="http://x", api_key="k", json_mode=True)
+    assert len(posts) == 1
+
+
+def test_a_plain_call_never_sends_response_format(monkeypatch):
+    posts = _script(monkeypatch, [_Resp(200, json_data=_OK)])
+    llm.chat([{"role": "user", "content": "hi"}], model="m", base_url="http://x",
+             api_key="k")
+    assert "response_format" not in posts[0]

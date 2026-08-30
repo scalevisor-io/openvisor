@@ -285,9 +285,10 @@ def test_classify_chat_intent_failsafe_on_llm_error(monkeypatch):
         raise LLMUnavailable("endpoint down")
 
     monkeypatch.setattr(pipeline, "chat_json", boom)
-    # an LLM outage must never trigger a side effect - it classifies as none
+    # an LLM outage must never trigger a side effect - it classifies as none, and
+    # says WHY, so the caller can refuse to have the answering model narrate it
     assert pipeline.classify_chat_intent(None, SimpleNamespace(id="p1"), "c", "m") == {
-        "intent": "none"}
+        "intent": "none", "unavailable": True}
 
 
 def test_dev_resume_capability_blocked_on_closed_projects():

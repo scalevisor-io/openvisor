@@ -134,10 +134,11 @@ def chat(messages: list[dict], *, base_url: str | None = None, api_key: str | No
     key = api_key or settings.openai_api_key
     send_cache_key = bool(cache_key) and _supports_cache_key(base)
 
-    def _payload(token_param: str, with_effort: bool = True, with_cache: bool = True) -> dict:
+    def _payload(token_param: str, with_effort: bool = True, with_cache: bool = True,
+                 with_json: bool = True) -> dict:
         p: dict = {"model": model or settings.openai_model, "messages": messages,
                    token_param: max_tokens}
-        if json_mode:
+        if json_mode and with_json:
             p["response_format"] = {"type": "json_object"}
         if effort and with_effort:
             p["reasoning_effort"] = effort
@@ -149,13 +150,25 @@ def chat(messages: list[dict], *, base_url: str | None = None, api_key: str | No
         try:
             return _post_chat(url, _payload(token_param), key)
         except LLMUnavailable as exc:
-            # A provider that doesn't know reasoning_effort or prompt_cache_key
-            # 400s naming it - strip the named one and retry once; anything else
-            # re-raises unchanged.
+            # A provider that doesn't know reasoning_effort, prompt_cache_key or
+            # json_object 400s naming it - strip the named one and retry once;
+            # anything else re-raises unchanged.
             if effort and "reasoning" in str(exc).lower():
                 return _post_chat(url, _payload(token_param, with_effort=False), key)
             if send_cache_key and "prompt_cache_key" in str(exc):
                 return _post_chat(url, _payload(token_param, with_cache=False), key)
+            # Anthropic's OpenAI-compatible surface takes response_format only as
+            # `json_schema`: `{"type": "json_object"}` is refused outright with
+            # "response_format.type: Input should be 'json_schema'". Every
+            # structured call the platform makes sets json_mode, so on such an
+            # endpoint the classifier, the evaluation, the titles and the plan
+            # gate ALL failed - silently, because each caller fail-safes. The
+            # prompts already specify their JSON shape and chat_json tolerates
+            # fenced output, so dropping the hint is a far smaller loss than
+            # losing the call. Seen in production 2026-08-30, on every message
+            # sent after a project was pointed at an Anthropic endpoint.
+            if json_mode and "response_format" in str(exc):
+                return _post_chat(url, _payload(token_param, with_json=False), key)
             raise
 
     try:
