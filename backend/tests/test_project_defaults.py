@@ -1,5 +1,5 @@
-"""§project defaults: the per-kind knowledge-base and tool selection a NEW project
-is created with (/admin/settings).
+"""§project defaults: the per-kind knowledge-base, tool and model defaults
+(/admin/settings).
 
 The two gates default opposite ways - a KB reaches a project only if `kb_ids`
 names it, a §Tools row reaches every project unless a `ProjectToolConfig` says
@@ -7,6 +7,12 @@ otherwise - so the defaults are stored as a SELECTION for knowledge bases and an
 EXCLUSION list for tools, and the tests pin both halves plus the stamp-time drop
 of an id whose row was deleted (a dangling tool_id would be a foreign-key error
 on a customer's create click).
+
+The model default is the odd one out and is pinned as such: it is NOT stamped at
+creation, it is a link in `model_config`'s resolution chain, so changing it moves
+every project of that kind that never chose its own - and everything keyed on
+WHICH endpoint answers (reasoning effort, the §chat images verdict) has to follow
+it through the same resolver.
 """
 import uuid
 
@@ -15,14 +21,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.core.db import SyncSession
+from app.core.encryption import encrypt
 from app.core.security import hash_password
 from app.main import app
 from app.models import (
-    AppSetting, CreditTransaction, KnowledgeBase, Message, Organization, Project,
-    ProjectToolConfig, Request as RequestRow, StatusChange, Tool, User,
+    AppSetting, CreditTransaction, KnowledgeBase, Message, ModelEndpoint, Organization,
+    Project, ProjectModelConfig, ProjectToolConfig, Request as RequestRow, StatusChange,
+    Tool, User,
 )
 from app.seed import seed_knowledge_bases
-from app.services import events, project_defaults
+from app.core.config import settings
+from app.services import events, model_config, project_defaults, vision
 
 
 @pytest.fixture(scope="module")
@@ -214,3 +223,108 @@ def test_deleted_row_is_dropped_at_creation(client, admin, rows, monkeypatch):
         offs = db.execute(select(ProjectToolConfig).where(
             ProjectToolConfig.project_id == chat_id)).scalars().all()
         assert [o.tool_id for o in offs] == [rows["tool_b"]]
+
+
+# --------------------------------------------------------- the per-kind model
+
+
+@pytest.fixture
+def endpoints():
+    """Two saved endpoints to route kinds at, cleaned up after each test."""
+    with SyncSession() as db:
+        db.add_all([
+            ModelEndpoint(label="Cheap chat", provider="custom", base_url="https://a.example/v1",
+                          api_key_enc=encrypt("key-a"), model_name="cheap-1",
+                          reasoning_effort="low", supports_images=True),
+            ModelEndpoint(label="Build model", provider="custom", base_url="https://b.example/v1",
+                          api_key_enc=encrypt("key-b"), model_name="strong-1"),
+        ])
+        db.commit()
+        a, b = db.execute(select(ModelEndpoint.id).where(
+            ModelEndpoint.label.in_(("Cheap chat", "Build model")))
+            .order_by(ModelEndpoint.label)).scalars().all()  # Build model, Cheap chat
+        ids = {"build": a, "chat": b}
+    yield ids
+    with SyncSession() as db:
+        db.execute(delete(ProjectModelConfig).where(
+            ProjectModelConfig.endpoint_id.in_(tuple(ids.values()))))
+        db.execute(delete(ModelEndpoint).where(ModelEndpoint.id.in_(tuple(ids.values()))))
+        db.execute(delete(AppSetting).where(AppSetting.key == model_config.KIND_DEFAULT_KEY))
+        db.commit()
+
+
+def _project(db, kind):
+    org = db.execute(select(Organization)).scalars().first()
+    p = Project(org_id=org.id, name="resolution", description="d", kind=kind)
+    db.add(p)
+    db.flush()
+    return p
+
+
+def test_kind_model_default_resolves_per_call(client, admin, endpoints):
+    """The kind default is a LINK in the chain, not a stamp: a chat project that
+    never chose a model follows it (and follows a later change), an `ai` project is
+    untouched, and a project with its own endpoint keeps it."""
+    h, _ = admin
+    assert client.put("/api/admin/settings", headers=h, json={
+        "default_model_endpoints": {"chat": endpoints["chat"]}}).status_code == 200
+
+    with SyncSession() as db:
+        chat, ai = _project(db, "chat"), _project(db, "ai")
+        assert model_config.project_model_config(db, chat)[2] == "cheap-1"
+        assert model_config.project_model_config(db, ai)[2] == settings.openai_model
+
+        # everything keyed on WHICH endpoint answers follows the same resolution
+        from app.workers.tasks import _project_reasoning_effort
+        assert _project_reasoning_effort(db, chat) == "low"     # the endpoint's
+        assert _project_reasoning_effort(db, ai) == "high"      # the dev default
+        assert vision.project_image_support_sync(db, chat)["enabled"] is True
+        assert vision.project_image_support_sync(db, ai)["enabled"] is False
+
+        # a project pinned on the project page keeps what it was given
+        db.add(ProjectModelConfig(project_id=chat.id, endpoint_id=endpoints["build"]))
+        db.flush()
+        assert model_config.project_model_config(db, chat)[2] == "strong-1"
+        db.rollback()
+
+
+def test_kind_model_default_survives_a_deleted_endpoint(client, admin, endpoints):
+    """An endpoint deleted out from under the setting degrades to the instance
+    default instead of failing every call."""
+    _store(model_config.KIND_DEFAULT_KEY, {"chat": "gone-endpoint-id"})
+    with SyncSession() as db:
+        chat = _project(db, "chat")
+        assert model_config.project_model_config(db, chat)[2] == settings.openai_model
+        assert vision.project_image_support_sync(db, chat)["model"] == settings.openai_model
+        db.rollback()
+
+
+def test_kind_model_default_validation(client, admin, endpoints):
+    h, _ = admin
+    assert client.put("/api/admin/settings", headers=h, json={
+        "default_model_endpoints": {"chat": "nope"}}).status_code == 422
+    assert client.put("/api/admin/settings", headers=h, json={
+        "default_model_endpoints": {"mcp": endpoints["chat"]}}).status_code == 422
+
+    # an endpoint with no model can't name what it runs - refused like the
+    # per-project route refuses it
+    with SyncSession() as db:
+        db.add(ModelEndpoint(label="No model", provider="custom", base_url="https://c.example/v1",
+                             api_key_enc=encrypt("k")))
+        db.commit()
+        modelless = db.execute(select(ModelEndpoint.id).where(
+            ModelEndpoint.label == "No model")).scalar_one()
+    try:
+        assert client.put("/api/admin/settings", headers=h, json={
+            "default_model_endpoints": {"chat": modelless}}).status_code == 422
+    finally:
+        with SyncSession() as db:
+            db.execute(delete(ModelEndpoint).where(ModelEndpoint.id == modelless))
+            db.commit()
+
+    # "" clears a kind back to the instance default
+    assert client.put("/api/admin/settings", headers=h, json={
+        "default_model_endpoints": {"chat": endpoints["chat"]}}).status_code == 200
+    out = client.put("/api/admin/settings", headers=h, json={
+        "default_model_endpoints": {"chat": ""}}).json()
+    assert out["default_model_endpoints"] == {k: None for k in project_defaults.KINDS}

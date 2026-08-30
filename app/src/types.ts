@@ -583,6 +583,13 @@ export interface AdminSettings {
   // switched off for it (a tool is opt-out, so an empty list keeps every tool).
   default_kb_ids: Record<string, string[]>;
   default_tools_off: Record<string, string[]>;
+  // The instance-default model name from env (read-only; the label the "no
+  // endpoint" choice shows).
+  default_model: string;
+  // The per-kind default model ENDPOINT ({kind: endpoint_id | null}). Unlike the
+  // two above it is not stamped at creation: it is resolved on every call, so
+  // changing it moves every project of that kind that never chose its own.
+  default_model_endpoints: Record<string, string | null>;
   // §legal identity: the operating company the landing's Privacy policy and Terms
   // of service name. Empty = the landing keeps the value it was built with.
   legal_name: string;

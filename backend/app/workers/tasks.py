@@ -213,7 +213,7 @@ def estimate_request(project_id: str, payload: dict) -> dict:
     import json
 
     from app.agents.pipeline import load_prompt
-    from app.models import CreditTransaction, ModelEndpoint, ProjectModelConfig, StatusChange
+    from app.models import CreditTransaction, StatusChange
     from app.services import llm
 
     with SyncSession() as db:
@@ -226,23 +226,15 @@ def estimate_request(project_id: str, payload: dict) -> dict:
         base_url, api_key, model = _project_model_config(db, project)
 
         # Past completed runs = 'dev run' billing rows, kept only for projects
-        # whose effective model (own config's endpoint/inline model, else the
-        # global default) matches. Scoped to the ASKING ORG: the estimate and its
+        # whose effective model matches - resolved exactly like the call itself
+        # (own endpoint/inline, else the kind default, else the global one), so a
+        # kind-wide model switch doesn't anchor the estimate on the wrong cohort. Scoped to the ASKING ORG: the estimate and its
         # explanation are shown to the customer, and platform-wide averages would
         # tell them what every other org's builds cost and how long they took. An
         # org with no dev runs of its own gets no_history, which the modal already
         # renders as "no estimate available".
-        def _row_model(r: ProjectModelConfig) -> str:
-            if r.endpoint_id:
-                ep = db.get(ModelEndpoint, r.endpoint_id)
-                if ep and ep.model_name:
-                    return ep.model_name
-            return r.model_name or settings.openai_model
-        org_project_ids = [pid for (pid,) in db.query(Project.id)
-                           .filter(Project.org_id == project.org_id).all()]
-        overrides = {r.project_id: _row_model(r)
-                     for r in db.query(ProjectModelConfig)
-                     .filter(ProjectModelConfig.project_id.in_(org_project_ids)).all()}
+        org_projects = db.query(Project).filter(Project.org_id == project.org_id).all()
+        overrides = {p.id: model_config.project_model_name(db, p) for p in org_projects}
         txs = (db.query(CreditTransaction)
                .filter(CreditTransaction.kind == "consumption",
                        CreditTransaction.detail == "dev run",
@@ -3192,15 +3184,13 @@ def _project_github_token(db: Session, project: Project) -> str | None:
 
 
 def _project_reasoning_effort(db: Session, project: Project) -> str:
-    """§effort for the DEV workflow: the saved endpoint's reasoning_effort when
-    the project routes through one, else HIGH - deep reasoning is the right
-    default for multi-step builds (utility calls independently request low)."""
-    from app.models import ModelEndpoint, ProjectModelConfig
-    row = db.query(ProjectModelConfig).filter_by(project_id=project.id).first()
-    if row and row.endpoint_id:
-        ep = db.get(ModelEndpoint, row.endpoint_id)
-        if ep and ep.reasoning_effort:
-            return ep.reasoning_effort
+    """§effort for the DEV workflow: the reasoning_effort of the endpoint the run
+    actually routes through - the project's own or its kind's default - else HIGH,
+    deep reasoning being the right default for multi-step builds (utility calls
+    independently request low)."""
+    ep, _ = model_config.project_endpoint(db, project)
+    if ep is not None and ep.reasoning_effort:
+        return ep.reasoning_effort
     return "high"
 
 

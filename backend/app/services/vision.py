@@ -1,9 +1,11 @@
 """§chat images: can THIS project's model read an image?
 
-One verdict function, two thin resolvers (async for the API, sync for the
-workers), mirroring `_project_model_config`'s order - saved endpoint → legacy
-inline config → instance default - so the answer the chat box shows and the
-answer the worker acts on can never disagree.
+One verdict function over ONE endpoint resolver
+(`model_config.project_endpoint`, the same order the calls themselves use: the
+project's saved endpoint → its legacy inline config → the per-kind default →
+the instance default), with an async and a sync entry point, so the answer the
+chat box shows, the answer the worker acts on, and the model that actually
+answers can never disagree.
 
 The verdict is tri-state at the source and binary at the surface: enabled only
 when something has positively said yes. "Nobody has checked" and "the model said
@@ -19,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import AppSetting, ModelEndpoint, Project, ProjectModelConfig
+from app.models import AppSetting, ModelEndpoint, Project
+from app.services import model_config
 
 # AppSetting key for the instance-default model (the env-configured OPENAI_MODEL
 # has no ModelEndpoint row to carry the flag).
@@ -57,20 +60,15 @@ def _verdict(endpoint: ModelEndpoint | None, inline_model: str | None,
 
 
 async def project_image_support(db: AsyncSession, project: Project) -> dict:
-    row = (await db.execute(select(ProjectModelConfig).where(
-        ProjectModelConfig.project_id == project.id))).scalar_one_or_none()
-    endpoint = (await db.get(ModelEndpoint, row.endpoint_id)
-                if row is not None and row.endpoint_id else None)
+    endpoint, inline = await model_config.project_endpoint_async(db, project)
     setting = await db.get(AppSetting, DEFAULT_MODEL_IMAGES_KEY)
-    return _verdict(endpoint, row.model_name if row is not None and not row.endpoint_id else None,
+    return _verdict(endpoint, inline.model_name if inline is not None else None,
                     bool(setting.value) if setting is not None else False)
 
 
 def project_image_support_sync(db: Session, project: Project) -> dict:
     """The workers' twin - same verdict, sync session."""
-    row = db.query(ProjectModelConfig).filter_by(project_id=project.id).first()
-    endpoint = (db.get(ModelEndpoint, row.endpoint_id)
-                if row is not None and row.endpoint_id else None)
+    endpoint, inline = model_config.project_endpoint(db, project)
     setting = db.get(AppSetting, DEFAULT_MODEL_IMAGES_KEY)
-    return _verdict(endpoint, row.model_name if row is not None and not row.endpoint_id else None,
+    return _verdict(endpoint, inline.model_name if inline is not None else None,
                     bool(setting.value) if setting is not None else False)

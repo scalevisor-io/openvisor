@@ -21,7 +21,7 @@ from app.schemas.schemas import (
 )
 from app.services import (
     app_settings, brand, consultant_photo, dev_concurrency, dev_harness, egress,
-    hub_events, project_defaults, routines as routines_svc,
+    hub_events, model_config, project_defaults, routines as routines_svc,
     speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
@@ -113,9 +113,10 @@ async def _settings_out(db: AsyncSession) -> dict:
 async def get_settings(db: AsyncSession = Depends(get_db)):
     """Runtime, admin-editable global settings: the deposit-pause flags, the
     instance-default model's image-support declaration (§chat images), the
-    dev-sandbox egress lockdown (§egress), the per-kind knowledge-base and tool
-    defaults a new project starts with (§project defaults) and the legal identity
-    the landing's legal pages print (§legal identity)."""
+    dev-sandbox egress lockdown (§egress), the per-kind defaults - knowledge bases
+    and tools stamped on a new project, the model endpoint resolved on every call
+    (§project defaults) - and the legal identity the landing's legal pages print
+    (§legal identity)."""
     return await _settings_out(db)
 
 
@@ -199,6 +200,19 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
         except ValueError as exc:
             raise HTTPException(422, f"Invalid default tools: {exc}")
         await app_settings.set_value(db, project_defaults.TOOLS_OFF_KEY, defaults)
+    if body.default_model_endpoints is not None:
+        # The per-kind model, resolved per call rather than stamped: the endpoint
+        # must exist AND carry a model_name, or a project of that kind would route
+        # to an endpoint that can't name what it runs (the per-project route
+        # refuses one for the same reason).
+        rows = (await db.execute(select(ModelEndpoint))).scalars().all()
+        known = {e.id for e in rows if e.model_name}
+        try:
+            defaults = model_config.normalize_kind_defaults(
+                body.default_model_endpoints, project_defaults.KINDS, known)
+        except ValueError as exc:
+            raise HTTPException(422, f"Invalid default model: {exc}")
+        await app_settings.set_value(db, model_config.KIND_DEFAULT_KEY, defaults)
     # §legal identity: what the landing's Privacy policy and Terms of service name
     # as the operating company. "" clears the override back to the built-in value.
     await app_settings.set_legal_identity(

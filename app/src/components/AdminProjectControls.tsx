@@ -528,7 +528,10 @@ function ModelConfigModal({ projectId, onClose }: { projectId: string; onClose: 
     setBusy(true);
     try {
       await adminApi.putModelConfig(projectId, { endpoint_id: endpointId || null });
-      toast.push(endpointId ? "Model config saved" : "Model config cleared - using the global default", "ok");
+      toast.push(
+        endpointId ? "Model config saved" : "Model config cleared - following this kind's default",
+        "ok",
+      );
       onClose();
     } catch (err) {
       toast.push(err instanceof Error ? err.message : "Failed", "err");
@@ -540,14 +543,15 @@ function ModelConfigModal({ projectId, onClose }: { projectId: string; onClose: 
   return (
     <Modal title="Per-project model config" onClose={onClose}>
       <p className="muted small">
-        Route this project's builds to a saved endpoint (the model and credentials come with it)
-        instead of the global default. Manage endpoints under{" "}
-        <Link to="/admin/model-endpoints">Model configuration</Link>.
+        Route this project's builds to a saved endpoint (the model and credentials come with it).
+        Leave it unset and the project follows the default for its kind (
+        <Link to="/admin/settings">Settings</Link>), else the instance default. Manage endpoints
+        under <Link to="/admin/model-endpoints">Model configuration</Link>.
       </p>
       <div className="field">
         <label>Endpoint</label>
         <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)}>
-          <option value="">Global default (no override)</option>
+          <option value="">Default for this project kind (no override)</option>
           {(endpoints ?? []).map((ep) => (
             <option key={ep.id} value={ep.id}>
               {ep.label} ({ep.provider}

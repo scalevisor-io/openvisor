@@ -11,7 +11,7 @@ from sqlalchemy import delete
 from app.core.db import SyncSession
 from app.core.encryption import encrypt
 from app.models import AppSetting, ModelEndpoint, Organization, Project, ProjectModelConfig
-from app.services import vision
+from app.services import model_config, vision
 
 
 @pytest.fixture
@@ -50,10 +50,15 @@ def _endpoint(supports=None, source=None, model="some-model-v1") -> str:
 
 
 def _point_project_at(pid: str, endpoint_id: str | None = None, inline_model: str | None = None):
+    """A legacy inline row is the WHOLE triple (base URL + key + model), which is
+    what the pre-saved-endpoints admin route wrote - a row carrying only a model
+    name is not a choice the calls can honor, so it must not be one here either."""
     with SyncSession() as db:
         db.execute(delete(ProjectModelConfig).where(ProjectModelConfig.project_id == pid))
-        db.add(ProjectModelConfig(project_id=pid, endpoint_id=endpoint_id,
-                                  model_name=inline_model))
+        db.add(ProjectModelConfig(
+            project_id=pid, endpoint_id=endpoint_id, model_name=inline_model,
+            openai_base_url="https://legacy.example.com/v1" if inline_model else None,
+            openai_api_key_enc=encrypt("legacy-key") if inline_model else None))
         db.commit()
 
 
@@ -134,3 +139,19 @@ def test_probe_verdict_reads_a_rejection_as_no_but_an_outage_as_unknown():
     assert verdict(accepted) is True
     assert verdict(rejected) is False
     assert verdict(outage) is None
+
+
+def test_an_empty_row_is_not_a_model_choice(seeded):
+    """The shape `ondelete SET NULL` leaves behind when an endpoint is deleted: a
+    row with neither an endpoint nor inline credentials. The calls fall through to
+    the kind/instance default, so the verdict has to follow them there instead of
+    describing a model nothing will use."""
+    _, pid = seeded
+    with SyncSession() as db:
+        db.execute(delete(ProjectModelConfig).where(ProjectModelConfig.project_id == pid))
+        db.add(ProjectModelConfig(project_id=pid))
+        db.commit()
+    with SyncSession() as db:
+        project = db.get(Project, pid)
+        v = vision.project_image_support_sync(db, project)
+        assert v["model"] == model_config.project_model_config(db, project)[2]
