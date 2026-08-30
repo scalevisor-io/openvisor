@@ -65,7 +65,7 @@ HARNESSES: dict[str, Harness] = {
     "openhands": Harness(
         id="openhands",
         label="OpenHands SDK",
-        description="The default agent loop: the OpenHands SDK v1 driver (runner/run_dev.py).",
+        description="The default agent loop: the OpenHands SDK v1 driver.",
         driver="/run_dev.py",
         tool_preset_id=_OPENHANDS_PRESET,
         driver_revision=_OPENHANDS_DRIVER,
@@ -73,9 +73,7 @@ HARNESSES: dict[str, Harness] = {
     "claude_sdk": Harness(
         id="claude_sdk",
         label="Claude Agent SDK",
-        description="The Claude Code agent loop as a library (runner/run_claude.py). "
-                    "Anthropic models only - it speaks the Messages API, not the "
-                    "OpenAI-compatible endpoint the other harness uses.",
+        description="The Claude Code agent loop. Anthropic models only.",
         driver="/run_claude.py",
         # Distinct from the OpenHands preset, which is what stops agent_eval from
         # comparing the two as one harness.
