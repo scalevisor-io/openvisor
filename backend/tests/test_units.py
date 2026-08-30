@@ -71,6 +71,83 @@ def test_pricing_known_and_unknown_models():
         cost_credits("mystery-model-9000", 100, 100)
 
 
+def test_pricing_bills_each_cache_tier_at_its_own_rate():
+    """§18: input_tokens is the WHOLE prompt and the cache counters are disjoint
+    slices of it. Writes were folded into plain input until 2026-08-30, which
+    under-billed every cache-heavy run."""
+    from app.core.config import settings
+    m = settings.credit_markup
+    # claude-sonnet-5: 2.00 in / 0.20 read / 2.50 write-5m / 4.00 write-1h / 10.00 out
+    credits = cost_credits("claude-sonnet-5", 1_000_000, 0,
+                           cached_input_tokens=700_000,
+                           cache_write_tokens=100_000,
+                           cache_write_1h_tokens=100_000)
+    fresh = 100_000  # whatever the three slices leave over
+    assert credits == pytest.approx(
+        (fresh * 2.00 + 700_000 * 0.20 + 100_000 * 2.50 + 100_000 * 4.00) / 1e6 * m)
+
+
+def test_the_1h_write_tier_costs_more_than_the_5m_one():
+    """The distinction the fix exists for: this harness writes on the 1-hour TTL,
+    so pricing both tiers at 1.25x would have left the under-bill in place."""
+    same = dict(cached_input_tokens=0)
+    five = cost_credits("claude-sonnet-5", 1_000_000, 0, cache_write_tokens=1_000_000,
+                        **same)
+    hour = cost_credits("claude-sonnet-5", 1_000_000, 0,
+                        cache_write_1h_tokens=1_000_000, **same)
+    plain = cost_credits("claude-sonnet-5", 1_000_000, 0, **same)
+    assert plain < five < hour
+    assert five == pytest.approx(plain * 1.25)
+    assert hour == pytest.approx(plain * 2.0)
+
+
+def test_a_row_without_write_rates_bills_exactly_as_before():
+    """The fallback chain (1h -> 5m -> base) means adding the counters can never
+    change what an unpriced-for-writes model bills, and never raises."""
+    from app.core.config import settings
+    m = settings.credit_markup
+    # mistral-large-latest has cached_input but no cache_write rates
+    with_writes = cost_credits("mistral-large-latest", 1_000_000, 0,
+                               cache_write_tokens=400_000,
+                               cache_write_1h_tokens=100_000)
+    assert with_writes == pytest.approx(0.50 * m)  # all of it at the input rate
+    # an endpoint override may carry the write rates as elements 4 and 5
+    ep = cost_credits("off-table-model", 1_000_000, 0, price=(1.0, 4.0, 0.1, 1.25, 2.0),
+                      cache_write_1h_tokens=1_000_000)
+    assert ep == pytest.approx(2.0 * m)
+
+
+def test_cache_counters_can_never_bill_more_than_the_prompt():
+    """Defensive: the slices are clamped in order against what is left, so
+    counters that disagree with input_tokens cannot inflate a bill."""
+    from app.core.config import settings
+    m = settings.credit_markup
+    credits = cost_credits("claude-sonnet-5", 1_000_000, 0,
+                           cached_input_tokens=900_000,
+                           cache_write_tokens=900_000,      # only 100k left for it
+                           cache_write_1h_tokens=900_000)   # nothing left at all
+    assert credits == pytest.approx((900_000 * 0.20 + 100_000 * 2.50) / 1e6 * m)
+
+
+def test_the_first_production_claude_run_now_bills_what_anthropic_charged():
+    """Run 7608b269 (2026-08-30), the harness's first real build. Anthropic's own
+    total_cost_usd was 1.239593; the table billed it as if every written token
+    were fresh input. The gap IS the bug."""
+    from app.core.config import settings
+    m = settings.credit_markup
+    total_in, reads, out = 3_926_477, 3_818_168, 19_370
+    writes_1h, fresh = 32_821, 75_488  # the split Anthropic's own cost implies
+
+    before = cost_credits("claude-sonnet-5", total_in, out, markup=1.0,
+                          cached_input_tokens=reads)
+    after = cost_credits("claude-sonnet-5", total_in, out, markup=1.0,
+                         cached_input_tokens=reads, cache_write_1h_tokens=writes_1h)
+    assert before < after                       # the fix bills MORE, as it must
+    assert after == pytest.approx(1.2395936)   # ...and matches the provider exactly
+    assert before == pytest.approx(1.1739516)  # 5.3% short of it before
+    assert m > 0  # markup is operator-set; this test pins the pre-markup cost
+
+
 def test_pricing_cached_input_discount():
     from app.core.config import settings
     m = settings.credit_markup

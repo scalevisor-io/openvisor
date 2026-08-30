@@ -223,6 +223,18 @@ def _endpoint_price(db: Session, api_model: str) -> tuple[float, float, float | 
     return model_prices.for_model(db, api_model)
 
 
+def cache_counters(usage: dict) -> dict:
+    """The §18 cache slices of one usage report, as `cost_credits` kwargs.
+
+    One place, because a billing writer that forgets a counter does not fail - it
+    quietly bills that slice at the base rate, which is how cache WRITES went a
+    harness-generation unbilled. Absent keys read as 0, exactly the behaviour for
+    a provider that reports no cache counters at all."""
+    return {"cached_input_tokens": int(usage.get("cached_input_tokens") or 0),
+            "cache_write_tokens": int(usage.get("cache_write_tokens") or 0),
+            "cache_write_1h_tokens": int(usage.get("cache_write_1h_tokens") or 0)}
+
+
 def record_usage(db: Session, project: Project, usage: dict, detail: str,
                  request: Request | None = None) -> float:
     """Meter a model call against the org wallet (PROMPT §14.6/§18). When the
@@ -231,7 +243,7 @@ def record_usage(db: Session, project: Project, usage: dict, detail: str,
     credits charged. Caller commits."""
     credits = cost_credits(usage["model"], usage["input_tokens"], usage["output_tokens"],
                            price=_endpoint_price(db, usage["model"]),
-                           cached_input_tokens=usage.get("cached_input_tokens", 0))
+                           **cache_counters(usage))
     tokens = usage["input_tokens"] + usage["output_tokens"]
     project.tokens_consumed = (project.tokens_consumed or 0) + tokens
     project.cost_credits = (project.cost_credits or 0.0) + credits
@@ -282,7 +294,7 @@ def record_project_usage(db: Session, project: Project, usages: list[dict],
     credits = sum(
         cost_credits(u["model"], u["input_tokens"], u["output_tokens"],
                      price=_endpoint_price(db, u["model"]),
-                     cached_input_tokens=u.get("cached_input_tokens", 0))
+                     **cache_counters(u))
         for u in usages
     )
     tokens = sum(u["input_tokens"] + u["output_tokens"] for u in usages)
@@ -309,7 +321,7 @@ def record_org_usage(db: Session, org_id: str, usages: list[dict], detail: str,
     credits = sum(
         cost_credits(u["model"], u["input_tokens"], u["output_tokens"], markup=markup,
                      price=_endpoint_price(db, u["model"]),
-                     cached_input_tokens=u.get("cached_input_tokens", 0))
+                     **cache_counters(u))
         for u in usages
     )
     _debit_org(db, org_id, credits)

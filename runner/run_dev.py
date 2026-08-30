@@ -281,6 +281,10 @@ def _dump_usage(llm: LLM, quiet: bool = False) -> None:
             # prompt-cache READS (subset of prompt_tokens) - billed at the
             # model's cached rate (§18)
             "cached_input_tokens": int(getattr(tu, "cache_read_tokens", 0) or 0),
+            # ...and WRITES, billed at the model's cache_write rate. The SDK gives
+            # one write counter with no TTL split, so it meters as the 5-minute
+            # tier - the cheaper of the two, and the one LiteLLM asks for.
+            "cache_write_tokens": int(getattr(tu, "cache_write_tokens", 0) or 0),
         }
         path = OPENVISOR / "usage.json"
         tmp = path.with_name("usage.json.tmp")
