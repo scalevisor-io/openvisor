@@ -250,8 +250,9 @@ def classify_chat_intent(db: Session, project: Project, context_text: str,
     confirm a proposed one, ask a clarifying question with suggested options
     (clarify), answer a question about the project's own work (answer), or none.
     Best-effort and FAIL-SAFE: an LLM outage or a malformed
-    reply returns {"intent": "none"} so a failure never triggers a side effect
-    (unlike run_evaluation, this classifier has effects). Usage is metered
+    reply returns {"intent": "none", "unavailable": True} so a failure never
+    triggers a side effect (unlike run_evaluation, this classifier has effects)
+    and the caller can tell an outage from a deliberate "nothing to do". Usage is metered
     against the project. The caller applies the state guardrails."""
     try:
         # 2000, not 600: reasoning models spend hidden thinking tokens from the same
@@ -262,8 +263,15 @@ def classify_chat_intent(db: Session, project: Project, context_text: str,
                                         f"{latest_message[:8000]}"},
         ], max_tokens=2000, effort="low", **llm_kw)
     except (LLMUnavailable, ValueError, KeyError) as exc:
+        # `unavailable` separates "the model read the message and there is nothing
+        # to do" from "the model never answered". Both are intent none - a failure
+        # must still never trigger a side effect - but only the first one may be
+        # met with a generated reply: on 2026-08-30 an endpoint 400ed every
+        # structured call, the @mention fell through to the answering model, and it
+        # told the customer "I've added it under Requests" (copying the platform's
+        # own confirm-request wording out of the thread) with no request behind it.
         log.warning("chat intent classification skipped for %s: %s", project.id, exc)
-        return {"intent": "none"}
+        return {"intent": "none", "unavailable": True}
     try:
         record_usage(db, project, usage, "chat intent")
     except UnknownModelError as exc:

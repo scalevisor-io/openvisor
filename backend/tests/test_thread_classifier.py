@@ -4,6 +4,9 @@ proposed request, or resume the parked run the thread belongs to (the scoped
 request in flight, or Request #0 for a parked MVP build). Everything else
 stays silent. test_build_control style: committed throwaway org, tasks open
 their own sessions.
+
+Also here: what happens when the classifier could not run at all, which must
+never be narrated by a model (see the unavailable tests at the bottom).
 """
 import pytest
 from sqlalchemy import delete, select, update
@@ -195,3 +198,95 @@ def test_thread_branch_ignores_out_of_scope_verdicts_and_threads(org_id, tmp_pat
         assert db.execute(select(Message).where(
             Message.project_id == pid, Message.author == "agent",
             Message.thread == f"request:{done_rid}")).scalars().first() is None
+
+
+# ------------------------------------------- the classifier could not run at all
+
+def _main_msg(pid, body, author="admin"):
+    with SyncSession() as db:
+        msg = Message(project_id=pid, thread="main", author=author, body=body)
+        db.add(msg)
+        db.commit()
+        return msg.id
+
+
+def _agent_bodies(pid, thread):
+    with SyncSession() as db:
+        return [m.body for m in db.query(Message)
+                .filter_by(project_id=pid, thread=thread, author="agent")
+                .order_by(Message.created_at).all()]
+
+
+def test_an_unavailable_classifier_never_reaches_the_answering_model(
+        org_id, tmp_path, quiet, monkeypatch):
+    """Production, 2026-08-30: an endpoint 400ed every structured call, so the
+    classifier returned its fail-safe none. The @mention fell through to the
+    ANSWERING model, which told the customer "I've added it under Requests.
+    Approve it below to go ahead" - copying the platform's own confirm-request
+    wording out of the thread. No request existed. Only the platform may say what
+    the platform did, so an outage gets a fixed line and no generated reply."""
+    pid = _commit_project(org_id, tmp_path, gitlab_project_id=1,
+                          demo_deployed_once=True)
+    mid = _main_msg(pid, "@agent the modal switches are misaligned, fix it")
+    _classify_with(monkeypatch, {"intent": "none", "unavailable": True})
+    answers: list = []
+    monkeypatch.setattr(tasks, "_dispatch_work_answer",
+                        lambda *a, **k: answers.append(a))
+
+    tasks.classify_chat_message(pid, mid)
+
+    assert answers == []                      # the answering model never ran
+    bodies = _agent_bodies(pid, "main")
+    assert bodies == [tasks.INTAKE_UNAVAILABLE_NOTE]
+    assert "nothing was filed" in bodies[0]
+    with SyncSession() as db:                 # and nothing was filed, truthfully
+        assert db.query(Request).filter_by(project_id=pid).count() == 0
+
+
+def test_an_unavailable_classifier_stays_silent_without_a_mention(
+        org_id, tmp_path, quiet, monkeypatch):
+    """Not every message needs an answer; only one that called the agent by name
+    is owed one. An outage must not start narrating every passing remark."""
+    pid = _commit_project(org_id, tmp_path, gitlab_project_id=1,
+                          demo_deployed_once=True)
+    mid = _main_msg(pid, "the modal switches are misaligned")
+    _classify_with(monkeypatch, {"intent": "none", "unavailable": True})
+    monkeypatch.setattr(tasks, "_dispatch_work_answer",
+                        lambda *a, **k: pytest.fail("answered on an outage"))
+
+    tasks.classify_chat_message(pid, mid)
+    assert _agent_bodies(pid, "main") == []
+
+
+def test_a_deliberate_none_still_answers_a_mention(org_id, tmp_path, quiet, monkeypatch):
+    """The distinction that makes the guard safe: "the model read it and there is
+    nothing to do" is not an outage, and still gets a real reply."""
+    pid = _commit_project(org_id, tmp_path, gitlab_project_id=1,
+                          demo_deployed_once=True)
+    mid = _main_msg(pid, "@agent how did the last build go?")
+    _classify_with(monkeypatch, {"intent": "none", "request_type": None,
+                                 "summary": None})
+    answers: list = []
+    monkeypatch.setattr(tasks, "_dispatch_work_answer",
+                        lambda *a, **k: answers.append(a))
+
+    tasks.classify_chat_message(pid, mid)
+    assert len(answers) == 1
+    assert _agent_bodies(pid, "main") == []
+
+
+def test_an_unavailable_classifier_in_a_request_thread_says_so_too(
+        org_id, tmp_path, quiet, monkeypatch):
+    pid = _commit_project(org_id, tmp_path, gitlab_project_id=1,
+                          demo_deployed_once=True)
+    rid = _request(pid)
+    mid = _thread_msg(pid, rid, "@agent go ahead")
+    _classify_with(monkeypatch, {"intent": "none", "unavailable": True})
+    monkeypatch.setattr(tasks, "_dispatch_work_answer",
+                        lambda *a, **k: pytest.fail("answered on an outage"))
+
+    tasks.classify_chat_message(pid, mid)
+
+    assert _agent_bodies(pid, f"request:{rid}") == [tasks.INTAKE_UNAVAILABLE_NOTE]
+    with SyncSession() as db:                 # the proposal was NOT confirmed
+        assert db.get(Request, rid).status == "proposed"

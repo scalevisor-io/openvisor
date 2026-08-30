@@ -577,6 +577,18 @@ def _classify_chat_message(project_id: str, message_id: str, outcome: dict) -> N
                 outcome["intent"] = "answer"
                 _dispatch_work_answer(project_id, message_id, "main")
 
+        if verdict.get("unavailable"):
+            # The classifier never ran, so nothing was filed and nothing was
+            # started. Hand that to the ANSWERING model and it will improvise a
+            # plausible account of an intake that did not happen - it did, on
+            # 2026-08-30. This line is deterministic for the same reason the
+            # confirm-request copy is: only the platform may say what it did.
+            outcome["intent"] = "unavailable"
+            if mentioned:
+                _post_message(db, project_id, "main", "agent", INTAKE_UNAVAILABLE_NOTE)
+                db.commit()
+            return
+
         if intent == "answer" or (mentioned and intent == "none"):
             outcome["intent"] = "answer"
             _dispatch_work_answer(project_id, message_id, "main")
@@ -808,6 +820,14 @@ def _classify_thread_message(db: Session, project: Project, msg: Message,
     log.info("thread intent for %s req %s msg %s: %s",
              project.id, req.id, msg.id, intent)
 
+    if verdict.get("unavailable"):
+        # Same rule as the main branch: an outage may not be narrated by a model.
+        outcome["intent"] = "thread_unavailable"
+        if mentioned:
+            _post_message(db, project.id, msg.thread, "agent", INTAKE_UNAVAILABLE_NOTE)
+            db.commit()
+        return
+
     def _answer_instead() -> None:
         """The thread's fallback: an answerable question - or any message that
         called the agent by name - gets a reply instead of silence."""
@@ -902,6 +922,12 @@ CHAT_IMAGE_MAX_PER_MESSAGE = 4
 
 WORK_ANSWER_HISTORY = 14  # thread messages fed to the responder
 WORK_ANSWER_FEED_BYTES = 20000  # tail of the live build feed read for context
+
+
+INTAKE_UNAVAILABLE_NOTE = (
+    "I couldn't read that message just now - the model endpoint refused the "
+    "request, so nothing was filed and no build was started. Send it again in a "
+    "moment, or open it yourself under Requests.")
 
 
 def _dispatch_work_answer(project_id: str, message_id: str, thread: str) -> None:
