@@ -18,7 +18,12 @@ export type NowActionId =
   | "open-pr"
   | "approve"
   | "open-demo"
-  | "require-review";
+  | "require-review"
+  // §request help: the FREE escalation. Same destination as require-review, but
+  // offered only over a platform fault, and it replaces the paid one there
+  // rather than sitting beside it - two ways to reach the same consultant, one
+  // of them billed, is a choice no customer should have to make.
+  | "request-help";
 
 export interface NowAction {
   id: NowActionId;
@@ -54,6 +59,13 @@ export interface ProjectNowInput {
    * single run keeps every singular copy below untouched.
    */
   runCounts?: { building: number; merging: number } | null;
+  /**
+   * §request help: whose fault the last failed run was - "platform" when it was
+   * ours (the agent driver crashed, the model endpoint refused the model, the
+   * sandbox lost the git remote). It swaps the paid escalation for the free one
+   * and stops the copy claiming branch progress that a crash never produced.
+   */
+  devFault?: string | null;
 }
 
 // The aggregate headline, or null when the singular copy should stand.
@@ -96,11 +108,25 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
   const kind = (i.kind ?? "ai") as SharedProjectKind;
   const consultant = i.consultant || "your consultant";
   const dev = i.devRunState ?? "idle";
-  const escalate = A("require-review", `Ask for ${consultant}'s review`);
+  const ourFault = i.devFault === "platform";
+  const escalate = ourFault
+    ? A("request-help", "Request help")
+    : A("require-review", `Ask for ${consultant}'s review`);
   const withEscalation = (now: ProjectNow): ProjectNow =>
     kind !== "direct_quote" && ESCALATABLE.has(String(i.status))
       ? { ...now, secondary: [...now.secondary, escalate] }
       : now;
+  // A build that died on our machinery kept nothing, so the "progress is kept"
+  // reassurance below would be a lie exactly where it matters most.
+  const interrupted = ourFault
+    ? {
+        headline: "That build failed on our side.",
+        body: `Nothing you wrote caused it and nothing was charged for asking - ${consultant} can take it from here.`,
+      }
+    : {
+        headline: "The build was interrupted - nothing was lost.",
+        body: "Branch progress is kept; resume picks up where it stopped.",
+      };
 
   if (i.status === "canceled") {
     return { headline: "This project is canceled.", owner: "none", secondary: [] };
@@ -262,8 +288,7 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
       }
       if (dev === "failed") {
         return withEscalation({
-          headline: "The build was interrupted - nothing was lost.",
-          body: "Branch progress is kept; resume picks up where it stopped.",
+          ...interrupted,
           owner: "you",
           primary: A("resume", "Resume development"),
           secondary: [],
@@ -348,8 +373,7 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
         });
       }
       return withEscalation({
-        headline: "The build was interrupted - nothing was lost.",
-        body: "Branch progress is kept; resume picks up where it stopped.",
+        ...interrupted,
         owner: "you",
         primary: A("resume", "Resume development"),
         secondary: [],

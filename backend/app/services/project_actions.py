@@ -10,7 +10,9 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.serializers import dev_resume_capability, dev_run_resume_capability, message_out
+from app.api.serializers import (
+    dev_help_capability, dev_resume_capability, dev_run_resume_capability, message_out,
+)
 from app.core.config import settings
 from app.models import CreditTransaction, DevRun, Message, Organization, Project, Request
 from app.services import dev_concurrency, events, hub_events
@@ -92,6 +94,49 @@ async def require_review(db: AsyncSession, project: Project) -> None:
                                  kind="review_request",
                                  detail=f"Requested {settings.consultant_first_name}'s review (refundable)"))
     await db.commit()
+
+
+async def request_help(db: AsyncSession, project: Project) -> None:
+    """§request help: hand a build that failed on a PLATFORM fault to the
+    consultant, free.
+
+    `require_review` above is the customer buying attention, so it charges. This
+    is the platform conceding that its own machinery broke - the agent driver
+    crashed, the model endpoint refused the configured model, the sandbox lost
+    the git remote - and charging for that would be charging for our own bug.
+    The gate is `dev_help_capability`, the same verdict the button renders, so
+    the free path can never be reached over an ordinary build failure.
+
+    Destination is awaiting_admin: the SAME queue the paid review lands in, which
+    keeps one consultant inbox instead of two and gets the §8 admin email for
+    free. It also takes the project off the customer's Resume, deliberately - a
+    platform fault resumed unchanged fails again, and the run's own console still
+    carries every detail the fix needs.
+    """
+    enabled, blocker = dev_help_capability(project)
+    if not enabled:
+        raise ActionError(409, blocker or "Help isn't available for this build")
+    error = (project.dev_run_error or "").strip()
+    try:
+        await transition_async(db, project, "awaiting_admin", "customer",
+                               "Customer asked for help with a build that failed on our side"
+                               + (f": {error[:200]}" if error else ""))
+    except TransitionError as exc:
+        raise ActionError(409, str(exc))
+    # Say it in the thread the customer is actually reading - the failed run's
+    # request thread, not just the main-thread status line the transition writes.
+    thread = f"request:{project.dev_request_id}" if project.dev_request_id else "main"
+    if not await valid_thread(db, project, thread):
+        thread = "main"
+    msg = Message(project_id=project.id, thread=thread, author="agent",
+                  body=("That build failed on our side, not yours, so this one is on us: "
+                        f"{settings.consultant_first_name} has been alerted and will pick it "
+                        "up from here. No credits were charged for asking."))
+    db.add(msg)
+    await db.flush()
+    hub_events.record(db, project, "message", hub_events.message_payload(msg))
+    await db.commit()
+    await events.publish_async(project.id, {"type": "message", "message": message_out(msg)})
 
 
 async def charge_chat_upfront(db: AsyncSession, project: Project) -> None:

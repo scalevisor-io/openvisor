@@ -89,18 +89,20 @@ def test_exit_copy_names_the_infrastructure_fault(tmp_path, monkeypatch):
     monkeypatch.setattr(tasks.devfeed, "append_event", lambda *a, **k: feed.append(a))
     p = SimpleNamespace(id="p1", workspace_path=str(tmp_path), dev_request_id=None)
 
-    chat, err = tasks._runner_exit_copy(p, UNREACHABLE)
+    chat, err, fault = tasks._runner_exit_copy(p, UNREACHABLE)
     assert "couldn't reach your code repository" in chat and "Resume" in chat
     assert "before spending anything" in chat  # the customer is not billed for it
     assert "reach the git remote" in err
     assert feed and feed[-1][1] == "error"
+    assert fault == "platform"  # §request help: no route to the remote is ours
 
-    chat, err = tasks._runner_exit_copy(p, DENIED)
+    chat, err, fault = tasks._runner_exit_copy(p, DENIED)
     assert "deploy key" in chat and "write access" in chat
     assert "deploy key" in err
+    assert fault is None  # ...but a remote that REFUSED the key is theirs to fix
 
     # no verdict → the pre-existing generic copy, unchanged
-    chat, err = tasks._runner_exit_copy(p, {"exit_code": "1"})
+    chat, err, _ = tasks._runner_exit_copy(p, {"exit_code": "1"})
     assert err == "" and "exited with an error" in chat
 
 

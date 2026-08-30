@@ -523,6 +523,9 @@ async def hub_project_action(project_id: str, body: HubProjectActionIn,
             project_actions.stop_build(project)
         elif body.action == "require-admin":
             await project_actions.require_review(db, project)
+        elif body.action == "request-help":
+            # §request help: the free escalation, gated on a platform fault.
+            await project_actions.request_help(db, project)
         elif body.action == "demo-start":
             project_actions.start_demo(project)
         elif body.action == "demo-stop":
