@@ -114,18 +114,24 @@ def test_read_progress_estimates_cost_and_survives_unknown_model(tmp_path, monke
     p = _project(tmp_path)
     devfeed.progress_path(p).write_text(json.dumps(
         {"model": "test-model", "input_tokens": 1000, "output_tokens": 200,
-         "cached_input_tokens": 400}))
+         "cached_input_tokens": 400, "cache_write_tokens": 150,
+         "cache_write_1h_tokens": 50}))
     import app.services.pricing as pricing
     seen = {}
 
-    def _fake(model, i, o, markup=None, cached_input_tokens=0, **kw):
+    def _fake(model, i, o, markup=None, cached_input_tokens=0, cache_write_tokens=0,
+              cache_write_1h_tokens=0, **kw):
         seen["cached"] = cached_input_tokens
+        seen["write"] = cache_write_tokens
+        seen["write_1h"] = cache_write_1h_tokens
         return 0.1234
     monkeypatch.setattr(pricing, "cost_credits", _fake)
     usage = devfeed.read_progress(p)
     assert usage["total_tokens"] == 1200 and usage["credits_estimate"] == 0.1234
-    # the live estimate discounts prompt-cache reads exactly like billing does
+    # the live estimate prices every cache tier exactly like billing does, so the
+    # number on screen tracks the invoice instead of drifting under it
     assert usage["cached_input_tokens"] == 400 and seen["cached"] == 400
+    assert seen["write"] == 150 and seen["write_1h"] == 50
     # the console names the model this run executes on (routing can change
     # between runs)
     assert usage["model"] == "test-model"
@@ -267,4 +273,5 @@ def test_livefeed_appends_events_and_snapshots_progress(live_events, tmp_path):
     feed.dump_progress(force=True)
     snap = json.loads((tmp_path / "progress.json").read_text())
     assert snap == {"model": "test-model", "input_tokens": 42, "output_tokens": 7,
-                    "cached_input_tokens": 30, "updated_at": snap["updated_at"]}
+                    "cached_input_tokens": 30, "cache_write_tokens": 0,
+                    "cache_write_1h_tokens": 0, "updated_at": snap["updated_at"]}

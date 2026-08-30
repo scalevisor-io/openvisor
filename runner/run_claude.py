@@ -58,7 +58,8 @@ class _Usage:
         self.prompt_tokens = 0
         self.completion_tokens = 0
         self.cache_read_tokens = 0
-        self.cache_write_tokens = 0
+        self.cache_write_tokens = 0     # default/5-minute TTL
+        self.cache_write_1h_tokens = 0  # 1-hour TTL - twice the write price
         self.provider_cost_usd = 0.0
 
 
@@ -85,14 +86,14 @@ def _dump_usage(usage: _Usage, quiet: bool = False) -> None:
     (tmp + os.replace) so a kill mid-write leaves the previous complete file
     rather than a torn one, and best-effort: metering never fails a build.
 
-    §cache accounting: Anthropic reports three disjoint input counters -
-    `input_tokens` (fresh), `cache_creation_input_tokens` (written to cache, billed
-    at 1.25x base) and `cache_read_input_tokens` (billed at 0.1x). The price table
-    has columns for only two rates, so cache CREATION is folded into plain input
-    and bills at 1.0x instead of 1.25x. That under-bills, by a bounded and known
-    amount, and the price table's owner_todo carries the fix (a cache_write
-    column). Reporting it any other way would over-bill instead, which the §spend
-    floor makes worse than under-billing.
+    §cache accounting: Anthropic reports disjoint input counters - `input_tokens`
+    (fresh), `cache_creation_input_tokens` (written) and `cache_read_input_tokens`
+    (read at 0.1x base) - and it splits the writes by TTL under `cache_creation`
+    (`ephemeral_5m_input_tokens`, billed at 1.25x base, and
+    `ephemeral_1h_input_tokens`, at 2x). Every tier is reported now that the price
+    table prices each one. Writes used to be folded into plain input and billed at
+    1x, and THIS harness writes on the one-hour TTL, so the first production build
+    under-billed 32,821 tokens at half their rate.
     """
     try:
         report = {
@@ -100,6 +101,8 @@ def _dump_usage(usage: _Usage, quiet: bool = False) -> None:
             "input_tokens": int(usage.prompt_tokens),
             "output_tokens": int(usage.completion_tokens),
             "cached_input_tokens": int(usage.cache_read_tokens),
+            "cache_write_tokens": int(usage.cache_write_tokens),
+            "cache_write_1h_tokens": int(usage.cache_write_1h_tokens),
             # Anthropic's own costing for the run, cache-accurate and independent
             # of our price table. The worker ignores keys it does not know; the
             # benchmark reads it as the ground truth the table is checked against.
@@ -253,6 +256,25 @@ def _counter(obj, *names) -> int:
     return 0
 
 
+def _write_tiers(raw) -> tuple[int, int]:
+    """(5-minute, 1-hour) cache-write tokens out of one usage report.
+
+    Anthropic prices the two TTLs differently - 1.25x base input against 2x - and
+    reports the split under `cache_creation`. Without that breakdown the whole
+    `cache_creation_input_tokens` total is attributed to the 5-minute tier: it is
+    the documented meaning of the bare field and the cheaper of the two, so a
+    shape this does not recognise under-bills rather than over-bills."""
+    total = _counter(raw, "cache_creation_input_tokens", "cacheCreationInputTokens")
+    detail = (raw.get("cache_creation") if isinstance(raw, dict)
+              else getattr(raw, "cache_creation", None))
+    if detail:
+        five = _counter(detail, "ephemeral_5m_input_tokens", "ephemeral5mInputTokens")
+        hour = _counter(detail, "ephemeral_1h_input_tokens", "ephemeral1hInputTokens")
+        if five or hour:
+            return five, hour
+    return total, 0
+
+
 def _absorb_turn(usage: _Usage, message) -> None:
     """Fold ONE assistant turn's usage into the running counters.
 
@@ -274,12 +296,13 @@ def _absorb_turn(usage: _Usage, message) -> None:
     if not raw:
         return
     fresh = _counter(raw, "input_tokens", "inputTokens")
-    created = _counter(raw, "cache_creation_input_tokens", "cacheCreationInputTokens")
+    five, hour = _write_tiers(raw)
     read = _counter(raw, "cache_read_input_tokens", "cacheReadInputTokens")
-    usage.prompt_tokens += fresh + created + read
+    usage.prompt_tokens += fresh + five + hour + read
     usage.completion_tokens += _counter(raw, "output_tokens", "outputTokens")
     usage.cache_read_tokens += read
-    usage.cache_write_tokens += created
+    usage.cache_write_tokens += five
+    usage.cache_write_1h_tokens += hour
 
 
 def _absorb_usage(usage: _Usage, result) -> None:
@@ -290,14 +313,15 @@ def _absorb_usage(usage: _Usage, result) -> None:
     if raw is None:
         return
     fresh = _counter(raw, "input_tokens", "inputTokens")
-    created = _counter(raw, "cache_creation_input_tokens", "cacheCreationInputTokens")
+    five, hour = _write_tiers(raw)
     read = _counter(raw, "cache_read_input_tokens", "cacheReadInputTokens")
     # See _dump_usage: every input token the provider charges for, however it is
-    # tiered, has to reach the meter or the run bills short.
-    usage.prompt_tokens = fresh + created + read
+    # tiered, has to reach the meter ON ITS TIER or the run bills short.
+    usage.prompt_tokens = fresh + five + hour + read
     usage.completion_tokens = _counter(raw, "output_tokens", "outputTokens")
     usage.cache_read_tokens = read
-    usage.cache_write_tokens = created
+    usage.cache_write_tokens = five
+    usage.cache_write_1h_tokens = hour
     cost = getattr(result, "total_cost_usd", None)
     if cost is not None:
         usage.provider_cost_usd = float(cost)

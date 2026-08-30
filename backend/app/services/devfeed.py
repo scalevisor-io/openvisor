@@ -160,7 +160,9 @@ def read_progress(project, endpoint_prices: dict | None = None) -> dict | None:
         raw = json.loads(progress_path(project).read_text())
         usage = {"input_tokens": int(raw.get("input_tokens") or 0),
                  "output_tokens": int(raw.get("output_tokens") or 0),
-                 "cached_input_tokens": int(raw.get("cached_input_tokens") or 0)}
+                 "cached_input_tokens": int(raw.get("cached_input_tokens") or 0),
+                 "cache_write_tokens": int(raw.get("cache_write_tokens") or 0),
+                 "cache_write_1h_tokens": int(raw.get("cache_write_1h_tokens") or 0)}
         usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
         # The api_model this run executes on - the console names it per run
         # because the project's routing can change between runs.
@@ -172,10 +174,11 @@ def read_progress(project, endpoint_prices: dict | None = None) -> dict | None:
         from app.services.pricing import cost_credits
         model = raw.get("model")
         if model:
+            from app.services.llm import cache_counters
             usage["credits_estimate"] = round(
                 cost_credits(model, usage["input_tokens"], usage["output_tokens"],
                              price=(endpoint_prices or {}).get(model),
-                             cached_input_tokens=usage["cached_input_tokens"]), 4)
+                             **cache_counters(usage)), 4)
     except Exception:  # noqa: BLE001 - unpriced model: show tokens, no estimate
         pass
     return usage

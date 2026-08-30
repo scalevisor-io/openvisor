@@ -194,6 +194,11 @@ class LiveFeed:
                 "input_tokens": int(getattr(tu, "prompt_tokens", 0) or 0),
                 "output_tokens": int(getattr(tu, "completion_tokens", 0) or 0),
                 "cached_input_tokens": int(getattr(tu, "cache_read_tokens", 0) or 0),
+                # §18: the console's live estimate prices each cache tier the way
+                # billing does, so the number on screen tracks the invoice.
+                "cache_write_tokens": int(getattr(tu, "cache_write_tokens", 0) or 0),
+                "cache_write_1h_tokens": int(
+                    getattr(tu, "cache_write_1h_tokens", 0) or 0),
                 "updated_at": round(now, 3)}
         tmp = self.progress_path.with_name(self.progress_path.name + ".tmp")
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
