@@ -456,6 +456,149 @@ def test_the_claude_driver_reports_what_the_session_actually_got():
     assert feed.events == []
 
 
+# --------------------------------------------------- the driver's console + meter
+
+class _Blk:
+    """A content block: a tool use when `name` is set, else text."""
+
+    def __init__(self, name=None, input=None, text=None):  # noqa: A002
+        if name is not None:
+            self.name, self.input = name, input
+        if text is not None:
+            self.text = text
+
+
+def _assistant(*blocks, usage=None):
+    return type("AssistantMessage", (), {"content": list(blocks), "usage": usage})()
+
+
+def test_the_claude_driver_speaks_the_feed_contract():
+    """shared-ui's BuildFeed renders `title` and picks its icon off `kind`. The
+    driver shipped emitting `{"kind": "thought", "text": ...}` - a kind the feed
+    has no icon for, under a key it does not render - so in the first Claude build
+    every thought was a BLANK ROW and every tool call an identical fallback clock.
+    The kinds here are the ones live_events._summarize_action already produces, so
+    one console reads the same whichever harness ran."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    evs = mod._events_for(_assistant(_Blk(text="Now I'll wire the pagination.")))
+    assert evs == [{"kind": "think", "title": "Now I'll wire the pagination."}]
+
+    kinds = [
+        ("Bash", {"command": "npm run build"}, "command", "npm run build"),
+        ("Edit", {"file_path": "app/src/Blog.tsx"}, "edit", "app/src/Blog.tsx"),
+        ("Read", {"file_path": "README.md"}, "read", "README.md"),
+        ("Grep", {"pattern": "useState"}, "read", "useState"),
+        ("WebFetch", {"url": "https://x.test/a"}, "browse", "https://x.test/a"),
+        ("TodoWrite", {"todos": []}, "plan", "Updating the work plan"),
+        ("Task", {"prompt": "explore"}, "action", "Delegating to a subagent"),
+        ("SomeNewTool", {}, "action", "Using SomeNewTool"),
+    ]
+    # every kind must be one the feed can draw
+    drawable = {"command", "edit", "read", "browse", "think", "plan", "git",
+                "scan", "usage", "error", "action", "phase", "finish"}
+    for name, args, kind, title in kinds:
+        assert mod._tool_event(name, args) == {"kind": kind, "title": title}, name
+        assert kind in drawable, name
+
+
+def test_the_driver_keeps_model_composed_arguments_out_of_the_feed():
+    """leak_scan's threat model: a free-text tool argument can carry knowledge-base
+    text. A path and a shell command reach the title (the other driver puts exactly
+    those there); a search query and an MCP tool's args never do."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    assert mod._tool_event("WebSearch", {"query": "SECRET KB PHRASE"}) == {
+        "kind": "browse", "title": "Searching the web"}
+    ev = mod._tool_event("mcp__browser__navigate", {"url": "http://SECRET/kb"})
+    assert ev == {"kind": "action", "title": "MCP tool: browser/navigate"}
+
+
+def test_a_turn_that_thinks_and_acts_reports_both():
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    evs = mod._events_for(_assistant(_Blk(text="Checking the layout."),
+                                     _Blk(name="Bash", input={"command": "ls"})))
+    assert [e["kind"] for e in evs] == ["think", "command"]
+
+
+def test_a_killed_claude_run_still_bills_what_it_spent():
+    """The billing hole this test exists for: ResultMessage carries the session
+    total and arrives only at the END, so a run stopped by the customer or killed
+    by the deployer's wall clock left usage.json at zero and `_bill_dev_run` bailed
+    on `not (input_tokens or output_tokens)` - a multi-million-token build billing
+    NOTHING. Per-turn usage also makes the live console honest, which is how this
+    was spotted: 0 output tokens and ~0 credits five minutes into a real build."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    usage = mod._Usage()
+    for _ in range(3):
+        mod._absorb_turn(usage, _assistant(usage={
+            "input_tokens": 100, "cache_creation_input_tokens": 10,
+            "cache_read_input_tokens": 900, "output_tokens": 50}))
+    assert usage.prompt_tokens == 3030 and usage.completion_tokens == 150
+    assert usage.cache_read_tokens == 2700 and usage.cache_write_tokens == 30
+
+    # the provider's own session figure is authoritative and REPLACES the tally
+    mod._absorb_usage(usage, type("ResultMessage", (), {"usage": {
+        "input_tokens": 120, "cache_creation_input_tokens": 30,
+        "cache_read_input_tokens": 2700, "output_tokens": 150},
+        "total_cost_usd": 1.25})())
+    assert usage.prompt_tokens == 2850 and usage.completion_tokens == 150
+    assert usage.provider_cost_usd == 1.25
+
+    # a turn the SDK reports no usage for costs nothing and breaks nothing
+    before = usage.prompt_tokens
+    mod._absorb_turn(usage, _assistant())
+    assert usage.prompt_tokens == before
+
+
+def test_the_driver_tells_the_agent_nothing_will_wake_it():
+    """Production, 2026-08-30: the agent backgrounded `make dev`, was refused by
+    ScheduleWakeup, then said "I'll wait for the background build to notify me" and
+    ended the session - shipping a branch it never verified. The CLI's default
+    system prompt is written for an interactive session; `query()` has no turn
+    after this one."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    src = RUN_CLAUDE.read_text()
+    assert "_HEADLESS_NOTE" in src
+    note = src.split("_HEADLESS_NOTE = ", 1)[1].split('"""', 2)[1]
+    for phrase in ("Nothing will wake you", "poll it yourself", "session ends"):
+        assert phrase in note, phrase
+    assert "_HEADLESS_NOTE + (OPENVISOR" in src  # it actually reaches the prompt
+
+
+def test_the_driver_refuses_the_interactive_only_tools():
+    """A wake-up tool promises a turn that cannot happen; Workflow fans out to a
+    swarm of agents on a customer's bill. Disallowing them CHANGES THE TOOL SET,
+    so tool_preset_id has to move with it or agent_eval aggregates two different
+    agents as one."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    src = RUN_CLAUDE.read_text()
+    for tool in ("ScheduleWakeup", "PushNotification", "SendMessage", "Workflow"):
+        assert f'"{tool}"' in src.split("disallowed_tools=", 1)[1][:400], tool
+    assert "minus-interactive" in dev_harness.HARNESSES["claude_sdk"].tool_preset_id
+
+
+def test_the_driver_honors_the_endpoint_reasoning_effort():
+    """The platform stores reasoning effort per endpoint and the OpenHands driver
+    forwards it; this one dropped it, so an endpoint set to xhigh ran at the
+    provider default. Whitelisted - the column is free text and a value the SDK's
+    literal rejects would fail the whole session."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    src = RUN_CLAUDE.read_text()
+    assert 'os.environ.get("LLM_REASONING_EFFORT")' in src
+    assert '("low", "medium", "high", "xhigh", "max")' in src
+    assert "effort=effort if effort in" in src
+
+
 def test_the_runner_image_pins_both_halves_of_the_claude_harness():
     """The SDK drives the `claude` CLI as a subprocess, so both are the harness.
     Unpinned, the fingerprint claims a configuration the image no longer has."""
