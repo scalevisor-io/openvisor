@@ -96,6 +96,13 @@ export default function AdminProjectControls({
   const defaultHarnessLabel =
     (adminSettings?.dev_harnesses ?? []).find((h) => h.id === adminSettings?.dev_harness_default)
       ?.label ?? "instance default";
+  // What the picked (or inherited) harness actually is. Shown under the select
+  // because a harness can carry a constraint the label cannot - the Claude driver
+  // runs Anthropic models only, and pinning it on a project pointed elsewhere is
+  // refused by the API rather than discovered inside the sandbox.
+  const selectedHarness = (adminSettings?.dev_harnesses ?? []).find(
+    (h) => h.id === (devHarness || adminSettings?.dev_harness_default),
+  );
 
   async function saveStatus() {
     setBusy("status");
@@ -264,6 +271,9 @@ export default function AdminProjectControls({
                     </option>
                   ))}
                 </select>
+                {selectedHarness?.description && (
+                  <span className="tiny faint">{selectedHarness.description}</span>
+                )}
               </label>
             )}
             <label className="field">

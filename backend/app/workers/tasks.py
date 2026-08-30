@@ -3227,6 +3227,17 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
     # per build) so an admin flipping the instance flag mid-chain takes effect at
     # the next dispatch instead of at the next project.
     harness = dev_harness.resolve(db, project)
+    if not dev_harness.model_supported(harness, model):
+        # A harness that cannot drive this project's model would spin the sandbox
+        # up, clone the repo and die on the first model call. Build on one that
+        # can, and say so where the admin reads the run - the pin is still stored,
+        # so pointing the project at a compatible endpoint restores it.
+        harness = dev_harness.resolve(db, project, model=model)
+        log.warning("dev harness for %s cannot run %s - building on %s",
+                    project.id, model, harness.id)
+        devfeed.append_event(project, "error",
+                             f"This project's build engine cannot run {model} - "
+                             f"built on {harness.label} instead")
     approved = (project.dev_plan if (project.dev_plan_status == "approved"
                                      and not plan_only) else None)
     _prepare_runner_inputs(db, project, fix_instruction=fix_instruction,
@@ -3269,7 +3280,7 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
             egress_locked=egress_locked, egress_allowlist=egress_allowlist,
             cpu_request=project.dev_cpu_request or "",
             mem_request=project.dev_mem_request or "",
-            harness=harness.id,
+            harness=harness.id, max_usd=settings.dev_run_max_usd,
             timeout_s=settings.dev_run_timeout_minutes * 60)
         if not _remote_unreachable(result) or attempt == _GIT_PREFLIGHT_ATTEMPTS - 1:
             return result
@@ -3778,8 +3789,11 @@ def stop_development(project_id: str, run_id: str | None = None) -> None:
 def _stamp_harness_version(db: Session, project: Project) -> None:
     """Record the fingerprint of the harness THIS project resolves to, so a build
     run on a non-default driver is never compared against a default-driver build
-    (§dev harness; the preset id is what separates them). Caller commits."""
-    harness = dev_harness.resolve(db, project)
+    (§dev harness; the preset id is what separates them). The model goes in too:
+    a pin the model cannot run degrades at dispatch, and a stamp that ignored that
+    would file the run under a harness that never executed. Caller commits."""
+    harness = dev_harness.resolve(db, project,
+                                  model=model_config.project_model_name(db, project))
     project.dev_harness_version = compute_harness_version(
         settings, tool_preset_id=harness.tool_preset_id,
         driver_revision=harness.driver_revision)

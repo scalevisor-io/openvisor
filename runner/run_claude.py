@@ -152,6 +152,34 @@ def _dump_error(exc: Exception) -> None:
         print(f"driver: error report failed: {dump_exc}", file=sys.stderr)
 
 
+def _transport(name: str, cfg) -> dict | None:
+    """One staged MCP server in the Agent SDK's dialect, or None if it is unusable.
+
+    The worker stages ONE mcp.json for every harness, in the spelling the OpenHands
+    driver reads: `{"url": ..., "headers": {...}}`, with no transport field. The
+    Claude CLI's config is a DISCRIMINATED union - an entry with a `url` and no
+    `type` is not an HTTP server missing a hint, it is a stdio server missing its
+    `command`, and the CLI SKIPS it. Silently, from the build's side: the session
+    opens with an empty tool list and the agent works on without the browser,
+    Context7, the connected KBs or the §Tools action servers. Verified against
+    claude-code 2.1.251, which answers an untyped entry with `url_missing_type` and
+    an empty `mcp_servers`, and registers the identical entry once `type` is there.
+
+    Every server the platform stages today is HTTP; `command` is mapped anyway so a
+    stdio server added later does not repeat this bug from the other direction.
+    """
+    if not isinstance(cfg, dict):
+        return None
+    if cfg.get("type"):
+        return cfg
+    if cfg.get("url"):
+        return {**cfg, "type": "http"}
+    if cfg.get("command"):
+        return {**cfg, "type": "stdio"}
+    print(f"driver: mcp server {name} has neither url nor command; skipped", file=sys.stderr)
+    return None
+
+
 def _mcp_servers() -> dict:
     """The project's MCP servers (Context7 + browser + connected KBs), as the
     worker staged them. Tolerates both the bare {name: cfg} map and the
@@ -163,7 +191,10 @@ def _mcp_servers() -> dict:
     try:
         data = json.loads(path.read_text())
         servers = data.get("mcpServers", data) if isinstance(data, dict) else {}
-        return servers if isinstance(servers, dict) else {}
+        if not isinstance(servers, dict):
+            return {}
+        typed = {name: _transport(name, cfg) for name, cfg in servers.items()}
+        return {name: cfg for name, cfg in typed.items() if cfg is not None}
     except Exception as exc:  # noqa: BLE001
         print(f"driver: mcp config unreadable ({exc}); running without MCP", file=sys.stderr)
         return {}
@@ -220,6 +251,35 @@ def _absorb_usage(usage: _Usage, result) -> None:
     cost = getattr(result, "total_cost_usd", None)
     if cost is not None:
         usage.provider_cost_usd = float(cost)
+
+
+def _report_session(feed, message) -> None:
+    """Say what the session actually got, in the run log and the build console.
+
+    The CLI drops an MCP server it cannot parse or reach and opens the session
+    anyway with a smaller tool list, so a build that lost every tool is otherwise
+    indistinguishable from one that had them - which is how an untyped mcp.json
+    went unnoticed through the harness's first production run. The names are the
+    platform's own (browser, context7, a KB's slug); the CLI's message text is
+    ours too, but it goes to the log rather than the customer-visible feed.
+    """
+    data = getattr(message, "data", None)
+    if not isinstance(data, dict):
+        return
+    ok = [s.get("name") for s in (data.get("mcp_servers") or [])
+          if isinstance(s, dict) and s.get("status") == "connected"]
+    bad = [s.get("name") for s in (data.get("mcp_servers") or [])
+           if isinstance(s, dict) and s.get("status") != "connected"]
+    skipped = [e.get("name") for e in (data.get("mcp_server_errors") or [])
+               if isinstance(e, dict)]
+    print(f"driver: mcp connected={ok} not_connected={bad} skipped={skipped}")
+    for err in (data.get("mcp_server_errors") or []):
+        if isinstance(err, dict):
+            print(f"driver: mcp {err.get('name')}: {err.get('message')}", file=sys.stderr)
+    lost = [n for n in (bad + skipped) if n]
+    if lost:
+        feed.append({"kind": "error",
+                     "title": f"Tool server unavailable: {', '.join(lost[:6])}"})
 
 
 def _event_for(message) -> dict | None:
@@ -284,6 +344,9 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
     )
     hit_cap = False
     async for message in query(prompt=_prompt(), options=options):
+        if (type(message).__name__ == "SystemMessage"
+                and str(getattr(message, "subtype", "")) == "init"):
+            _report_session(feed, message)
         ev = _event_for(message)
         if ev:
             feed.append(ev)

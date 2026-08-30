@@ -46,6 +46,17 @@ class Harness:
     # Anthropic prompt-caching fix cut a build's input bill ~4x and left the preset
     # untouched. Bump on ANY change to the driver script or its pinned dependency.
     driver_revision: str
+    # Substrings that mark a model name this driver can actually drive; empty = any.
+    # The OpenHands driver speaks the OpenAI-compatible API and runs whatever name
+    # the endpoint serves. The Claude driver runs the `claude` CLI, which checks the
+    # name against its OWN model list BEFORE it ever reaches the gateway, so a
+    # foreign name ends the build in seconds with `unrecognized_model` - seen in
+    # production on 2026-08-30, where a project pinned to this harness while its
+    # endpoint served qwen3.6-35b-a3b spent a sandbox to learn it. Deliberately
+    # generous: a gateway may serve Claude under its own spelling, and the driver's
+    # own error still catches a name that is genuinely wrong. This is a
+    # COMPATIBILITY test, not an allowlist.
+    model_hints: tuple[str, ...] = ()
 
 
 DEFAULT_ID = "openhands"
@@ -71,7 +82,8 @@ HARNESSES: dict[str, Harness] = {
         tool_preset_id="claude-sdk:builtin(read+write+edit+bash+glob+grep+websearch)",
         # Both halves of this harness are the agent: the SDK and the CLI it drives
         # as a subprocess, pinned together in runner/Dockerfile.
-        driver_revision="claude-sdk0.2.148+cli2.1.251+drv1",
+        driver_revision="claude-sdk0.2.148+cli2.1.251+drv2",
+        model_hints=("claude", "anthropic", "sonnet", "opus", "haiku"),
     ),
 }
 
@@ -98,6 +110,39 @@ def _default_id(stored) -> str:
     return stored if (isinstance(stored, str) and stored in HARNESSES) else DEFAULT_ID
 
 
+def model_supported(harness: Harness, model: str | None) -> bool:
+    """Can this harness's driver actually drive `model`?
+
+    A harness with no `model_hints` takes anything. One with hints takes a name
+    that carries any of them, matched on the bare model id (a provider-prefixed
+    routing name like `anthropic/claude-sonnet-5` is normalised the way both
+    drivers normalise it for billing). An EMPTY model is not a verdict - nothing
+    is known, so nothing is refused.
+    """
+    if not harness.model_hints:
+        return True
+    name = (model or "").split("/")[-1].strip().lower()
+    if not name:
+        return True
+    return any(hint in name for hint in harness.model_hints)
+
+
+def _runnable(harness: Harness, default: Harness, model: str | None) -> Harness:
+    """Degrade a harness that cannot run this project's model.
+
+    Same shape as the withdrawn-pin path: a build gets made rather than failed,
+    and the fingerprint records the harness that actually ran. The built-in
+    default is the last resort because it carries no model hints, so it can
+    always run - an instance whose DEFAULT is model-restricted must not strand
+    every project pointed at another model.
+    """
+    if model_supported(harness, model):
+        return harness
+    if harness is not default and model_supported(default, model):
+        return default
+    return HARNESSES[DEFAULT_ID]
+
+
 # ---- sync accessors (Celery workers) ----
 
 def selection_enabled(db: Session) -> bool:
@@ -115,7 +160,7 @@ def instance_default(db: Session) -> Harness:
     return HARNESSES[_default_id(app_settings.get_setting_sync(db, DEFAULT_KEY, None))]
 
 
-def resolve(db: Session, project: Project) -> Harness:
+def resolve(db: Session, project: Project, model: str | None = None) -> Harness:
     """The harness this project's next dispatch executes.
 
     Precedence: the project's pin (only while selection is enabled AND the id is
@@ -123,14 +168,20 @@ def resolve(db: Session, project: Project) -> Harness:
     built-in default. An id that was allowed when it was pinned and has since been
     withdrawn degrades to the default rather than failing the build - the same
     way a deleted ModelEndpoint degrades to the global model (services/
-    model_config.py)."""
+    model_config.py).
+
+    `model` is the name this project's calls run on. Pass it and a harness that
+    cannot drive that model degrades the same way, because the alternative is a
+    sandbox that spins up, clones the repo and dies on the first model call - what
+    production did on 2026-08-30. Callers that do not know the model (an admin
+    preview, a test) omit it and get the pin as stored."""
     default = instance_default(db)
     if not selection_enabled(db):
-        return default
+        return _runnable(default, default, model)
     chosen = (project.dev_harness or "").strip()
     if chosen and chosen in HARNESSES and chosen in allowed_ids(db):
-        return HARNESSES[chosen]
-    return default
+        return _runnable(HARNESSES[chosen], default, model)
+    return _runnable(default, default, model)
 
 
 # ---- async accessors (API routes) ----

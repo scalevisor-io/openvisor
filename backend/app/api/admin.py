@@ -317,6 +317,18 @@ async def patch_project(project_id: str, body: ProjectPatchIn,
                 raise HTTPException(
                     422, f"Dev harness not allowed here: {body.dev_harness} "
                          f"(allowed: {', '.join(selectable)})")
+            # §dev harness: a pin the project's model cannot run is refused HERE,
+            # where the admin can still act on it. The dispatcher degrades such a
+            # pin rather than failing the build, so without this the pin would be
+            # stored, silently ignored, and the benchmark would compare a harness
+            # that never ran.
+            harness = dev_harness.HARNESSES[body.dev_harness]
+            model = await model_config.project_model_name_async(db, project)
+            if not dev_harness.model_supported(harness, model):
+                raise HTTPException(
+                    422, f"{harness.label} cannot run this project's model "
+                         f"({model}). Point the project at a compatible endpoint "
+                         f"first (Model configuration), then pin the harness.")
             project.dev_harness = body.dev_harness
     if "dev_cpu_request" in body.model_fields_set:
         project.dev_cpu_request = body.dev_cpu_request
