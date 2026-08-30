@@ -101,6 +101,9 @@ export default function ProjectDetail() {
 
   // Tab affordances: Requests carries a count; Quotes hides on AI projects
   // with none (it stays for direct_quote, where quotes are the engagement).
+  // Opening a request (sub) refetches too: the rail resolves the open thread
+  // out of this list, and a request filed from chat while the page sat open is
+  // not in it yet.
   useEffect(() => {
     if (!project || project.kind === "chat") return;
     Promise.all([
@@ -111,7 +114,7 @@ export default function ProjectDetail() {
       setRequests(r);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, project?.kind, project?.status, project?.dev_run_state]);
+  }, [id, sub, project?.kind, project?.status, project?.dev_run_state]);
 
   // Evaluation feeds the draft-stage NowPanel (§project-page-now): fetch it
   // for AI drafts and poll while a run is pending so the verdict lands live.
