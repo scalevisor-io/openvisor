@@ -152,6 +152,14 @@ export default function Tokens() {
   const token = created?.token ?? fresh?.token ?? "<your-token>";
   const serverName = created ? `${brandSlug}-${created.project.id.slice(0, 8)}` : brandSlug;
   const claudeCommand = `claude mcp add --transport http ${serverName} ${mcpUrl} --header "Authorization: Bearer ${token}"`;
+  // Codex takes the credential from the ENVIRONMENT, not the command line: its
+  // config.toml stores `bearer_token_env_var`, so the token itself never lands
+  // in ~/.codex/config.toml. Hence two lines - a one-liner here would be a
+  // command that adds a server the agent then cannot authenticate.
+  const tokenEnvVar = `${brandSlug.replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase()}_TOKEN`;
+  const codexCommand =
+    `export ${tokenEnvVar}="${token}"\n` +
+    `codex mcp add ${serverName} --url ${mcpUrl} --bearer-token-env-var ${tokenEnvVar}`;
   const setupPrompt = `Set up the ${brandName} MCP server in this coding agent, then verify the connection.
 
 Server details:
@@ -163,7 +171,7 @@ Server details:
 Steps:
 1. Register this server through this agent's own MCP configuration mechanism. Examples:
    - Claude Code: ${claudeCommand}
-   - Codex: an [mcp_servers.${serverName}] entry (url + Authorization header) in ~/.codex/config.toml
+   - Codex: ${codexCommand.replace("\n", " && ")}
    - OpenCode: a "${serverName}" entry of type "remote" under the "mcp" key of opencode.json
    - Hermes, OpenClaw or any other agent: its remote/HTTP MCP server settings
 2. If the token above still reads <your-token>, ask me for a real one (created at /settings/tokens on ${appHost}) before configuring anything. Never commit the token to version control.
@@ -226,8 +234,17 @@ An ACCOUNT-WIDE token reads across my projects (list_projects, get_project_statu
                 to choose the model, narrow the knowledge bases and carry the cost.
               </li>
             </ul>
-            <p className="muted small">MCP endpoint:</p>
-            <CopyField value={mcpUrl} block />
+            <p className="muted small">Connect Claude Code:</p>
+            <CopyField value={claudeCommand} block />
+            <p className="muted small mt">Or Codex:</p>
+            <CopyField value={codexCommand} block />
+            <p className="tiny faint">
+              {token === "<your-token>"
+                ? "Create a token below and both commands come back with it filled in - until then, paste yours over <your-token>."
+                : "Your new token is already in both lines - run one as it stands."}{" "}
+              Any other MCP-capable agent wants the same endpoint, <code>{mcpUrl}</code>, with an{" "}
+              <code>Authorization: Bearer</code> header.
+            </p>
           </div>
 
           <div className="card">

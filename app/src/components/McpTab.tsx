@@ -77,6 +77,12 @@ export default function McpTab({
   const claudeCommand =
     `claude mcp add --transport http ${serverName} ${mcpUrl} ` +
     `--header "Authorization: Bearer ${minted?.token ?? "<your-token>"}"`;
+  // Codex reads the credential from the ENVIRONMENT - its config.toml stores
+  // `bearer_token_env_var`, never the token - so this is two lines by necessity.
+  const tokenEnvVar = `${(settings?.brand_slug ?? "openvisor").replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase()}_TOKEN`;
+  const codexCommand =
+    `export ${tokenEnvVar}="${minted?.token ?? "<your-token>"}"\n` +
+    `codex mcp add ${serverName} --url ${mcpUrl} --bearer-token-env-var ${tokenEnvVar}`;
 
   return (
     <div className="stack">
@@ -109,13 +115,16 @@ export default function McpTab({
       <div className="card">
         <div className="section-title">Connect an agent</div>
         <p className="muted small" style={{ marginTop: 0 }}>
-          Point Claude Code, opencode or any MCP client at this endpoint with a token below.
-          It sees only this project, and every query is billed to it.
+          Run one of these with a token from below - they are the whole setup. Any other
+          MCP client wants the same endpoint and an <code>Authorization: Bearer</code>{" "}
+          header. The token sees only this project, and every query is billed to it.
         </p>
-        <label className="field-label">MCP endpoint</label>
-        <CopyField value={mcpUrl} block />
-        <label className="field-label mt">Claude Code</label>
+        <label className="field-label">Claude Code</label>
         <CopyField block value={claudeCommand} />
+        <label className="field-label mt">Codex</label>
+        <CopyField block value={codexCommand} />
+        <label className="field-label mt">MCP endpoint (any other agent)</label>
+        <CopyField value={mcpUrl} block />
       </div>
 
       {minted && (
