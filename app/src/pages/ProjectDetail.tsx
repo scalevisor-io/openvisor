@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { projectsApi, quotesApi, requestsApi } from "../lib/endpoints";
 import { loadSpecialities, specialityLabel } from "../lib/meta";
 import { useAuth } from "../lib/auth";
+import { isNarrowLayout, useNarrowLayout } from "../lib/narrow";
 import { useToast } from "../lib/toast";
 import { Alert, Badge, Loading, Pager, Spinner, formatCredits, formatCreditsExact, relTime, CollapsibleCard, readCardCollapsed, writeCardCollapsed } from "../components/ui";
 import { DemoAccess, NowPanel, StatusTimeline, ThreadRail, projectNow } from "@shared-ui";
@@ -81,7 +82,28 @@ export default function ProjectDetail() {
   const [nameBusy, setNameBusy] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   // The rail starts open - it is the control surface - and remembers a retract.
-  const [chatOpen, setChatOpen] = useState(() => readCardCollapsed(CHAT_RAIL_KEY) !== true);
+  // On a phone it is a sheet floating over the page instead of a column, so it
+  // starts CLOSED whatever the browser remembers: a remembered desktop retract
+  // is a preference about a column, and a sheet that opens on arrival hides the
+  // project the customer came to look at.
+  const narrow = useNarrowLayout();
+  const [chatOpen, setChatOpen] = useState(
+    () => !isNarrowLayout() && readCardCollapsed(CHAT_RAIL_KEY) !== true,
+  );
+  // The sheet covers the work, so opening a thread from it puts it away again;
+  // on a desktop the same pass just restores the remembered column state.
+  useEffect(() => {
+    setChatOpen(narrow ? false : readCardCollapsed(CHAT_RAIL_KEY) !== true);
+  }, [narrow, tabParam, sub]);
+  // Escape closes the sheet, like the nav drawer it floats over.
+  useEffect(() => {
+    if (!narrow || !chatOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChatOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [narrow, chatOpen]);
 
   const reload = useCallback(() => {
     projectsApi
@@ -868,6 +890,9 @@ export default function ProjectDetail() {
           what you are looking at: the orchestrator's main thread by default, the
           open request's own thread while you are in it. Retracting it gives the
           work the whole width; the choice is remembered per browser. */}
+      {narrow && chatOpen && (
+        <div className="chat-sheet-scrim" onClick={() => setChatOpen(false)} aria-hidden="true" />
+      )}
       <aside
         className="project-chat-rail"
         aria-label={railRequest ? `Thread - ${railRequest.title}` : "Partner"}
@@ -877,7 +902,8 @@ export default function ProjectDetail() {
           className="chat-rail-toggle"
           onClick={() => {
             setChatOpen(!chatOpen);
-            writeCardCollapsed(CHAT_RAIL_KEY, chatOpen);
+            // Only the column's state is remembered - see the sheet note above.
+            if (!narrow) writeCardCollapsed(CHAT_RAIL_KEY, chatOpen);
           }}
           aria-expanded={chatOpen}
           title={
@@ -888,14 +914,14 @@ export default function ProjectDetail() {
           <span className="chat-rail-caret" aria-hidden="true">
             {chatOpen ? "›" : "‹"}
           </span>
-          <span className="chat-rail-label">
-            {/* The emoji is the at-a-glance tell: compass = the partner (the orchestrator),
-                thread = one request's own conversation. */}
-            <span className="chat-rail-emoji" aria-hidden="true">
-              {railRequest ? "🧵" : "🧭"}
-            </span>
-            {railRequest ? railRequest.title : "Partner"}
+          {/* The emoji is the at-a-glance tell: compass = the partner (the orchestrator),
+              thread = one request's own conversation. It is a SIBLING of the label,
+              not a child: the phone's closed sheet is a bubble showing the emoji
+              alone, and a label it lived inside could not be hidden without it. */}
+          <span className="chat-rail-emoji" aria-hidden="true">
+            {railRequest ? "🧵" : "🧭"}
           </span>
+          <span className="chat-rail-label">{railRequest ? railRequest.title : "Partner"}</span>
         </button>
         <div className="chat-rail-body" aria-hidden={!chatOpen}>
           {/* §threads: the chat orchestrates the work threads - the rail

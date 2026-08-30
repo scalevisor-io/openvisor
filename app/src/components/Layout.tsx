@@ -2,31 +2,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 import { billingApi } from "../lib/endpoints";
+import { useNarrowLayout } from "../lib/narrow";
 import { useTheme } from "../lib/theme";
 import { BrandMark, BrandName, formatCredits, readCardCollapsed, writeCardCollapsed } from "./ui";
 
 const SIDEBAR_KEY = "app:sidebar";
-
-/* Below this width the sidebar stops being a grid column and becomes an overlay
-   drawer opened from the header. Keep in sync with the `max-width: 820px` block
-   in styles/global.css - the two describe the same breakpoint from each side. */
-const DRAWER_QUERY = "(max-width: 820px)";
-
-/* The collapsed icon rail and the drawer are mutually exclusive affordances, and
-   which one applies is a layout fact the markup needs too (the brand-row button
-   closes the drawer on narrow screens and collapses the rail on wide ones), so
-   the breakpoint is read here rather than inferred from CSS alone. */
-function useNarrowLayout() {
-  const [narrow, setNarrow] = useState(() => window.matchMedia?.(DRAWER_QUERY).matches ?? false);
-  useEffect(() => {
-    const mq = window.matchMedia?.(DRAWER_QUERY);
-    if (!mq) return;
-    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return narrow;
-}
 
 function Wordmark() {
   const { settings } = useAuth();
