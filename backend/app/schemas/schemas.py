@@ -310,6 +310,10 @@ class AppSettingsIn(BaseModel):
     # stored one; omitted leaves it alone.
     default_kb_ids: dict[str, list[str]] | None = None
     default_tools_off: dict[str, list[str]] | None = None
+    # The per-kind default MODEL endpoint ({kind: endpoint_id}; null or "" clears a
+    # kind). Not stamped at creation like the two above: it is resolved on every
+    # call, so changing it moves every project of that kind that never chose its own.
+    default_model_endpoints: dict[str, str | None] | None = None
     # §legal identity: the operating company named in the landing's Privacy policy
     # and Terms of service. "" clears the override (the landing's built-in value
     # applies again); omitted leaves the stored value alone.

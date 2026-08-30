@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { adminApi, kbApi, toolsApi, type Tool } from "../../lib/endpoints";
+import {
+  adminApi, kbApi, modelEndpointApi, toolsApi, type Tool,
+} from "../../lib/endpoints";
 import { useAuth } from "../../lib/auth";
 import { useToast } from "../../lib/toast";
 import { Alert, Loading, Spinner, Toggle } from "../../components/ui";
 import type {
-  AdminSettings as AdminSettingsT, ConsultantPhoto, KnowledgeBase,
+  AdminSettings as AdminSettingsT, ConsultantPhoto, KnowledgeBase, ModelEndpoint,
 } from "../../types";
 
 // Admin settings: runtime switches that don't need a redeploy.
@@ -195,24 +197,36 @@ function ProjectDefaultsCard({
   const [kind, setKind] = useState(PROJECT_KINDS[0].id);
   const [kbs, setKbs] = useState<KnowledgeBase[] | null>(null);
   const [tools, setTools] = useState<Tool[] | null>(null);
+  const [endpoints, setEndpoints] = useState<ModelEndpoint[] | null>(null);
   const [kbDraft, setKbDraft] = useState<Record<string, string[]>>(settings.default_kb_ids);
   const [offDraft, setOffDraft] = useState<Record<string, string[]>>(settings.default_tools_off);
+  const [modelDraft, setModelDraft] = useState<Record<string, string | null>>(
+    settings.default_model_endpoints,
+  );
 
   // Re-sync when the server echoes the stored maps back (it sorts them).
   useEffect(() => setKbDraft(settings.default_kb_ids), [settings.default_kb_ids]);
   useEffect(() => setOffDraft(settings.default_tools_off), [settings.default_tools_off]);
+  useEffect(
+    () => setModelDraft(settings.default_model_endpoints),
+    [settings.default_model_endpoints],
+  );
 
   useEffect(() => {
-    Promise.all([kbApi.list(), toolsApi.list()])
-      .then(([k, t]) => {
+    Promise.all([kbApi.list(), toolsApi.list(), modelEndpointApi.list()])
+      .then(([k, t, e]) => {
         setKbs(k);
         setTools(t);
+        setEndpoints(e);
       })
       .catch((err) => {
         setKbs([]);
         setTools([]);
+        setEndpoints([]);
         toast.push(
-          err instanceof Error ? err.message : "Could not load knowledge bases and tools",
+          err instanceof Error
+            ? err.message
+            : "Could not load knowledge bases, tools and model endpoints",
           "err",
         );
       });
@@ -230,21 +244,22 @@ function ProjectDefaultsCard({
   const toolsOff = new Set(offDraft[kind] ?? []);
   const dirty =
     JSON.stringify(kbDraft) !== JSON.stringify(settings.default_kb_ids) ||
-    JSON.stringify(offDraft) !== JSON.stringify(settings.default_tools_off);
+    JSON.stringify(offDraft) !== JSON.stringify(settings.default_tools_off) ||
+    JSON.stringify(modelDraft) !== JSON.stringify(settings.default_model_endpoints);
   const kindLabel = PROJECT_KINDS.find((k) => k.id === kind)?.label ?? kind;
 
   return (
     <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
-      <h3 style={{ marginTop: 0 }}>What a new project starts with</h3>
+      <h3 style={{ marginTop: 0 }}>Defaults per project kind</h3>
       <Alert kind="info">
-        Knowledge bases are opt-in per project: one reaches a project only if its selection names
-        it, so a kind with nothing checked here creates projects that read no knowledge at all - a
-        chat that can only answer "I don't have anything on that". Tools are the opposite: every
-        enabled tool reaches every project, so unchecking one switches it off for new projects of
-        that kind. Applied once, at creation: changing this never touches projects that already
-        exist, and it only ever narrows the global lists (a knowledge base or tool disabled under{" "}
-        <Link to="/admin/knowledge-bases">Knowledge bases</Link> or{" "}
-        <Link to="/admin/tools">Tools</Link> stays off everywhere).
+        What a project of each kind runs on and reads from. The <strong>model</strong> is resolved on
+        every call, so changing it moves every project of that kind that was never given its own -
+        which is how a chat (billed per answer) runs on a different model from a build.{" "}
+        <strong>Knowledge bases and tools</strong> are stamped once, when the project is created:
+        changing them never touches projects that already exist. Neither can widen the global lists
+        - anything disabled under <Link to="/admin/knowledge-bases">Knowledge bases</Link>,{" "}
+        <Link to="/admin/tools">Tools</Link> or{" "}
+        <Link to="/admin/model-endpoints">Model configuration</Link> stays off everywhere.
       </Alert>
 
       <div className="tabs" style={{ marginTop: "1rem" }}>
@@ -259,9 +274,34 @@ function ProjectDefaultsCard({
         ))}
       </div>
 
-      {(kbs === null || tools === null) && <Spinner />}
-      {kbs !== null && tools !== null && (
+      {(kbs === null || tools === null || endpoints === null) && <Spinner />}
+      {kbs !== null && tools !== null && endpoints !== null && (
         <>
+          <div className="section-title mt">Model a {kindLabel} project runs on</div>
+          <div className="field">
+            <select
+              value={modelDraft[kind] ?? ""}
+              onChange={(e) =>
+                setModelDraft({ ...modelDraft, [kind]: e.target.value || null })
+              }
+            >
+              <option value="">
+                Instance default{settings.default_model ? ` (${settings.default_model})` : ""}
+              </option>
+              {(endpoints ?? [])
+                .filter((ep) => ep.model_name)
+                .map((ep) => (
+                  <option key={ep.id} value={ep.id}>
+                    {ep.label} ({ep.provider} · {ep.model_name})
+                  </option>
+                ))}
+            </select>
+            <p className="tiny faint mt-xs">
+              Applies to every {kindLabel} project that has no model of its own - including ones
+              that already exist. A project pinned on the project page keeps what it was given.
+            </p>
+          </div>
+
           <div className="section-title mt">Knowledge bases a new {kindLabel} project reads</div>
           <div className="stack" style={{ gap: "0.35rem" }}>
             {kbs.map((kb) => (
@@ -309,7 +349,11 @@ function ProjectDefaultsCard({
               disabled={busy !== null || !dirty}
               onClick={() =>
                 update(
-                  { default_kb_ids: kbDraft, default_tools_off: offDraft },
+                  {
+                    default_kb_ids: kbDraft,
+                    default_tools_off: offDraft,
+                    default_model_endpoints: modelDraft,
+                  },
                   "project_defaults",
                 )
               }

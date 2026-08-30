@@ -28,13 +28,21 @@ customer's create click into a foreign-key error.
 The `mcp` kind is deliberately absent. An MCP project snapshots the live
 retrieval sources at creation (`mcp_projects.default_kb_ids`) because consulting
 them is the whole reason it exists.
+
+One per-kind default is NOT stamped: the model. It lives in `model_config`
+(`KIND_DEFAULT_KEY`) and is resolved on every call, because a model already has
+a resolution chain to be a link in - so switching the model a `chat` runs on
+moves every chat that never picked its own, which is the point of setting it per
+kind. Knowledge and tools have no such chain: they ARE the per-project state, and
+a project nobody has curated has to be born usable. `describe` assembles all
+three for the admin Settings payload; `apply` writes only the two that are state.
 """
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import KnowledgeBase, Project, ProjectToolConfig, Tool
-from app.services import app_settings
+from app.services import app_settings, model_config
 
 # {kind: [KnowledgeBase.id]} - the selection a new project of that kind is given.
 KB_KEY = "default_kb_ids_by_kind"
@@ -60,10 +68,14 @@ def _clean(raw) -> dict[str, list[str]]:
 
 
 async def describe(db: AsyncSession) -> dict:
-    """Both maps, for the admin Settings payload."""
+    """All three per-kind maps, for the admin Settings payload - always keyed by
+    every kind, so the page never has to guess what an absent key means."""
+    models = model_config.kind_defaults(
+        await app_settings.get_value(db, model_config.KIND_DEFAULT_KEY))
     return {
         "default_kb_ids": _clean(await app_settings.get_value(db, KB_KEY)),
         "default_tools_off": _clean(await app_settings.get_value(db, TOOLS_OFF_KEY)),
+        "default_model_endpoints": {kind: models.get(kind) for kind in KINDS},
     }
 
 
@@ -86,8 +98,9 @@ def normalize(raw: dict[str, list[str]], known: set[str]) -> dict[str, list[str]
 
 
 async def apply(db: AsyncSession, project: Project) -> None:
-    """Stamp this instance's defaults for `project.kind` onto a project that has
-    just been flushed (the tool overrides carry its id). Caller commits.
+    """Stamp this instance's KB and tool defaults for `project.kind` onto a project
+    that has just been flushed (the tool overrides carry its id). Caller commits.
+    The model default is deliberately not stamped - see the module docstring.
 
     Called from every wizard create path - the customer route and the hub
     pass-through - because the defaults belong to the instance whose knowledge is

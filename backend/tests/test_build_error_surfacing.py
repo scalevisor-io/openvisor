@@ -10,6 +10,7 @@ from app.workers import tasks
 
 class _P:
     id = "p1"
+    kind = "ai"          # every resolution keyed on the kind reads this
     workspace_path = None
     ssh_private_key_enc = None
     dev_request_id = None
@@ -403,11 +404,15 @@ def test_dev_effort_defaults_high_and_honors_endpoint(monkeypatch):
         endpoint_id = "e1"
 
     class _Ep:
+        # an endpoint the run can actually route through carries the model it runs;
+        # one without a model_name is unusable and resolves like no endpoint at all
+        model_name = "m1"
         reasoning_effort = "medium"
 
     assert tasks._project_reasoning_effort(_DB(_Row(), _Ep()), p) == "medium"
 
     class _EpUnset:
+        model_name = "m1"
         reasoning_effort = None
 
     assert tasks._project_reasoning_effort(_DB(_Row(), _EpUnset()), p) == "high"
