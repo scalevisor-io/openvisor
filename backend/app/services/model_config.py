@@ -130,3 +130,13 @@ def project_model_name(db: Session, project: Project) -> str:
     if inline is not None:
         return inline.model_name
     return settings.openai_model
+
+
+async def project_model_name_async(db: AsyncSession, project: Project) -> str:
+    """The API's twin of `project_model_name` - same order, async session."""
+    endpoint, inline = await project_endpoint_async(db, project)
+    if endpoint is not None:
+        return endpoint.model_name
+    if inline is not None:
+        return inline.model_name
+    return settings.openai_model

@@ -728,6 +728,8 @@ def dev_run(body, cpu: str, mem: str) -> dict:
         {"name": "LLM_REASONING_EFFORT", "value": body.reasoning_effort or ""},
         # §dev harness: the driver the entrypoint dispatches to.
         {"name": "DEV_HARNESS", "value": body.harness},
+        # Per-run provider-side spend ceiling in USD ("" = unset).
+        {"name": "DEV_RUN_MAX_USD", "value": str(body.max_usd or "")},
         # Last path segment only (the run id): OpenAI caps prompt_cache_key at
         # 64 chars and the full devruns/<pid>/<rid> path is 85 - it 400s EVERY
         # call of the build.

@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     # it per project (admin-set). Legacy env name DEV_MAX_ITERATIONS still read.
     dev_max_iterations_default: int = Field(
         40, validation_alias=AliasChoices("DEV_MAX_ITERATIONS_DEFAULT", "DEV_MAX_ITERATIONS"))
+    # Third fail-safe on the same run: a provider-side spend ceiling in USD, handed
+    # to the driver as DEV_RUN_MAX_USD. Only the Claude driver can enforce it (the
+    # Agent SDK's max_budget_usd - the OpenAI-compatible API has no equivalent, so
+    # run_dev.py ignores it), and it is the only cap that bounds a run in the unit
+    # the bill is in: the wall clock and the iteration count both let a run on an
+    # expensive model cost several times what the same run costs on a cheap one.
+    # 0 = unset, the other two caps still apply.
+    dev_run_max_usd: float = 0.0
     # §14.x stale dev-run reaper: run_development is synchronous and Celery is
     # not acks_late, so a worker that dies mid-run leaves the project stranded in
     # an in-flight sub-state forever (Resume blocked, orphaned dev job burning

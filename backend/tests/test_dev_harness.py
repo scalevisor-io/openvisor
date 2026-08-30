@@ -7,6 +7,7 @@ resolver's precedence, the fingerprint separation that keeps two harnesses from
 being compared with each other, the admin GET/PUT contract, and the id reaching the
 sandbox (deployer env + the runner's driver dispatch).
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -180,6 +181,88 @@ def test_stamp_uses_the_resolved_harness(second_harness):
         db.rollback()
 
 
+# ------------------------------------------------------------- model compatibility
+
+def test_a_harness_without_hints_runs_any_model():
+    """The OpenHands driver speaks the OpenAI-compatible API: whatever name the
+    endpoint serves is the model, and nothing here may narrow that."""
+    openhands = dev_harness.HARNESSES["openhands"]
+    assert openhands.model_hints == ()
+    for model in ("qwen3.6-35b-a3b", "gpt-5.6-terra", "claude-sonnet-5", "", None):
+        assert dev_harness.model_supported(openhands, model)
+
+
+@pytest.mark.parametrize("model", [
+    "claude-sonnet-5", "anthropic/claude-opus-5", "Claude-Haiku-4-5", "sonnet",
+    "us.anthropic.claude-sonnet-5-v1:0",
+])
+def test_the_claude_harness_accepts_every_spelling_of_a_claude_model(model):
+    """Generous on purpose: a gateway may serve Claude under its own name, and the
+    driver's own error still catches a name that is genuinely wrong."""
+    assert dev_harness.model_supported(dev_harness.HARNESSES["claude_sdk"], model)
+
+
+@pytest.mark.parametrize("model", ["qwen3.6-35b-a3b", "gpt-5.6-terra",
+                                   "deepseek-v4-flash-0731", "mistral-medium-3.5"])
+def test_the_claude_harness_refuses_a_foreign_model(model):
+    """Production, 2026-08-30: a project pinned to claude_sdk while its endpoint
+    served qwen3.6-35b-a3b spun a sandbox up, cloned the repo and died on the first
+    model call - the `claude` CLI checks the name against its OWN list before it
+    ever reaches the gateway (`unrecognized_model`)."""
+    assert not dev_harness.model_supported(dev_harness.HARNESSES["claude_sdk"], model)
+
+
+def test_an_unknown_model_is_not_a_verdict():
+    """Callers that do not know the model (an admin preview, a test) must get the
+    pin as stored rather than a silent downgrade."""
+    assert dev_harness.model_supported(dev_harness.HARNESSES["claude_sdk"], None)
+
+
+def test_a_pin_the_model_cannot_run_degrades_to_the_default():
+    with SyncSession() as db:
+        _settings(db, enabled=True, allowed=["openhands", "claude_sdk"])
+        p = _project(db, harness="claude_sdk")
+        assert dev_harness.resolve(db, p).id == "claude_sdk"           # no model: as pinned
+        assert dev_harness.resolve(db, p, model="claude-sonnet-5").id == "claude_sdk"
+        assert dev_harness.resolve(db, p, model="qwen3.6-35b-a3b").id == "openhands"
+        db.rollback()
+
+
+def test_an_instance_default_the_model_cannot_run_degrades_too():
+    """The built-in default is the last resort: an instance whose DEFAULT is
+    model-restricted must not strand every project pointed at another model."""
+    with SyncSession() as db:
+        _settings(db, enabled=True, allowed=["openhands", "claude_sdk"],
+                  default="claude_sdk")
+        p = _project(db)
+        assert dev_harness.resolve(db, p, model="claude-opus-5").id == "claude_sdk"
+        assert dev_harness.resolve(db, p, model="gpt-5.6-terra").id == "openhands"
+        db.rollback()
+
+
+def test_a_disabled_selection_still_degrades_an_incompatible_default():
+    with SyncSession() as db:
+        _settings(db, enabled=False, default="claude_sdk")
+        p = _project(db)
+        assert dev_harness.resolve(db, p, model="qwen3.6-35b-a3b").id == "openhands"
+        db.rollback()
+
+
+def test_the_stamp_follows_the_harness_that_can_actually_run(monkeypatch):
+    """A stamp that ignored the degrade would file the run under a harness that
+    never executed, and the benchmark would compare it with real Claude builds."""
+    from app.services import model_config
+    from app.workers import tasks
+    monkeypatch.setattr(model_config, "project_model_name",
+                        lambda db, project: "qwen3.6-35b-a3b")
+    with SyncSession() as db:
+        _settings(db, enabled=True, allowed=["openhands", "claude_sdk"])
+        p = _project(db, harness="claude_sdk")
+        tasks._stamp_harness_version(db, p)
+        assert p.dev_harness_version == _hv(dev_harness.HARNESSES["openhands"])
+        db.rollback()
+
+
 # ------------------------------------------------------------------------ plumbing
 
 def test_deployer_client_forwards_the_harness(monkeypatch):
@@ -199,6 +282,25 @@ def test_the_deployer_hands_the_harness_to_the_sandbox():
         pytest.skip("deployer source not mounted at /app/deployer_src")
     assert 'f"DEV_HARNESS={body.harness}"' in DEPLOYER_MAIN.read_text()
     assert '{"name": "DEV_HARNESS", "value": body.harness}' in DEPLOYER_K8S.read_text()
+
+
+def test_the_spend_ceiling_reaches_the_sandbox(monkeypatch):
+    """The Claude driver reads DEV_RUN_MAX_USD as its per-run provider-side budget.
+    It shipped with nothing setting the variable, so the ceiling documented in
+    CODE_MAP could never fire - the run loop simply saw 0 and passed None."""
+    from app.services import deployer_client
+    sent = {}
+    monkeypatch.setattr(deployer_client, "_call",
+                        lambda method, path, body, timeout=None: sent.update(body) or {})
+    deployer_client.run_dev_job("pid", llm_model="m", llm_api_key="k", llm_base_url="u",
+                                max_usd=7.5)
+    assert sent["max_usd"] == 7.5
+    if not DEPLOYER_MAIN.exists():
+        pytest.skip("deployer source not mounted at /app/deployer_src")
+    assert "DEV_RUN_MAX_USD={body.max_usd" in DEPLOYER_MAIN.read_text()
+    assert '{"name": "DEV_RUN_MAX_USD"' in DEPLOYER_K8S.read_text()
+    if RUN_CLAUDE.exists():
+        assert 'os.environ.get("DEV_RUN_MAX_USD")' in RUN_CLAUDE.read_text()
 
 
 def test_the_entrypoint_dispatches_on_the_harness_and_falls_back():
@@ -265,6 +367,93 @@ def test_the_claude_driver_does_not_load_customer_repo_settings():
     if not RUN_CLAUDE.exists():
         pytest.skip("runner source not mounted at /app/runner_src")
     assert "setting_sources=[]" in RUN_CLAUDE.read_text()
+
+
+def _run_claude_module():
+    """Import the driver itself, so the MCP translation below is exercised rather
+    than pattern-matched. The Agent SDK is imported inside the run loop, not at
+    module level, so this works in the api container."""
+    import importlib.util
+    import sys
+    if str(RUN_CLAUDE.parent) not in sys.path:
+        sys.path.insert(0, str(RUN_CLAUDE.parent))  # for its `import live_events`
+    spec = importlib.util.spec_from_file_location("run_claude_under_test", RUN_CLAUDE)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_claude_driver_types_every_staged_mcp_server(tmp_path):
+    """The worker stages ONE mcp.json for every harness, in the OpenHands spelling
+    (`{"url": ...}`, no transport field). The Claude CLI's config is a discriminated
+    union: an untyped entry with a url is read as a stdio server with no command and
+    SKIPPED - the session opens with an empty tool list and the agent builds on
+    without the browser, Context7, the KBs or the §Tools servers. Verified against
+    claude-code 2.1.251, which answers the untyped form with `url_missing_type` and
+    an empty `mcp_servers`, and registers the identical entry once type is present.
+    """
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    mod.OPENVISOR = tmp_path
+    (tmp_path / "mcp.json").write_text(json.dumps({"mcpServers": {
+        "browser": {"url": "http://browser-mcp:8931/mcp"},
+        "context7": {"url": "http://context7:8080/mcp", "headers": {"K": "v"}},
+        "legacy": {"command": "npx", "args": ["-y", "some-mcp"]},
+        "explicit": {"type": "sse", "url": "http://sidecar/sse"},
+    }}))
+    servers = mod._mcp_servers()
+    assert servers["browser"] == {"url": "http://browser-mcp:8931/mcp", "type": "http"}
+    assert servers["context7"]["type"] == "http"
+    assert servers["context7"]["headers"] == {"K": "v"}   # the key still rides along
+    assert servers["legacy"]["type"] == "stdio"
+    assert servers["explicit"]["type"] == "sse"           # an explicit type is kept
+
+
+def test_the_claude_driver_drops_a_server_it_cannot_type(tmp_path):
+    """Neither url nor command is unusable in both dialects - drop it rather than
+    hand the CLI an entry that makes it skip the whole config."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    mod.OPENVISOR = tmp_path
+    (tmp_path / "mcp.json").write_text(json.dumps({"mcpServers": {
+        "junk": {"headers": {"K": "v"}}, "ok": {"url": "http://x/mcp"}}}))
+    assert list(mod._mcp_servers()) == ["ok"]
+
+
+def test_the_claude_driver_reports_what_the_session_actually_got():
+    """A dropped MCP server costs the agent its tools and nothing else - the build
+    runs on. Without this line, a build that lost every tool reads exactly like one
+    that had them, which is how the untyped config survived its first production
+    run."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+
+    class _Feed:
+        def __init__(self):
+            self.events = []
+
+        def append(self, ev):
+            self.events.append(ev)
+
+    feed = _Feed()
+    mod._report_session(feed, type("Msg", (), {"data": {
+        "mcp_servers": [{"name": "browser", "status": "connected"},
+                        {"name": "context7", "status": "failed"}],
+        "mcp_server_errors": [{"name": "github", "type": "url_missing_type",
+                               "message": "Skipped"}],
+    }})())
+    assert len(feed.events) == 1
+    assert feed.events[0]["kind"] == "error"
+    assert "context7" in feed.events[0]["title"] and "github" in feed.events[0]["title"]
+    assert "browser" not in feed.events[0]["title"]
+
+    feed = _Feed()
+    mod._report_session(feed, type("Msg", (), {"data": {
+        "mcp_servers": [{"name": "browser", "status": "connected"}]}})())
+    assert feed.events == []
 
 
 def test_the_runner_image_pins_both_halves_of_the_claude_harness():
@@ -368,3 +557,45 @@ def test_project_pin_requires_the_feature_to_be_on(client, admin_headers, second
     cleared = client.patch(f"/api/admin/projects/{pid}", headers=admin_headers,
                            json={"dev_harness": None})
     assert cleared.status_code == 200 and cleared.json()["dev_harness"] is None
+
+
+def test_a_pin_the_project_model_cannot_run_is_refused(client, admin_headers):
+    """Refused HERE, where the admin can still act on it: the dispatcher degrades
+    such a pin rather than failing the build, so storing it would leave a project
+    pinned to a harness that never runs and a benchmark comparing a harness that
+    never executed. The dev stack's OPENAI_MODEL is not a Claude model."""
+    with SyncSession() as db:
+        p = _project(db)
+        db.commit()
+        pid = p.id
+    client.put("/api/admin/settings", headers=admin_headers, json={
+        "dev_harness_selection_enabled": True,
+        "dev_harness_allowed": ["openhands", "claude_sdk"]})
+
+    refused = client.patch(f"/api/admin/projects/{pid}", headers=admin_headers,
+                           json={"dev_harness": "claude_sdk"})
+    assert refused.status_code == 422
+    assert settings.openai_model in refused.json()["detail"]
+
+    # ... and accepted once the project's endpoint serves a model it can drive.
+    with SyncSession() as db:
+        from app.core.encryption import encrypt
+        from app.models import ModelEndpoint, ProjectModelConfig
+        ep = ModelEndpoint(label="Anthropic test", provider="anthropic",
+                           base_url="https://api.anthropic.com/v1",
+                           api_key_enc=encrypt("sk-ant-test"), model_name="claude-sonnet-5")
+        db.add(ep)
+        db.flush()
+        db.add(ProjectModelConfig(project_id=pid, endpoint_id=ep.id))
+        db.commit()
+        eid = ep.id
+    try:
+        ok = client.patch(f"/api/admin/projects/{pid}", headers=admin_headers,
+                          json={"dev_harness": "claude_sdk"})
+        assert ok.status_code == 200 and ok.json()["dev_harness"] == "claude_sdk"
+    finally:
+        with SyncSession() as db:
+            db.execute(delete(ProjectModelConfig).where(
+                ProjectModelConfig.project_id == pid))
+            db.execute(delete(ModelEndpoint).where(ModelEndpoint.id == eid))
+            db.commit()
