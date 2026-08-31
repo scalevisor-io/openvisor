@@ -44,6 +44,16 @@ function isTab(v: string | undefined): v is Tab {
   return TABS.includes(v as Tab);
 }
 
+// § delivery acceptance: who ended the engagement. The customer's Approve
+// delivery is the ordinary route to `finished`, but the admin status override
+// reaches it too, so the answer comes from the status history rather than from
+// the status alone. An unloaded history reads false - the closing panel then
+// thanks without attributing, which is true whoever approved.
+function approvedByCustomer(history: StatusChange[]): boolean {
+  const last = [...history].reverse().find((h) => h.to === "finished");
+  return last?.actor === "customer";
+}
+
 const DEPLOYABLE_STATUSES: ProjectStatus[] = [
   "development",
   "awaiting_customer",
@@ -371,6 +381,11 @@ export default function ProjectDetail() {
     planStatus: project.dev_plan_status,
     // §request help: a platform fault swaps the paid escalation for the free one.
     devFault: project.dev_run_fault,
+    // § delivery acceptance: the closing panel credits the approval to the
+    // customer only when their own click is what ended it - a project the admin
+    // finished by hand reads neutral instead of thanking them for a decision
+    // they never made.
+    approvedByCustomer: approvedByCustomer(history),
     consultant,
     runCounts,
   });

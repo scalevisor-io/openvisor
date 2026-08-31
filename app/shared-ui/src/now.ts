@@ -52,6 +52,13 @@ export interface ProjectNowInput {
   /** Consultant display name, e.g. "Consultant"; defaults to a neutral label. */
   consultant?: string;
   /**
+   * § delivery acceptance: whether the CUSTOMER's own Approve delivery ended the
+   * project. `finished` is reachable by the admin status override too, and the
+   * closing panel is the last thing a customer reads about their engagement -
+   * so it credits the approval to someone only when the status history says who.
+   */
+  approvedByCustomer?: boolean;
+  /**
    * §parallel-builds MR4 (additive): how many sibling runs are in flight -
    * `building` counts queued/running/deploying rows, `merging` the
    * awaiting_merge ones. With two or more in total the development headline
@@ -133,11 +140,13 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
   }
   if (i.status === "finished") {
     return {
-      headline: kind === "chat" ? "This conversation is closed." : "Delivered and signed.",
+      headline: kind === "chat" ? "This conversation is closed." : "Delivered and approved.",
       body:
         kind === "chat"
           ? undefined
-          : `${consultant} signed this delivery - thank you for building here.`,
+          : i.approvedByCustomer
+            ? "You approved this delivery - thank you for building here."
+            : "Thank you for building here.",
       owner: "done",
       secondary: i.demoUrl ? [A("open-demo", "Open the demo")] : [],
     };
