@@ -1374,12 +1374,18 @@ table.data tbody tr:hover {
   text-transform: uppercase;
   color: var(--text-faint);
   background: none;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   padding: 0.3rem 0.2rem;
   cursor: pointer;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    color 0.14s ease;
 }
 .chat-rail-toggle:hover {
   color: var(--text);
+  background: var(--gray-100);
 }
 .chat-rail-caret {
   display: inline-flex;
@@ -1404,10 +1410,37 @@ table.data tbody tr:hover {
   font-size: 0.85rem;
   letter-spacing: normal; /* the emoji, not the label's uppercase tracking */
 }
-/* Retracted, the spine turns its label sideways so it still fits in 2.6rem. */
+/* Retracted, the spine turns its label sideways so it still fits in 2.6rem.
+   It is also the ONLY thing left of the rail, so it stops being loose text on
+   the page background and becomes a tab: its own surface, a hairline, and an
+   accent caret. Flat mono text on the page read as a label nobody could tell
+   was clickable. */
 .chat-retracted .chat-rail-toggle {
   flex-direction: column;
   gap: 0.6rem;
+  width: 100%;
+  padding: 0.55rem 0.2rem 0.7rem;
+  color: var(--text-dim);
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.chat-retracted .chat-rail-toggle:hover {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--gray-200);
+}
+/* The caret is the part the eye lands on, so retracted it is a filled accent
+   chip rather than a hairline box: on a page of hairlines, one solid swatch is
+   what reads as "press this". */
+.chat-retracted .chat-rail-caret {
+  width: 1.4rem;
+  height: 1.4rem;
+  color: #fff;
+  background: var(--accent-light);
+  border-color: transparent;
+  font-size: 0.9rem;
 }
 .chat-retracted .chat-rail-label {
   writing-mode: vertical-rl;
@@ -1475,10 +1508,15 @@ table.data tbody tr:hover {
   }
   .chat-retracted .project-chat-rail {
     width: 100%;
-    height: 1.9rem;
+    /* Room for the tab's caret chip and its own padding - the spine's vertical
+       breathing space becomes horizontal here. */
+    height: 2.3rem;
   }
   .chat-retracted .chat-rail-toggle {
     flex-direction: row;
+    height: 100%;
+    padding: 0 0.55rem;
+    gap: 0.5rem;
   }
   .chat-retracted .chat-rail-label {
     writing-mode: horizontal-tb;
@@ -1544,6 +1582,10 @@ table.data tbody tr:hover {
     height: 100%;
     justify-content: center;
     padding: 0;
+    background: none;
+    border-color: transparent;
+    border-radius: 999px;
+    box-shadow: none;
   }
   .chat-retracted .chat-rail-caret,
   .chat-retracted .chat-rail-label {
