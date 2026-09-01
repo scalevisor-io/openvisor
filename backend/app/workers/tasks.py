@@ -27,6 +27,7 @@ from app.services import acceptance, brand, contract, deployer_client, dev_concu
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
+from app.services.mentions import mentions_agent
 from app.workers.celery_app import celery
 
 log = logging.getLogger(__name__)
@@ -407,12 +408,7 @@ CHAT_INFLIGHT_STATES = {"running", "awaiting_merge", "deploying"}
 
 # §work answers: addressing the agent directly is an explicit demand for a reply,
 # so a mention is never met with silence - when no action applies, the message is
-# answered. The lookbehind keeps emails and paths (a@ai.com, docs/@ai) from matching.
-_AGENT_MENTION_RE = re.compile(r"(?<![\w./@-])@(?:agent|ai)\b", re.I)
-
-
-def mentions_agent(text: str | None) -> bool:
-    return bool(text and _AGENT_MENTION_RE.search(text))
+# answered (mentions_agent, services/mentions - shared with the API dispatch path).
 
 
 def _chat_slots_full(db: Session, project: Project) -> bool:
@@ -1193,7 +1189,8 @@ def _chat_notice(db: Session, project_id: str, marker: str, body: str,
 
 @celery.task(name="app.workers.tasks.answer_chat_message", bind=True, max_retries=60)
 def answer_chat_message(self, project_id: str, message_id: str) -> None:
-    """§chat kind responder: reply to the newest customer main-thread message with
+    """§chat kind responder: reply to the newest customer main-thread message -
+    or an admin message that summons the agent by @agent/@ai mention - with
     a KB-grounded (rag.retrieve over the project's KB selection), Memory- and
     history-aware synthesis, verbatim-guarded like the MCP knowledge path and
     billed per answer (embedding + synthesis) as ordinary project consumption.
@@ -1219,12 +1216,19 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
                 return
             newest = (db.query(Message).filter_by(project_id=project_id, thread="main")
                       .order_by(Message.created_at.desc()).first())
-            if newest is None or newest.author == "admin":
+            if newest is None:
+                return
+            if newest.author == "admin" and not mentions_agent(newest.body):
                 return  # the human consultant is engaged - stay out of the way
-            target = newest if newest.author == "customer" else (
-                db.query(Message).filter_by(project_id=project_id, thread="main",
-                                            author="customer")
-                .order_by(Message.created_at.desc()).first())
+            if newest.author in ("customer", "admin"):
+                # An admin message only reaches here with an @agent/@ai mention:
+                # an explicit summons is answered like a customer question.
+                target = newest
+            else:
+                target = (db.query(Message)
+                          .filter_by(project_id=project_id, thread="main",
+                                     author="customer")
+                          .order_by(Message.created_at.desc()).first())
             if target is None:
                 return
             answered = (db.query(Message)
@@ -1332,12 +1336,16 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
             db.commit()
             # a message that arrived mid-generation was outside our history read;
             # its own task may have exhausted its lock retries, so re-dispatch.
+            # A trailing admin message without a mention means the consultant
+            # took the thread - no re-dispatch (the newest-message guard would
+            # silence it anyway).
             later = (db.query(Message)
                      .filter(Message.project_id == project_id, Message.thread == "main",
-                             Message.author == "customer",
+                             Message.author.in_(("customer", "admin")),
                              Message.created_at > target.created_at)
                      .order_by(Message.created_at.desc()).first())
-            if later is not None:
+            if later is not None and (later.author == "customer"
+                                      or mentions_agent(later.body)):
                 answer_chat_message.apply_async(args=[project_id, later.id], countdown=1)
     finally:
         if r.get(lock_key) == message_id:
