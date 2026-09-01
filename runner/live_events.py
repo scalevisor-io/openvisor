@@ -30,6 +30,45 @@ _SILENT_NAMES = ("Observation", "SystemPrompt", "Token", "StreamingDelta",
                  "LLMCompletionLog", "ConversationStateUpdate", "Condensation",
                  "Pause", "Interrupt", "HookExecution")
 
+# Well-known credential SHAPES (GitLab/GitHub tokens, Slack, OpenAI-style sk-,
+# AWS access keys), value-independent: an agent that inlines a secret into a
+# shell command puts that command in the feed TITLE, so feed text is redacted
+# even when the runner holds no copy of the value. Redaction-only pattern -
+# a false positive costs "[redacted]" in one console line, never the build
+# (services/leakscan.TOKEN_RE parity; the runner imports nothing from the app).
+_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])"  # not mid-word: "task-management-..." carries no sk- token
+    r"(?:(?:glpat|glptt|gldt|glrt|glsoat|glcbt)-[A-Za-z0-9_-]{8,}"
+    r"|(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{8,}"
+    r"|sk-[A-Za-z0-9_-]{16,}"
+    r"|AKIA[0-9A-Z]{16})")
+
+
+def _redaction_secrets() -> list[str]:
+    """Verbatim secret values to strip from feed text: the same set the
+    pre-publish leak scan refuses on (secret Memory env values, LLM_API_KEY,
+    the worker's extra secrets, deploy-key material). Loaded once at feed
+    construction, fail-soft - the feed must never fail the build - with the
+    best-known env names as the fallback when leak_scan's inputs are absent
+    (e.g. a driver run outside the full sandbox plumbing)."""
+    try:
+        import leak_scan
+        return leak_scan._secret_values()
+    except Exception:  # noqa: BLE001
+        vals = []
+        for name in ("LLM_API_KEY", "GITHUB_TOKEN", "GITLAB_TOKEN"):
+            v = os.environ.get(name) or ""
+            if len(v) >= 8:
+                vals.append(v)
+        return vals
+
+
+def _redact(text: str, secrets: list[str]) -> str:
+    for v in secrets:
+        text = text.replace(v, "[redacted]")
+    return _TOKEN_RE.sub("[redacted]", text)
+
 
 def _clip(text, limit: int) -> str:
     text = _ANSI_RE.sub("", str(text or ""))
@@ -138,6 +177,7 @@ class LiveFeed:
         self.on_snapshot = on_snapshot
         self._last_progress = 0.0
         self._truncated = False
+        self._secrets = _redaction_secrets()
         # Set when the SDK reports the session ended at the iteration cap; the
         # driver persists it as .openvisor/exit_reason.json for the worker's copy.
         self.exit_reason: str | None = None
@@ -168,6 +208,11 @@ class LiveFeed:
     def _append(self, ev: dict) -> None:
         if self._truncated:
             return
+        # The single choke point for BOTH writers (the SDK callback and a
+        # driver's own append): no secret value or credential-shaped string
+        # reaches the on-disk feed, whatever composed the event.
+        ev = {k: (_redact(v, self._secrets) if k in ("title", "detail")
+                  and isinstance(v, str) else v) for k, v in ev.items()}
         try:
             if self.feed_path.exists() and self.feed_path.stat().st_size > MAX_FEED_BYTES:
                 self._truncated = True
