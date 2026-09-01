@@ -644,6 +644,10 @@ class DevRun(Base):
     # §parallel-builds MR2 exactly-once billing watermark: cumulative tokens
     # already billed for this run (usage.json is cumulative per run).
     billed_through: Mapped[int] = mapped_column(Integer, default=0)
+    # §14.10 CI watch: sweep-dispatched CI-fix runs already spent on this work
+    # unit (carried chain-forward, capped by CI_MAX_RETRIES; cap+1 = the
+    # exhaustion message was posted).
+    ci_fix_attempts: Mapped[int] = mapped_column(Integer, default=0)
     # Run chains: a retry/boot-fix resume inherits the predecessor's
     # workspace_dir and branch (new row, same dir).
     predecessor_id: Mapped[str | None] = mapped_column(ForeignKey("dev_run.id"), nullable=True)

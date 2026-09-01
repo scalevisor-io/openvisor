@@ -756,3 +756,42 @@ def customer_merge_mr(base_url: str, token: str, path: str, mr_iid: int,
             if r.status_code == 200 and r.json().get("state") == "merged":
                 return True, "merged (project does not allow squash)"
         return False, f"merge blocked: {r.status_code} {r.text[:200]}"
+
+
+def customer_pipeline_status(base_url: str, token: str, path: str, sha: str) -> str:
+    """The head commit's pipeline verdict on a CUSTOMER GitLab for the merge
+    sweep's CI watch (§14.10): 'failure' | 'success' | 'pending' | 'none'.
+    SHA-scoped like auto_merge, so a re-pushed fix is never judged by the
+    previous commit's stale pipeline. Canceled counts as failure, the same
+    verdict the platform auto_merge gives it."""
+    with _customer_client(base_url, token) as c:
+        r = c.get(f"/projects/{quote(path, safe='')}/pipelines", params={"sha": sha})
+        r.raise_for_status()
+        ps = r.json()
+    if not ps:
+        return "none"
+    status = ps[0].get("status")
+    if status in ("failed", "canceled"):
+        return "failure"
+    return "success" if status == "success" else "pending"
+
+
+def customer_failed_pipeline_logs(base_url: str, token: str, path: str, mr_iid: int,
+                                  max_chars: int = 6000) -> str:
+    """failed_pipeline_logs against a CUSTOMER GitLab host: the traces of the
+    failed jobs on the MR's head pipeline, for the sweep's CI-fix instruction."""
+    proj = quote(path, safe="")
+    with _customer_client(base_url, token) as c:
+        mr = c.get(f"/projects/{proj}/merge_requests/{mr_iid}").json()
+        ps = c.get(f"/projects/{proj}/pipelines", params={"sha": mr.get("sha")}).json()
+        if not ps:
+            return ""
+        pid = ps[0]["id"]
+        jobs = c.get(f"/projects/{proj}/pipelines/{pid}/jobs").json()
+        out = []
+        for j in jobs:
+            if j.get("status") != "failed":
+                continue
+            trace = c.get(f"/projects/{proj}/jobs/{j['id']}/trace").text
+            out.append(f"### job '{j['name']}' failed\n{trace[-max_chars:]}")
+        return "\n\n".join(out)[-max_chars:]

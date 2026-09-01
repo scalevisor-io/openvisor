@@ -344,3 +344,81 @@ def merge_pr(owner: str, repo: str, number: int, method: str = "squash",
             if r.status_code == 200 and r.json().get("merged"):
                 return True, f"merged (repository does not allow {method})"
         return False, f"merge blocked: {r.status_code} {r.text[:200]}"
+
+
+def ci_status(owner: str, repo: str, sha: str, token: str | None = None) -> str:
+    """The head commit's CI verdict for the merge sweep's CI watch (§14.10):
+    'failure' | 'success' | 'pending' | 'none'. GitHub reports CI through two
+    disjoint APIs - the legacy combined commit status and check runs (GitHub
+    Actions reports through the latter) - so both are read and any failure wins.
+    A cancelled or action_required check is neither: it is not the agent's to
+    fix, so it never triggers a fix run."""
+    with _client(token) as c:
+        rs = c.get(f"/repos/{owner}/{repo}/commits/{sha}/status")
+        rs.raise_for_status()
+        combined = rs.json()
+        rc = c.get(f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
+                   params={"per_page": 100})
+        rc.raise_for_status()
+        runs = rc.json().get("check_runs", [])
+    states: list[str] = []
+    if combined.get("total_count"):
+        states.append({"success": "success", "pending": "pending"}.get(
+            combined.get("state"), "failure"))
+    for run in runs:
+        if run.get("status") != "completed":
+            states.append("pending")
+        elif run.get("conclusion") in ("failure", "timed_out"):
+            states.append("failure")
+        elif run.get("conclusion") in ("success", "neutral", "skipped"):
+            states.append("success")
+    if "failure" in states:
+        return "failure"
+    if "pending" in states:
+        return "pending"
+    return "success" if states else "none"
+
+
+def failed_ci_logs(owner: str, repo: str, sha: str, token: str | None = None,
+                   max_chars: int = 6000) -> str:
+    """gitlab.failed_pipeline_logs' GitHub sibling: what failed on the head
+    commit, for the sweep's CI-fix instruction. Actions job logs first (the real
+    traces); check-run output and summaries as the fallback for third-party CI.
+    Best-effort - any hole in the trail just shortens the text, and the caller
+    has a generic instruction for an empty one."""
+    out: list[str] = []
+    with _client(token) as c:
+        try:
+            runs = c.get(f"/repos/{owner}/{repo}/actions/runs",
+                         params={"head_sha": sha, "per_page": 20}
+                         ).json().get("workflow_runs", [])
+            for wr in runs:
+                if wr.get("conclusion") not in ("failure", "timed_out"):
+                    continue
+                jobs = c.get(f"/repos/{owner}/{repo}/actions/runs/{wr['id']}/jobs",
+                             params={"per_page": 50}).json().get("jobs", [])
+                for job in jobs:
+                    if job.get("conclusion") not in ("failure", "timed_out"):
+                        continue
+                    r = c.get(f"/repos/{owner}/{repo}/actions/jobs/{job['id']}/logs",
+                              follow_redirects=True)
+                    if r.status_code == 200 and r.text:
+                        out.append(f"### job '{job.get('name')}' failed\n"
+                                   f"{r.text[-max_chars:]}")
+        except (httpx.HTTPError, ValueError):
+            pass
+        if not out:
+            try:
+                checks = c.get(f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
+                               params={"per_page": 100}).json().get("check_runs", [])
+                for run in checks:
+                    if run.get("conclusion") not in ("failure", "timed_out"):
+                        continue
+                    o = run.get("output") or {}
+                    text = "\n".join(filter(None, [o.get("title"), o.get("summary"),
+                                                   o.get("text")]))
+                    out.append(f"### check '{run.get('name')}' failed\n"
+                               f"{text[:max_chars]}".rstrip())
+            except (httpx.HTTPError, ValueError):
+                pass
+    return "\n\n".join(out)[-max_chars:]
