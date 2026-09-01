@@ -494,10 +494,12 @@ async def hub_project_dev_activity(project_id: str, request: Request,
                                    db: AsyncSession = Depends(get_db),
                                    user: User = Depends(require_hub_token)):
     """Live build console (§14.8), same offset-poll contract as the customer
-    endpoint - devfeed redacts platform secrets before anything leaves."""
+    endpoint - devfeed redacts platform AND project-Memory secrets before
+    anything leaves."""
     await _hub_read_limit(request, user)
     project = await _hub_project(db, project_id, org_id)
-    return await run_in_threadpool(devfeed.read_chunk, project, offset)
+    secrets = await devfeed.secret_values(db, project)
+    return await run_in_threadpool(devfeed.read_chunk, project, offset, None, secrets)
 
 
 @router.post("/projects/{project_id}/actions")

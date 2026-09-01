@@ -7,9 +7,12 @@ straight off the shared workspaces volume (Programs §28 log parity).
 
 The feed carries only summaries composed by our own code - never raw model
 output, task text, or command output - and every served chunk gets a second
-defensive pass: platform-secret values are redacted, and a line carrying
-private-key material or a verbatim knowledge-base span (the run's
-.openvisor/leak_kb.json fingerprints, leak-scan parity) is withheld outright."""
+defensive pass: platform-secret values, the project's secret Memory values
+(passed by the route, which has the session - see secret_values) and anything
+shaped like a well-known credential (leakscan.TOKEN_RE) are redacted, and a
+line carrying private-key material or a verbatim knowledge-base span (the
+run's .openvisor/leak_kb.json fingerprints, leak-scan parity) is withheld
+outright."""
 import json
 import time
 from pathlib import Path
@@ -60,7 +63,35 @@ def append_event(project, kind: str, title: str, detail: str | None = None) -> N
         pass
 
 
-def _guards(project) -> tuple[list[str], list[str]]:
+async def secret_values(db, project) -> list[str]:
+    """The project's decrypted secret Memory values (project rows + the org's
+    global rows unconditionally - for redaction, over-inclusion is the safe
+    side), for read_chunk's extra_secrets. Resolved by the route because the
+    feed read runs in a threadpool with no session (endpoint_prices parity).
+    Best-effort: a decryption failure must not take the console down."""
+    from sqlalchemy import select
+    from app.models import OrgMemory, ProjectMemory
+    out: list[str] = []
+    try:
+        rows = (await db.execute(select(ProjectMemory.value_enc).where(
+            ProjectMemory.project_id == project.id,
+            ProjectMemory.is_secret.is_(True)))).scalars().all()
+        rows += (await db.execute(select(OrgMemory.value_enc).where(
+            OrgMemory.org_id == project.org_id,
+            OrgMemory.is_secret.is_(True)))).scalars().all()
+        for enc in rows:
+            try:
+                v = (decrypt(enc) or "").strip()
+                if len(v) >= leakscan.MIN_SECRET_LEN:
+                    out.append(v)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _guards(project, extra_secrets: list[str] | None = None) -> tuple[list[str], list[str]]:
     """(secret values to redact, KB fingerprints to withhold on) for a served
     chunk. Best-effort - serving the feed beats a perfect guard here; the
     runner-side summarizer and leak scan remain the primary controls."""
@@ -68,7 +99,8 @@ def _guards(project) -> tuple[list[str], list[str]]:
     fingerprints: list[str] = []
     try:
         keys = [decrypt(project.ssh_private_key_enc)] if project.ssh_private_key_enc else []
-        secrets = leakscan.platform_secret_values(ssh_private_keys=keys)
+        secrets = leakscan.platform_secret_values(extra_values=extra_secrets,
+                                                  ssh_private_keys=keys)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -84,6 +116,9 @@ def _clean_text(text: str, secrets: list[str], fingerprints: list[str]) -> str:
         return WITHHELD
     for v in secrets:
         text = text.replace(v, "[redacted]")
+    # Shape-based fallback, and the retroactive fix for a feed already written
+    # with a secret in it: pattern redaction needs no stored copy of the value.
+    text = leakscan.TOKEN_RE.sub("[redacted]", text)
     if fingerprints:
         norm = leakscan.norm_ws(text)
         if any(fp in norm for fp in fingerprints):
@@ -91,13 +126,15 @@ def _clean_text(text: str, secrets: list[str], fingerprints: list[str]) -> str:
     return text
 
 
-def read_chunk(project, offset: int, endpoint_prices: dict | None = None) -> dict:
+def read_chunk(project, offset: int, endpoint_prices: dict | None = None,
+               extra_secrets: list[str] | None = None) -> dict:
     """One offset-polled chunk of the activity feed plus the live usage
     snapshot. Only complete JSONL lines are consumed (a partial tail line
     stays for the next poll); a missing or shrunken file (new run) hands the
     client a smaller next_offset / reset flag so it restarts its buffer.
-    `endpoint_prices` = {api_model: (input, output, cached_input)} from the
-    caller's session - see read_progress."""
+    `endpoint_prices` = {api_model: (input, output, cached_input)} and
+    `extra_secrets` = the project's secret Memory values (secret_values), both
+    from the caller's session - see read_progress."""
     from app.services.dev_concurrency import bound_run
     # §parallel-builds MR4: a run-scoped read reports ITS row's state and clock,
     # not the mirror's - a sibling console must not show the primary's phase.
@@ -125,7 +162,7 @@ def read_chunk(project, offset: int, endpoint_prices: dict | None = None) -> dic
     if cut < 0:
         out["next_offset"] = offset
         return out
-    secrets, fingerprints = _guards(project)
+    secrets, fingerprints = _guards(project, extra_secrets)
     events = []
     for line in data[:cut].splitlines():
         try:

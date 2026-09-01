@@ -275,3 +275,100 @@ def test_livefeed_appends_events_and_snapshots_progress(live_events, tmp_path):
     assert snap == {"model": "test-model", "input_tokens": 42, "output_tokens": 7,
                     "cached_input_tokens": 30, "cache_write_tokens": 0,
                     "cache_write_1h_tokens": 0, "updated_at": snap["updated_at"]}
+
+
+# ---- customer-secret redaction (the glpat-in-the-console incident) ----
+
+def test_read_chunk_redacts_memory_secrets_and_token_shapes(tmp_path):
+    """A customer Memory secret the agent inlined into a command is redacted via
+    extra_secrets, and a credential-SHAPED string is redacted with no stored
+    copy at all - which is also what retroactively cleans a feed written before
+    this guard existed."""
+    p = _project(tmp_path)
+    _write_feed(p, [
+        json.dumps({"kind": "command",
+                    "title": 'export GITLAB_TOKEN="glpat-hy-Faketoken_12345"',
+                    "detail": 'curl --header "PRIVATE-TOKEN: glpat-hy-Faketoken_12345"'}),
+        json.dumps({"kind": "command",
+                    "title": "deploy using customer-memory-secret-99"}),
+    ])
+    c = devfeed.read_chunk(p, 0, None, ["customer-memory-secret-99"])
+    dumped = json.dumps(c)
+    assert "glpat-" not in dumped
+    assert "customer-memory-secret-99" not in dumped
+    assert "[redacted]" in c["events"][0]["title"]
+    assert "[redacted]" in c["events"][0]["detail"]
+    assert "[redacted]" in c["events"][1]["title"]
+
+
+def test_secret_values_collects_project_and_org_memory():
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
+                                        create_async_engine)
+    from sqlalchemy.pool import NullPool
+
+    from app.core.config import settings
+    from app.core.db import SyncSession
+    from app.core.encryption import encrypt
+    from app.models import Organization, OrgMemory, Project, ProjectMemory
+
+    with SyncSession() as db:
+        o = Organization(name="devfeed-secrets org", credit_balance=0)
+        db.add(o)
+        db.flush()
+        p = Project(org_id=o.id, name="P", description="d", kind="ai",
+                    status="development")
+        db.add(p)
+        db.flush()
+        db.add(ProjectMemory(project_id=p.id, author="customer", key="GITLAB_TOKEN",
+                             value_enc=encrypt("project-secret-value-1"), is_secret=True))
+        db.add(ProjectMemory(project_id=p.id, author="customer", key="PLAIN",
+                             value_enc=encrypt("not-a-secret-value"), is_secret=False))
+        db.add(OrgMemory(org_id=o.id, author="customer", key="ORG_TOKEN",
+                         value_enc=encrypt("org-secret-value-22"), is_secret=True))
+        db.commit()
+        oid, pid = o.id, p.id
+
+    async def _run():
+        # A private engine on THIS loop: the app's pooled async engine holds
+        # connections bound to other tests' loops and asyncio.run opens a new one.
+        engine = create_async_engine(settings.database_url, poolclass=NullPool)
+        try:
+            maker = async_sessionmaker(engine, class_=AsyncSession,
+                                       expire_on_commit=False)
+            async with maker() as adb:
+                proj = await adb.get(Project, pid)
+                return await devfeed.secret_values(adb, proj)
+        finally:
+            await engine.dispose()
+
+    try:
+        vals = asyncio.run(_run())
+        assert "project-secret-value-1" in vals
+        assert "org-secret-value-22" in vals
+        assert "not-a-secret-value" not in vals
+    finally:
+        with SyncSession() as db:
+            db.query(ProjectMemory).filter_by(project_id=pid).delete()
+            db.query(OrgMemory).filter_by(org_id=oid).delete()
+            db.query(Project).filter_by(id=pid).delete()
+            db.query(Organization).filter_by(id=oid).delete()
+            db.commit()
+
+
+def test_livefeed_redacts_secret_values_and_token_shapes(live_events, tmp_path, monkeypatch):
+    """Runner-side choke point: a secret value from the sandbox environment and a
+    credential-shaped string never reach the on-disk feed, for BOTH writers (the
+    SDK callback and a driver's own append)."""
+    monkeypatch.setenv("GITLAB_TOKEN", "env-memory-secret-token-1")
+    feed = live_events.LiveFeed(tmp_path)
+    feed(_obj("ActionEvent", action=_obj(
+        "TerminalAction",
+        command='export GITLAB_TOKEN="env-memory-secret-token-1" && '
+                'curl --header "PRIVATE-TOKEN: glpat-hy-Faketoken_12345"')))
+    feed.append({"kind": "phase", "title": "pushing with glpat-hy-Faketoken_12345"})
+    raw = feed.feed_path.read_text()
+    assert "env-memory-secret-token-1" not in raw
+    assert "glpat-" not in raw
+    assert raw.count("[redacted]") >= 3

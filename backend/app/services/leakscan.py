@@ -31,6 +31,21 @@ MIN_SECRET_LEN = 8
 # (runner/leak_scan.py parity).
 PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----")
 
+# Well-known credential SHAPES (GitLab/GitHub tokens, Slack, OpenAI-style sk-,
+# AWS access keys), value-independent - they catch a secret the platform holds
+# no copy of (one the agent found in a repo, or the customer pasted into chat
+# and the agent echoed back). For REDACTION layers only (devfeed and the
+# runner's live feed, runner/live_events.py parity): a false positive there
+# costs "[redacted]" in one console line. Never use this in a BLOCKING scan,
+# where the same false positive bricks a build or a program run.
+TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])"  # not mid-word: "task-management-..." carries no sk- token
+    r"(?:(?:glpat|glptt|gldt|glrt|glsoat|glcbt)-[A-Za-z0-9_-]{8,}"
+    r"|(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{8,}"
+    r"|sk-[A-Za-z0-9_-]{16,}"
+    r"|AKIA[0-9A-Z]{16})")
+
 
 def norm_ws(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip().lower()

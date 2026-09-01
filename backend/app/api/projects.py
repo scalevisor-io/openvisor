@@ -682,9 +682,11 @@ async def dev_activity(offset: int = 0, run_id: str | None = None,
             dev_concurrency.bind_run(project, row)
     # Resolved here because the feed read runs in a threadpool with no session:
     # a model the static price table doesn't know is still billable through its
-    # endpoint, so the live estimate prices it exactly as the worker bills it.
+    # endpoint, so the live estimate prices it exactly as the worker bills it -
+    # and the project's secret Memory values join the redaction set the same way.
     prices = await model_prices.all_prices(db)
-    return await run_in_threadpool(devfeed.read_chunk, project, offset, prices)
+    secrets = await devfeed.secret_values(db, project)
+    return await run_in_threadpool(devfeed.read_chunk, project, offset, prices, secrets)
 
 
 @router.get("/{project_id}/dev-runs")
