@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models import CreditTransaction, DevRun, Message, Organization, Project, Request
 from app.services import dev_concurrency, events, hub_events
 from app.services.lifecycle import TransitionError, transition_async
+from app.services.mentions import mentions_agent
 from app.workers.celery_app import celery
 
 
@@ -343,8 +344,12 @@ async def post_chat_message(db: AsyncSession, project: Project, author: str,
     if project.kind == "chat":
         # §chat kind: customer main-thread messages get a KB-grounded answer, and
         # the §12 classifier never runs (there is no dev pipeline to drive). Admin
-        # messages are the human consultant joining - the agent stays out of the way.
-        if settings.chat_answer_enabled and thread == "main" and author == "customer":
+        # messages are the human consultant joining - the agent stays out of the
+        # way UNLESS the admin summons it by @agent/@ai mention (a mention is
+        # never met with silence, §work answers parity).
+        if settings.chat_answer_enabled and thread == "main" and (
+                author == "customer"
+                or (author == "admin" and mentions_agent(body))):
             celery.send_task("app.workers.tasks.answer_chat_message",
                              args=[project.id, msg.id])
     elif settings.chat_classify_enabled and (

@@ -183,6 +183,26 @@ def test_answer_only_in_development_and_backs_off_for_admin(org, fake_redis, mon
         assert db.query(Message).filter_by(project_id=active, author="agent").count() == 0
 
 
+def test_answer_admin_agent_mention_is_answered(org, fake_redis, monkeypatch):
+    """An admin message that summons the agent (@agent/@ai) is answered like a
+    customer question - a mention is never met with silence - while a plain
+    admin follow-up afterwards still hands the thread back to the human."""
+    _wire_llm(monkeypatch)
+    pid = _chat_project(org)
+    summons = _msg(pid, body="@agent What are examples of sovereignty incidents?",
+                   author="admin")
+    tasks.answer_chat_message(pid, summons)
+    with SyncSession() as db:
+        agent = db.query(Message).filter_by(project_id=pid, author="agent").all()
+        assert len(agent) == 1
+        assert agent[0].meta == {"answers": summons}
+
+    plain = _msg(pid, body="Thanks, I'll take it from here.", author="admin")
+    tasks.answer_chat_message(pid, plain)
+    with SyncSession() as db:
+        assert db.query(Message).filter_by(project_id=pid, author="agent").count() == 1
+
+
 def test_sources_credit_only_what_the_answer_cited(org, fake_redis, monkeypatch):
     """Six chunks out of one README used to print six identical lines. The answer
     cites two of them, so the trailer names one file and carries both markers."""
@@ -319,7 +339,7 @@ def client():
         events._async_client = None
 
 
-def _login(client, balance=100.0):
+def _login(client, balance=100.0, role="customer"):
     email = f"chat-{uuid.uuid4().hex[:8]}@example.com"
     pwd = "chat-secret-12"
     with SyncSession() as db:
@@ -327,7 +347,7 @@ def _login(client, balance=100.0):
         db.add(org)
         db.flush()
         db.add(User(org_id=org.id, email=email, password_hash=hash_password(pwd),
-                    role="customer", email_verified=True))
+                    role=role, email_verified=True))
         db.commit()
         oid = org.id
     tok = client.get("/api/auth/csrf").json()["csrf_token"]
@@ -443,6 +463,26 @@ def test_chat_message_routes_to_responder_not_classifier(client, chat_unpaused,
                         json={"type": "feature", "handling": "ai", "body": "build me X"},
                         headers=h)
         assert r.status_code == 409
+    finally:
+        _cleanup_org(oid)
+
+
+def test_admin_chat_message_dispatches_only_on_mention(client, monkeypatch):
+    from app.workers.celery_app import celery as celery_app
+    sent: list = []
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **k: sent.append(a))
+    h, oid = _login(client, role="admin")
+    try:
+        pid = _chat_project(oid)
+        r = client.post(f"/api/projects/{pid}/messages",
+                        json={"thread": "main", "body": "Consultant here."}, headers=h)
+        assert r.status_code == 201, r.text
+        assert sent == []  # the human joined - the agent stays out of the way
+        r = client.post(f"/api/projects/{pid}/messages",
+                        json={"thread": "main",
+                              "body": "@agent what incidents do we know of?"}, headers=h)
+        assert r.status_code == 201, r.text
+        assert [a[0] for a in sent] == ["app.workers.tasks.answer_chat_message"]
     finally:
         _cleanup_org(oid)
 
