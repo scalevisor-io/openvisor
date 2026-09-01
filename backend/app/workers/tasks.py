@@ -3998,11 +3998,15 @@ def _dispatch_revision(db: Session, project: Project,
 
 @celery.task(name="app.workers.tasks.run_development")
 def run_development(project_id: str, fix_only: bool = False,
-                    run_id: str | None = None) -> None:
+                    run_id: str | None = None,
+                    fix_instruction: str | None = None) -> None:
     """Thin wrapper around the build (§14/§14.5): snapshot the run's cost/clock
     baseline, run it, then in a guarded finally persist ONE agent-eval record
     from the project's final state (Phase 0). The capture is best-effort and
-    isolated - a record-write failure can never affect the build."""
+    isolated - a record-write failure can never affect the build.
+    `fix_instruction` (§14.10 CI watch) seeds the run's FIRST dispatch with a
+    scoped fix task - the merge sweep's CI-fix chains carry the failed pipeline
+    logs in here."""
     t_start = utcnow()
     with SyncSession() as db:
         p = db.get(Project, project_id)
@@ -4010,7 +4014,7 @@ def run_development(project_id: str, fix_only: bool = False,
             return  # no run happens -> no eval record
         tokens0, credits0 = p.tokens_consumed or 0, p.cost_credits or 0.0
     try:
-        _run_development_impl(project_id, fix_only, run_id)
+        _run_development_impl(project_id, fix_only, run_id, fix_instruction)
     finally:
         try:
             with SyncSession() as db:
@@ -4025,7 +4029,8 @@ def run_development(project_id: str, fix_only: bool = False,
 
 
 def _run_development_impl(project_id: str, fix_only: bool = False,
-                          run_id: str | None = None) -> None:
+                          run_id: str | None = None,
+                          fix_instruction: str | None = None) -> None:
     """§14/§14.5: build the MVP via a sandboxed OpenHands job in the customer's
     repo, then open a pull request (GitHub) or auto-merge on green OCPA CI
     (GitLab). Every run is bounded by a wall-clock timeout and an iteration cap
@@ -4132,13 +4137,16 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
             return
 
         if target and target["provider"] == "github":
-            _run_development_customer(db, project, target, fix_only, steering)
+            _run_development_customer(db, project, target, fix_only, steering,
+                                      fix_instruction)
             return
         if target and target["provider"] == "gitlab" and target.get("customer"):
-            _run_development_customer(db, project, target, fix_only, steering)
+            _run_development_customer(db, project, target, fix_only, steering,
+                                      fix_instruction)
             return
         if target and target["provider"] == "other":
-            _run_development_customer(db, project, target, fix_only, steering)
+            _run_development_customer(db, project, target, fix_only, steering,
+                                      fix_instruction)
             return
 
         # ---- Platform GitLab path (auto-merge on green CI) ----
@@ -4831,16 +4839,18 @@ def _adopt_change(db: Session, project: Project, target: dict, thread: str,
 
 def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
                     skip_agent: bool, boot_verb: str,
-                    steering_note: str | None = None) -> str:
+                    steering_note: str | None = None,
+                    fix_instruction: str | None = None) -> str:
     """Shared build + §14.5 boot-gate loop for the customer-repo dev flow (GitHub
     PR / customer-GitLab MR / other host). Returns the last runner log once the
     demo boots; raises _DevRunHandled after parking the run on any failure. Each
     dispatch is billed and reaper-clocked (via _mark_dispatch_start / _bill_dev_run)
     exactly like the platform-GitLab loop. The scaffold (skip_agent) gets no
-    boot-fix retries - nothing to iterate."""
+    boot-fix retries - nothing to iterate. `fix_instruction` seeds the FIRST
+    dispatch (§14.10 CI watch: the sweep's CI-fix chain carries the failed
+    pipeline logs); later iterations overwrite it with boot-fix instructions."""
     max_boot_fixes = 0 if skip_agent else settings.dev_boot_fix_attempts
     boot_attempts = 0
-    fix_instruction: str | None = None
     while True:
         if _stop_requested(project.id, dev_concurrency.bound_run(project)):
             _park_stopped(db, project)
@@ -5079,7 +5089,8 @@ def _remote_ops(target: dict, token: str, branch: str = AGENT_BRANCH) -> dict:
 
 
 def _run_development_customer(db: Session, project: Project, target: dict,
-                             fix_only: bool, steering_note: str | None = None) -> None:
+                             fix_only: bool, steering_note: str | None = None,
+                             fix_instruction: str | None = None) -> None:
     """Customer-repo dev flow (GitHub PR / customer-GitLab MR / other host): the
     sandboxed agent pushes agent/mvp over the deploy key, then we publish by the
     resolved token + the push repo's auto_merge:
@@ -5130,7 +5141,8 @@ def _run_development_customer(db: Session, project: Project, target: dict,
     try:
         logs = _build_and_boot(db, project, target, thread=thread,
                                skip_agent=skip_agent, boot_verb=boot_verb,
-                               steering_note=steering_note)
+                               steering_note=steering_note,
+                               fix_instruction=fix_instruction)
     except _DevRunHandled:
         return
 
@@ -6079,6 +6091,111 @@ def _agent_branch_merged_ssh(project_id: str, remote: str) -> bool | None:
         return None
 
 
+# §14.10 CI watch: the run_error marker that pauses (not ends) the CI-fix loop
+# while the wallet is empty - cleared implicitly by the next dispatched fix
+# (a chained run is a fresh row).
+_CI_FIX_PAUSED_CREDITS = "CI fix paused: out of credits"
+
+
+def _maybe_ci_fix(j: dict, sha: str | None) -> None:
+    """§14.10 CI watch: a failed pipeline on the OPEN change of an awaiting_merge
+    run gets the same bounded automatic-fix loop the platform-GitLab path has
+    (§14.5). The failed job logs become a scoped fix instruction and a fix run
+    is CHAINED onto the parked row (§revise mechanics: supersede, then
+    acquire_slot with the row as predecessor - same workspace, same branch, so
+    the open PR/MR collects the fix commits and billing stays per-row honest);
+    the run then re-publishes through the ordinary path, re-reviewed and
+    re-merged for auto_merge targets, re-parked awaiting_merge for manual ones.
+    Bounded by ci_max_retries per work unit (`DevRun.ci_fix_attempts`, carried
+    chain-forward). Exhaustion and an empty wallet each post ONE message and
+    keep the row awaiting_merge - the change stays open, so the customer fixing
+    or merging it themselves still deploys through this sweep. Only API-visible
+    changes (github / customer gitlab, with a token and a ledger row) are
+    watched; every provider error is a silent skip until the next tick."""
+    if not (sha and j.get("run_id") and j.get("number") and j.get("token")):
+        return
+    try:
+        if j["provider"] == "github":
+            status = github.ci_status(j["owner"], j["name"], sha, token=j["token"])
+        else:
+            status = gitlab.customer_pipeline_status(j["base_url"], j["token"],
+                                                     j["path"], sha)
+    except Exception as exc:
+        log.warning("ci watch: status check failed for %s: %s", j["id"], exc)
+        return
+    if status != "failure":
+        return
+    logs = ""
+    try:
+        if j["provider"] == "github":
+            logs = github.failed_ci_logs(j["owner"], j["name"], sha, token=j["token"])
+        else:
+            logs = gitlab.customer_failed_pipeline_logs(j["base_url"], j["token"],
+                                                        j["path"], j["number"])
+    except Exception as exc:
+        log.warning("ci watch: log fetch failed for %s: %s", j["id"], exc)
+    with SyncSession() as db:
+        project = db.get(Project, j["id"])
+        row = db.get(DevRun, j["run_id"])
+        if (project is None or row is None or row.state != "awaiting_merge"
+                or project.block_auto_development):
+            return
+        dev_concurrency.bind_run(project, row)
+        label = f"{j['noun']} {j['ref']}{j['number']}"
+        attempts = row.ci_fix_attempts or 0
+        if attempts >= settings.ci_max_retries:
+            if attempts == settings.ci_max_retries:
+                # One exhaustion message, then silence: cap+1 marks it posted.
+                row.ci_fix_attempts = attempts + 1
+                _post_message(db, j["id"], _dev_thread(db, project), "agent",
+                              f"The automatic fixes couldn't get the pipeline on {label} "
+                              f"green after {settings.ci_max_retries} attempts. Fix or merge "
+                              f"it yourself ({j.get('url')}) - your demo still deploys on the "
+                              f"merge - or ask for {settings.consultant_first_name}'s review.")
+                db.commit()
+            return
+        if _out_of_credits(db, project):
+            if row.run_error != _CI_FIX_PAUSED_CREDITS:
+                row.run_error = _CI_FIX_PAUSED_CREDITS
+                _post_message(db, j["id"], _dev_thread(db, project), "agent",
+                              f"The CI pipeline on {label} failed and credits are "
+                              "exhausted - top up and I'll retry the fix automatically.")
+                db.commit()
+            return
+        req = db.get(Request, row.request_id) if row.request_id else None
+        row.state = "superseded"
+        try:
+            run = dev_concurrency.acquire_slot(db, project, req, predecessor=row)
+        except dev_concurrency.SlotRefused as exc:
+            row.state = "awaiting_merge"  # give the change its watcher back
+            db.commit()
+            log.info("ci fix refused for %s: %s", j["id"], exc)
+            return
+        # The open change rides along so the sweep keeps watching it once the
+        # fix parks; the attempt count is what bounds the whole work unit.
+        run.pr_number, run.pr_url = row.pr_number, row.pr_url
+        run.ci_fix_attempts = attempts + 1
+        _post_message(db, j["id"], _dev_thread(db, project), "agent",
+                      f"The CI pipeline on {label} failed - attempting an automatic "
+                      f"fix ({attempts + 1}/{settings.ci_max_retries}).",
+                      meta=_pr_meta(_pr_ref(j["number"], j.get("url"), j["provider"])))
+        try:
+            transition_sync(db, project, "development", "system",
+                            f"Fixing the failed CI pipeline on {label}")
+        except TransitionError:
+            pass
+        db.commit()
+        rid = run.id
+    fix = ((f"The CI pipeline on the {j['noun']} for your branch failed. Fix ONLY "
+            "what makes it fail, keeping everything else working - do NOT rewrite "
+            "the project:\n\n" + logs) if logs else
+           f"The CI pipeline on the {j['noun']} for your branch failed; inspect "
+           "the repository's CI configuration, find the failure and fix it.")
+    run_development.apply_async(args=[j["id"]],
+                                kwargs={"fix_only": True, "run_id": rid,
+                                        "fix_instruction": fix})
+
+
 @celery.task(name="app.workers.tasks.dev_pr_sweep")
 def dev_pr_sweep() -> None:
     """Celery Beat (§14.5): for projects waiting on a merge (a GitHub PR or a
@@ -6143,13 +6260,14 @@ def dev_pr_sweep() -> None:
             jobs.append(job)
 
     for j in jobs:
-        merged, closed = False, False
+        merged, closed, head_sha = False, False, None
         if j["provider"] == "github" and j["token"] and j["number"]:
             try:
                 pr = github.get_pr(j["owner"], j["name"], j["number"], token=j["token"])
             except Exception as exc:
                 log.warning("dev_pr_sweep: get_pr failed for %s: %s", j["id"], exc)
                 continue
+            head_sha = (pr.get("head") or {}).get("sha")
             merged = bool(pr.get("merged"))
             if not merged:
                 # A customer can resolve a conflict locally, merge, and push the
@@ -6170,6 +6288,7 @@ def dev_pr_sweep() -> None:
                 log.warning("dev_pr_sweep: get_mr failed for %s: %s", j["id"], exc)
                 continue
             state = mr.get("state")
+            head_sha = mr.get("sha")
             merged = state == "merged"
             if not merged:
                 # Same out-of-band merge case as GitHub: detect it over SSH.
@@ -6223,6 +6342,12 @@ def dev_pr_sweep() -> None:
             if detected is None:
                 continue
             merged = detected
+
+        if not merged and not closed and j["provider"] in ("github", "gitlab"):
+            # §14.10 CI watch: the change is open and waiting on its merge - a
+            # failed pipeline on its head commit gets an automatic fix chained
+            # onto the parked run instead of sitting red until a human notices.
+            _maybe_ci_fix(j, head_sha)
 
         if merged:
             with SyncSession() as db:

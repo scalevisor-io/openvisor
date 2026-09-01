@@ -229,15 +229,18 @@ def test_run_development_wrapper_forwards_run_id(org_id, quiet, monkeypatch):
     dispatched run in prod (2026-08-10) while the ledger row sat queued forever."""
     seen = {}
     monkeypatch.setattr(tasks, "_run_development_impl",
-                        lambda pid, fix_only=False, run_id=None:
-                        seen.update(pid=pid, fix_only=fix_only, run_id=run_id))
+                        lambda pid, fix_only=False, run_id=None, fix_instruction=None:
+                        seen.update(pid=pid, fix_only=fix_only, run_id=run_id,
+                                    fix_instruction=fix_instruction))
     from app.services.agent_eval import collect
     monkeypatch.setattr(collect, "capture_run_record", lambda *a, **k: None)
     with SyncSession() as db:
         pid = _project(db, org_id).id
         db.commit()
-    tasks.run_development(pid, fix_only=True, run_id="run-forwarded")
-    assert seen == {"pid": pid, "fix_only": True, "run_id": "run-forwarded"}
+    tasks.run_development(pid, fix_only=True, run_id="run-forwarded",
+                          fix_instruction="fix the CI")
+    assert seen == {"pid": pid, "fix_only": True, "run_id": "run-forwarded",
+                    "fix_instruction": "fix the CI"}
 
 
 def test_slots_full_respects_workspace_mode_exclusivity(org_id):
