@@ -214,3 +214,55 @@ def test_build_and_boot_seeds_first_dispatch_with_the_ci_fix(org, monkeypatch, q
                                      fix_instruction="FIX THE CI")
     assert logs == "ok"
     assert seen == ["FIX THE CI"]
+
+
+# ---------------------------------------------------------------- github.ci_status
+# §14.10 on partial tokens: a fine-grained PAT often grants only ONE of GitHub's
+# two CI surfaces - the readable one must still produce a verdict (seen live:
+# a token 403ing /commits/{sha}/status blinded the whole watch).
+
+def _gh_transport(status_resp, checks_resp):
+    import httpx
+
+    def handler(request):
+        if request.url.path.endswith("/status"):
+            return status_resp() if callable(status_resp) else httpx.Response(
+                status_resp[0], json=status_resp[1])
+        return httpx.Response(checks_resp[0], json=checks_resp[1])
+    return httpx.MockTransport(handler)
+
+
+def _gh_client(monkeypatch, transport):
+    import httpx
+
+    from app.services import github
+    monkeypatch.setattr(github, "_client",
+                        lambda token=None: httpx.Client(
+                            base_url="https://api.github.com", transport=transport))
+
+
+def test_ci_status_statuses_denied_check_runs_still_answer(monkeypatch):
+    from app.services import github
+    _gh_client(monkeypatch, _gh_transport(
+        (403, {"message": "Resource not accessible"}),
+        (200, {"check_runs": [{"status": "completed", "conclusion": "failure"}]})))
+    assert github.ci_status("o", "r", "sha", token="t") == "failure"
+
+
+def test_ci_status_check_runs_denied_statuses_still_answer(monkeypatch):
+    from app.services import github
+    _gh_client(monkeypatch, _gh_transport(
+        (200, {"state": "success", "total_count": 2}),
+        (403, {"message": "Resource not accessible"})))
+    assert github.ci_status("o", "r", "sha", token="t") == "success"
+
+
+def test_ci_status_both_denied_raises_for_the_sweep_to_skip(monkeypatch):
+    import httpx
+    import pytest as _pytest
+
+    from app.services import github
+    _gh_client(monkeypatch, _gh_transport(
+        (403, {"message": "no"}), (403, {"message": "no"})))
+    with _pytest.raises(httpx.HTTPStatusError):
+        github.ci_status("o", "r", "sha", token="t")

@@ -352,15 +352,32 @@ def ci_status(owner: str, repo: str, sha: str, token: str | None = None) -> str:
     disjoint APIs - the legacy combined commit status and check runs (GitHub
     Actions reports through the latter) - so both are read and any failure wins.
     A cancelled or action_required check is neither: it is not the agent's to
-    fix, so it never triggers a fix run."""
+    fix, so it never triggers a fix run. A fine-grained PAT often grants only
+    ONE of the two surfaces ("Commit statuses" vs "Checks" read), so each is
+    optional independently - a 403/404 contributes nothing rather than blinding
+    the whole verdict; only both-unreadable raises (the sweep skips that tick)."""
+    combined: dict = {}
+    runs: list = []
+    denied: httpx.HTTPStatusError | None = None
     with _client(token) as c:
         rs = c.get(f"/repos/{owner}/{repo}/commits/{sha}/status")
-        rs.raise_for_status()
-        combined = rs.json()
+        try:
+            rs.raise_for_status()
+            combined = rs.json()
+        except httpx.HTTPStatusError as exc:
+            if rs.status_code not in (403, 404):
+                raise
+            denied = exc
         rc = c.get(f"/repos/{owner}/{repo}/commits/{sha}/check-runs",
                    params={"per_page": 100})
-        rc.raise_for_status()
-        runs = rc.json().get("check_runs", [])
+        try:
+            rc.raise_for_status()
+            runs = rc.json().get("check_runs", [])
+        except httpx.HTTPStatusError as exc:
+            if rc.status_code not in (403, 404):
+                raise
+            if denied is not None:
+                raise denied
     states: list[str] = []
     if combined.get("total_count"):
         states.append({"success": "success", "pending": "pending"}.get(
