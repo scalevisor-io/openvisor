@@ -127,20 +127,38 @@ _NULL_CONTENT = {"choices": [{"message": {"content": None}, "finish_reason": "le
                  "model": "Qwen3.6-27B", "usage": {"prompt_tokens": 10, "completion_tokens": 600}}
 
 
+def test_chat_length_retry_recovers_and_bills_both_calls(monkeypatch):
+    """§reasoning headroom: an empty completion at finish_reason=length gets ONE
+    retry at 4x the budget - re-sending the same call is guaranteed to fail the
+    same way - and the first call's reasoning tokens (real provider spend) are
+    folded into the returned usage."""
+    posts = _script(monkeypatch, [_Resp(200, json_data=_NULL_CONTENT),
+                                  _Resp(200, json_data=_OK)])
+    content, usage = llm.chat([{"role": "user", "content": "hi"}], model="m",
+                              base_url="http://x", api_key="k", max_tokens=600)
+    assert content == '{"ok": true}'
+    assert [p["max_tokens"] for p in posts] == [600, 2400]
+    assert usage["input_tokens"] == 20 and usage["output_tokens"] == 605
+
+
 def test_chat_raises_llm_unavailable_on_null_content(monkeypatch):
     """A reasoning model that burns the whole token budget answers 200 with
-    content: null - chat must raise LLMUnavailable (the class every caller
-    fail-safes on), never let a None escape to a .strip() crash downstream."""
-    _script(monkeypatch, [_Resp(200, json_data=_NULL_CONTENT)])
+    content: null - after the one 4x length retry also comes back empty, chat
+    must raise LLMUnavailable (the class every caller fail-safes on), never let
+    a None escape to a .strip() crash downstream."""
+    posts = _script(monkeypatch, [_Resp(200, json_data=_NULL_CONTENT),
+                                  _Resp(200, json_data=_NULL_CONTENT)])
     with pytest.raises(llm.LLMUnavailable, match="finish_reason=length"):
         llm.chat([{"role": "user", "content": "hi"}], model="m", base_url="http://x",
                  api_key="k", max_tokens=600)
+    assert [p["max_tokens"] for p in posts] == [600, 2400]
 
 
 def test_classify_fail_safes_to_none_on_null_content(monkeypatch):
     from app.agents import pipeline
 
-    _script(monkeypatch, [_Resp(200, json_data=_NULL_CONTENT)])
+    _script(monkeypatch, [_Resp(200, json_data=_NULL_CONTENT),
+                          _Resp(200, json_data=_NULL_CONTENT)])
 
     class _P:
         id = "p1"

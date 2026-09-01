@@ -128,16 +128,19 @@ def chat(messages: list[dict], *, base_url: str | None = None, api_key: str | No
     providers that reject the parameter get one retry without it, so callers can
     pass it blindly. `cache_key` (§18) is a stable conversation/project id sent as
     `prompt_cache_key` on supporting providers so repeated prefixes are served
-    (and billed) from the provider's prompt cache; callers pass it blindly too."""
+    (and billed) from the provider's prompt cache; callers pass it blindly too.
+    An empty completion at finish_reason=length (§reasoning headroom: the model
+    reasoned through the whole budget) is retried once at 4x max_tokens, with
+    both calls' tokens in the returned usage."""
     base = (base_url or settings.openai_base_url).rstrip("/")
     url = f"{base}/chat/completions"
     key = api_key or settings.openai_api_key
     send_cache_key = bool(cache_key) and _supports_cache_key(base)
 
     def _payload(token_param: str, with_effort: bool = True, with_cache: bool = True,
-                 with_json: bool = True) -> dict:
+                 with_json: bool = True, budget: int | None = None) -> dict:
         p: dict = {"model": model or settings.openai_model, "messages": messages,
-                   token_param: max_tokens}
+                   token_param: budget or max_tokens}
         if json_mode and with_json:
             p["response_format"] = {"type": "json_object"}
         if effort and with_effort:
@@ -146,17 +149,19 @@ def chat(messages: list[dict], *, base_url: str | None = None, api_key: str | No
             p["prompt_cache_key"] = cache_key
         return p
 
-    def _post(token_param: str):
+    def _post(token_param: str, budget: int | None = None):
         try:
-            return _post_chat(url, _payload(token_param), key)
+            return _post_chat(url, _payload(token_param, budget=budget), key)
         except LLMUnavailable as exc:
             # A provider that doesn't know reasoning_effort, prompt_cache_key or
             # json_object 400s naming it - strip the named one and retry once;
             # anything else re-raises unchanged.
             if effort and "reasoning" in str(exc).lower():
-                return _post_chat(url, _payload(token_param, with_effort=False), key)
+                return _post_chat(url, _payload(token_param, with_effort=False,
+                                                budget=budget), key)
             if send_cache_key and "prompt_cache_key" in str(exc):
-                return _post_chat(url, _payload(token_param, with_cache=False), key)
+                return _post_chat(url, _payload(token_param, with_cache=False,
+                                                budget=budget), key)
             # Anthropic's OpenAI-compatible surface takes response_format only as
             # `json_schema`: `{"type": "json_object"}` is refused outright with
             # "response_format.type: Input should be 'json_schema'". Every
@@ -168,39 +173,58 @@ def chat(messages: list[dict], *, base_url: str | None = None, api_key: str | No
             # losing the call. Seen in production 2026-08-30, on every message
             # sent after a project was pointed at an Anthropic endpoint.
             if json_mode and "response_format" in str(exc):
-                return _post_chat(url, _payload(token_param, with_json=False), key)
+                return _post_chat(url, _payload(token_param, with_json=False,
+                                                budget=budget), key)
             raise
 
+    token_param = "max_tokens"
     try:
-        resp = _post("max_tokens")
+        resp = _post(token_param)
     except LLMUnavailable as exc:
         # Retry once with `max_completion_tokens` when the model demands it (GPT-5 /
         # o-series). Only when the provider's 400 explicitly names it, so any other
         # error re-raises unchanged.
         if _MAX_COMPLETION_HINT not in str(exc):
             raise
-        resp = _post("max_completion_tokens")
+        token_param = "max_completion_tokens"
+        resp = _post(token_param)
+
+    def _counts(raw: dict) -> tuple[int, int, int]:
+        # (input, output, cached-input) - cached reads per §18: OpenAI-compatible
+        # `prompt_tokens_details.cached_tokens`, flat `cached_tokens` fallback.
+        return (raw.get("prompt_tokens", 0), raw.get("completion_tokens", 0),
+                int((raw.get("prompt_tokens_details") or {}).get("cached_tokens")
+                    or raw.get("cached_tokens") or 0))
+
     data = resp.json()
     choice = data["choices"][0]
     content = choice["message"]["content"]
+    spent = (0, 0, 0)
+    if not content and choice.get("finish_reason") == "length":
+        # §reasoning headroom: a reasoning model (Qwen3, GPT-5/o-series) that
+        # ignores or lacks reasoning_effort can burn the WHOLE budget on hidden
+        # reasoning and answer 200 with content null/empty. Re-sending the same
+        # call is guaranteed to fail the same way (the chat responder's "send
+        # that again" copy looped customers into identical failures), so retry
+        # ONCE here with 4x the budget. The first call's reasoning tokens were
+        # real provider spend, so its usage is folded into the returned counts.
+        spent = _counts(data.get("usage", {}) or {})
+        resp = _post(token_param, budget=max_tokens * 4)
+        data = resp.json()
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
     if content is None:
-        # Reasoning models (Qwen3, GPT-5/o-series) can exhaust the whole token
-        # budget on hidden reasoning and answer 200 with content: null. Raise the
-        # class every caller already fail-safes on instead of crashing downstream.
+        # Still empty (or a non-length null): raise the class every caller
+        # already fail-safes on instead of crashing downstream.
         raise LLMUnavailable(
             f"empty completion (finish_reason={choice.get('finish_reason')}) - "
             "the model likely spent the entire token budget on reasoning")
-    raw_usage = data.get("usage", {}) or {}
+    inp, out, cached = _counts(data.get("usage", {}) or {})
     usage = {
         "model": data.get("model") or model or settings.openai_model,
-        "input_tokens": raw_usage.get("prompt_tokens", 0),
-        "output_tokens": raw_usage.get("completion_tokens", 0),
-        # Prompt-cache READS (subset of prompt_tokens), billed at the cached rate
-        # (§18): OpenAI-compatible `prompt_tokens_details.cached_tokens`, with the
-        # flat `cached_tokens` fallback some providers use.
-        "cached_input_tokens": int(
-            (raw_usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-            or raw_usage.get("cached_tokens") or 0),
+        "input_tokens": inp + spent[0],
+        "output_tokens": out + spent[1],
+        "cached_input_tokens": cached + spent[2],
     }
     return content, usage
 
