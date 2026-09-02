@@ -307,10 +307,10 @@ async def accept_quote(quote_id: str, body: QuoteDecisionIn,
         settings.admin_email,
         brand.subject(f"Quote accepted: {quote.title}"),
         f"The customer accepted the quote '{quote.title}' "
-        f"({quote.price_credits:g} credits) on project '{project.name}'.\n"
+        f"({quote.price_credits:g} credits) on project '{project.name}'. "
+        "This commits you to deliver it to the customer repo.\n"
         + (f"Comment: {body.comment}\n" if body.comment else "")
-        + f"{settings.app_base_url}/projects/{project.id}\n\n"
-        f"This commits you to deliver it to the customer repo."])
+        + f"\n{settings.app_base_url}/projects/{project.id}"])
     return quote_out(quote)
 
 
