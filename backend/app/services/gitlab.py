@@ -13,6 +13,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from app.core.config import settings
+from app.services import naming
 
 log = logging.getLogger(__name__)
 
@@ -124,17 +125,32 @@ def _group_id(c: httpx.Client) -> int:
     return r.json()["id"]
 
 
+def _post_project(c: httpx.Client, group_id: int, name: str, path: str) -> httpx.Response:
+    return c.post("/projects", data={
+        "name": name, "path": path, "namespace_id": group_id,
+        "initialize_with_readme": True, "visibility": "private",
+    })
+
+
 def create_project(uuid_prefix: str, name: str) -> dict:
-    """uuid-prefixed project in the configured group. Returns GitLab project JSON."""
+    """uuid-prefixed project in the configured group. Returns GitLab project JSON.
+
+    The name is derived from the customer's own description (§9.2), so it
+    routinely carries characters GitLab's path alphabet ([a-zA-Z0-9_.-]) refuses
+    outright - a French accent, an apostrophe, a comma - and the 400 that used to
+    come back left the project with NO repository at all. The path is slugified;
+    if GitLab still refuses (a display name it dislikes, a path already taken),
+    one retry falls back to the bare uuid prefix, which is unique per project:
+    an ugly repository name beats no repository."""
+    slug = naming.slugify(name)
+    path = f"{uuid_prefix}-{slug}"[:60].rstrip("-.") if slug else uuid_prefix
     with _client() as c:
         gid = _group_id(c)
-        r = c.post("/projects", data={
-            "name": f"{uuid_prefix}-{name}"[:60],
-            "path": f"{uuid_prefix}-{name}".lower().replace(" ", "-")[:60],
-            "namespace_id": gid,
-            "initialize_with_readme": True,
-            "visibility": "private",
-        })
+        r = _post_project(c, gid, f"{uuid_prefix}-{name}"[:60], path)
+        if r.status_code == 400:
+            log.warning("GitLab refused project '%s' (path %s): %s - retrying as %s",
+                        name, path, r.text[:200], uuid_prefix)
+            r = _post_project(c, gid, uuid_prefix, uuid_prefix)
         r.raise_for_status()
         return r.json()
 

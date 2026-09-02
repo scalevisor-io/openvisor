@@ -77,6 +77,39 @@ def email_chat_message(project_id: str, message_id: str) -> None:
 
 # ---------------------------------------------------------------- provisioning
 
+def _has_push_target(db: Session, project: Project) -> bool:
+    """§hub shared repo: this project builds into a connected repo of its own,
+    so it needs no platform GitLab repo."""
+    return db.query(ProjectRepo).filter(
+        ProjectRepo.project_id == project.id,
+        ProjectRepo.is_push_target.is_(True)).first() is not None
+
+
+def _create_platform_repo(db: Session, project: Project) -> bool:
+    """Create the project's platform GitLab repo and install its deploy key.
+    Returns whether the project has one afterwards. Idempotent, and best-effort
+    on the key (read access is granted by the caller that has the email).
+    Caller commits. Shared with the dev dispatch, which retries this rather than
+    building a project that has nowhere to push (§14 no-target guard)."""
+    if project.gitlab_project_id:
+        return True
+    try:
+        gl_project = gitlab.create_project(project.id.split("-")[0], project.name)
+        project.gitlab_project_id = gl_project["id"]
+        project.gitlab_ssh_url = gl_project.get("ssh_url_to_repo")
+        project.gitlab_web_url = gl_project.get("web_url")
+    except Exception as exc:
+        log.warning("GitLab project creation pending for %s: %s", project.id, exc)
+        return False
+    if project.ssh_public_key:
+        try:
+            gitlab.add_deploy_key(project.gitlab_project_id, f"{settings.brand_name} agent",
+                                  project.ssh_public_key, can_push=True)
+        except Exception as exc:
+            log.warning("GitLab deploy key pending for %s: %s", project.id, exc)
+    return True
+
+
 @celery.task(name="app.workers.tasks.provision_project")
 def provision_project(project_id: str, customer_email: str) -> None:
     """GitLab user + uuid-prefixed project + workspace folder (§9.10-12)."""
@@ -85,29 +118,13 @@ def provision_project(project_id: str, customer_email: str) -> None:
         if project is None:
             return
         Path(project.workspace_path).mkdir(parents=True, exist_ok=True)
-        # §hub shared repo: a project born with a connected push-target repo builds
-        # THERE - provisioning a platform GitLab repo too would create a second,
-        # empty "deliverable" nobody uses (the auto_dev precedent, which skips this
+        # A project born with a connected push-target repo builds THERE -
+        # provisioning a platform GitLab repo too would create a second, empty
+        # "deliverable" nobody uses (the auto_dev precedent, which skips this
         # task entirely; hub projects still need the workspace mkdir above).
-        has_push_target = db.query(ProjectRepo).filter(
-            ProjectRepo.project_id == project.id,
-            ProjectRepo.is_push_target.is_(True)).first() is not None
-        if has_push_target:
+        if _has_push_target(db, project):
             return
-        try:
-            uuid_prefix = project.id.split("-")[0]
-            gl_project = gitlab.create_project(uuid_prefix, project.name)
-            project.gitlab_project_id = gl_project["id"]
-            project.gitlab_ssh_url = gl_project.get("ssh_url_to_repo")
-            project.gitlab_web_url = gl_project.get("web_url")
-        except Exception as exc:
-            log.warning("GitLab project creation pending for %s: %s", project_id, exc)
-        if project.gitlab_project_id and project.ssh_public_key:
-            try:
-                gitlab.add_deploy_key(project.gitlab_project_id, f"{settings.brand_name} agent",
-                                      project.ssh_public_key, can_push=True)
-            except Exception as exc:
-                log.warning("GitLab deploy key pending for %s: %s", project_id, exc)
+        _create_platform_repo(db, project)
         if project.gitlab_project_id and customer_email:
             # Best-effort: creating instance users needs an ADMIN token; with a
             # group-scoped token this 403s and read access is granted later. A
@@ -4096,6 +4113,31 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
         db.commit()
 
         target = _dev_target(db, project)
+        # §14 no-target guard: with the real agent enabled there is no such thing
+        # as a build with nowhere to push. A project whose platform repo never got
+        # created - GitLab refused the name, or was down when the project was
+        # provisioned - used to fall all the way through to the deterministic
+        # scaffold and SHIP it: a placeholder TODO app deployed as the customer's
+        # MVP in under a second, without one LLM call and without their brief
+        # being read at all. Retry the provisioning this project is owed, then
+        # park. A missing repository is recoverable; a false delivery is not.
+        # Ahead of the plan gate and the model preflight, so a recovered target
+        # still gets both.
+        if target is None and settings.openhands_enabled:
+            if _create_platform_repo(db, project):
+                db.commit()
+                target = _dev_target(db, project)
+            if target is None:
+                _fail_to_admin(
+                    db, project,
+                    "The build can't start: this project has no code repository yet, "
+                    "so there is nothing to build into. Nothing was built or billed - "
+                    f"{settings.consultant_first_name} has been notified and will "
+                    "sort it out.",
+                    "No dev target: the project has no repository",
+                    fault=dev_faults.PLATFORM)
+                db.commit()
+                return
         _resolve_base_branch(db, project, target)
         steering = _steering_note(db, project, prev_dispatch) if fix_only else None
         if target is not None:
@@ -4163,8 +4205,8 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
         ci_attempts = 0
         boot_attempts = 0
         # A failed boot check can only be iterated on by a real agent; the
-        # deterministic scaffold (no target / OPENHANDS_ENABLED=0) gets no
-        # retries - it either boots or parks.
+        # deterministic scaffold (OPENHANDS_ENABLED=0) gets no retries - it
+        # either boots or parks.
         max_boot_fixes = settings.dev_boot_fix_attempts if settings.openhands_enabled else 0
         while True:
             if _stop_requested(project_id, dev_concurrency.bound_run(project)):
@@ -4174,8 +4216,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
             _mark_dispatch_start(db, project)
             try:
                 result = _dispatch_runner(db, project, target, fix_instruction,
-                                          steering_note=steering) if target \
-                    else _scaffold_and_local(project)
+                                          steering_note=steering)
                 log.info("dev job %s ci_attempts=%d boot_attempts=%d exit=%s", project_id,
                          ci_attempts, boot_attempts, (result or {}).get("exit_code"))
                 _save_run(project, "running", logs=(result or {}).get("logs"))
@@ -4378,11 +4419,6 @@ def _finalize_pr_deliverable(db: Session, project: Project, label: str,
             project.dev_request_id = None
     _safe_transition(db, project, "development", "Request merged")
     db.commit()
-
-
-def _scaffold_and_local(project: Project) -> dict:
-    _scaffold_placeholder(project)
-    return {"exit_code": "0", "logs": "local scaffold build (OPENHANDS_ENABLED=0)"}
 
 
 class _DevRunHandled(Exception):

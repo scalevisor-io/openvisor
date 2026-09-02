@@ -3,6 +3,18 @@ bootstrap name is derived from the description at creation, then the LLM
 title-generation prompt (#9) refines it during evaluation unless the customer
 has renamed the project (project.name_customized)."""
 import re
+import unicodedata
+
+
+def slugify(name: str) -> str:
+    """Lowercase ASCII slug from a project name: accents are FOLDED ("Créer" ->
+    "creer", never "crer") and every other run of characters collapses to one
+    "-". The name is derived from the customer's own description (§9.2), so an
+    accent, an apostrophe or a comma is the norm rather than the exception -
+    and both places a name becomes an identifier (the demo subdomain, the
+    platform GitLab path) reject them outright."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-")
 
 
 def name_from_description(description: str) -> str:
@@ -17,8 +29,7 @@ def name_from_description(description: str) -> str:
 def subdomain_for(project_id: str, name: str) -> str:
     """`<uuid-prefix>-<slug>` demo subdomain, slug derived from the name."""
     uuid_prefix = project_id.split("-")[0]
-    slug = "".join(c for c in name.lower().replace(" ", "-") if c.isalnum() or c == "-")[:20]
-    return f"{uuid_prefix}-{slug}".strip("-")
+    return f"{uuid_prefix}-{slugify(name)[:20]}".strip("-")
 
 
 def sanitize_branch(name: str | None) -> str | None:
