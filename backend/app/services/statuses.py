@@ -7,6 +7,25 @@ STATUSES = {
     "awaiting_customer", "awaiting_admin", "finished", "canceled",
 }
 
+# Reader-facing names for the same statuses. The wire format never changes -
+# this is what a subject line and an email body say instead of "payment_due".
+STATUS_LABELS = {
+    "draft": "Draft",
+    "awaiting_review": "Awaiting review",
+    "payment_due": "Payment due",
+    "development": "In development",
+    "awaiting_customer": "Awaiting the customer",
+    "awaiting_admin": "Awaiting the consultant",
+    "finished": "Finished",
+    "canceled": "Canceled",
+}
+
+
+def status_label(status: str) -> str:
+    """The reader-facing name, falling back to the raw status."""
+    return STATUS_LABELS.get(status, status)
+
+
 # from -> {to: allowed actors}
 TRANSITIONS: dict[str, dict[str, set[str]]] = {
     "draft": {

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models import Message, Project, Request, StatusChange, User
 from app.services import brand, events, hub_events
-from app.services.statuses import can_transition, emails_for
+from app.services.statuses import can_transition, emails_for, status_label
 
 
 class TransitionError(Exception):
@@ -16,14 +16,15 @@ class TransitionError(Exception):
 
 
 def _subject(project: Project, to_status: str) -> str:
-    return brand.subject(f"{project.name}: status → {to_status}")
+    return brand.subject(f"{project.name}: {status_label(to_status).lower()}")
 
 
 def _body(project: Project, to_status: str, reason: str | None) -> str:
     url = f"{settings.app_base_url}/projects/{project.id}"
-    lines = [f"Project '{project.name}' is now: {to_status}."]
+    lines = [f"Project '{project.name}' is now {status_label(to_status)}."]
     if reason:
         lines.append(f"Note: {reason}")
+    lines.append("")
     lines.append(url)
     return "\n".join(lines)
 
@@ -90,7 +91,8 @@ async def transition_async(
         select(User).where(User.org_id == project.org_id).order_by(User.created_at)
     )).scalars().first()
     for to, subject, body in _plan_emails(project, owner.email if owner else None, from_s, to_status, reason):
-        celery.send_task("app.workers.tasks.send_email", args=[to, subject, body])
+        celery.send_task("app.workers.tasks.send_email", args=[to, subject, body],
+                         kwargs={"cta": "Open the project"})
 
     await events.publish_async(project.id, {"type": "status", "project_id": project.id, "status": to_status})
     await events.publish_async(project.id, {"type": "message", "message": {
@@ -130,7 +132,8 @@ def transition_sync(
         select(User).where(User.org_id == project.org_id).order_by(User.created_at)
     ).scalars().first()
     for to, subject, body in _plan_emails(project, owner.email if owner else None, from_s, to_status, reason):
-        celery.send_task("app.workers.tasks.send_email", args=[to, subject, body])
+        celery.send_task("app.workers.tasks.send_email", args=[to, subject, body],
+                         kwargs={"cta": "Open the project"})
 
     events.publish_sync(project.id, {"type": "status", "project_id": project.id, "status": to_status})
     events.publish_sync(project.id, {"type": "message", "message": {

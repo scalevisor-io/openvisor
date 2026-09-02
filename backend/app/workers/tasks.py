@@ -59,8 +59,8 @@ def _owner_email(db: Session, project: Project) -> str | None:
 # ---------------------------------------------------------------- email
 
 @celery.task(name="app.workers.tasks.send_email")
-def send_email(to: str, subject: str, body: str) -> bool:
-    return emailer.send_email(to, subject, body)
+def send_email(to: str, subject: str, body: str, cta: str | None = None) -> bool:
+    return emailer.send_email(to, subject, body, cta)
 
 
 @celery.task(name="app.workers.tasks.email_chat_message")
@@ -71,8 +71,9 @@ def email_chat_message(project_id: str, message_id: str) -> None:
         to = _owner_email(db, project)
         if to and msg:
             emailer.send_email(to, brand.subject(f"{project.name} - message from {settings.consultant_first_name}"),
-                               msg.body + f"\n\nReply in the app: "
-                               f"{settings.app_base_url}/projects/{project.id}")
+                               msg.body + "\n\n"
+                               f"{settings.app_base_url}/projects/{project.id}",
+                               "Reply in the app")
 
 
 # ---------------------------------------------------------------- provisioning
@@ -1514,8 +1515,9 @@ def _notify_auto_dev_paused(db: Session, project: Project) -> None:
         emailer.send_email(
             email, brand.subject(f"{project.name}: auto-developer paused"),
             f"New matching issues are waiting on {project.name}, but the credit "
-            "balance is empty. Top up to resume automatic builds: "
-            f"{settings.app_base_url}/projects/{project.id}")
+            "balance is empty. Top up to resume automatic builds.\n\n"
+            f"{settings.app_base_url}/projects/{project.id}",
+            "Top up credits")
 
 
 def _record_unpollable(db: Session, project: Project, reason: str) -> None:

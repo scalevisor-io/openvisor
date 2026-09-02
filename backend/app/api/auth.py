@@ -41,7 +41,9 @@ def _send_verification(user: User) -> None:
     url = f"{settings.app_base_url}/verify-email?token={token}"
     celery.send_task("app.workers.tasks.send_email", args=[
         user.email, brand.subject("Verify your email"),
-        f"Welcome to {settings.brand_name}. Verify your email:\n{url}\n\nLink valid 48h."])
+        f"Welcome to {settings.brand_name}. Confirm your address to activate your "
+        f"account - the link is valid for 48 hours.\n\n{url}"],
+        kwargs={"cta": "Verify your email"})
 
 
 @router.get("/csrf")
@@ -154,7 +156,9 @@ async def forgot_password(body: EmailIn, request: Request, db: AsyncSession = De
         url = f"{settings.app_base_url}/reset-password?token={token}"
         celery.send_task("app.workers.tasks.send_email", args=[
             user.email, brand.subject("Password reset"),
-            f"Reset your password:\n{url}\n\nLink valid 48h. Ignore if you didn't ask."])
+            "Use the link below to choose a new password. It is valid for 48 hours "
+            f"- ignore this email if you did not ask for it.\n\n{url}"],
+            kwargs={"cta": "Reset your password"})
     return {"ok": True}
 
 
