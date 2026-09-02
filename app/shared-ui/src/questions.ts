@@ -17,7 +17,8 @@ export function messageQuestion(m: SharedMessage): MessageQuestionMeta | null {
       (o as MessageQuestionOption).label.trim().length > 0,
   );
   if (options.length < 2) return null;
-  return { kind: "question", question: meta.question, options, allow_free_text: meta.allow_free_text !== false };
+  return { kind: "question", question: meta.question, options,
+           allow_free_text: meta.allow_free_text !== false, plan: meta.plan === true };
 }
 
 export interface QuestionState {

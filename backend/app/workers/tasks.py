@@ -536,7 +536,7 @@ def _classify_chat_message(project_id: str, message_id: str, outcome: dict) -> N
                 outcome["intent"] = "plan_changes"
                 return
             project.dev_plan = ((project.dev_plan or "")
-                                + "\n\n## Customer feedback\n" + msg.body[:4000])
+                                + PLAN_FEEDBACK_MARKER + msg.body[:4000])
             _post_message(db, project_id, "main", "agent",
                           "Got it - revising the plan to fold this in. You'll get "
                           "the updated plan here shortly.")
@@ -2132,8 +2132,19 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
             f"### Question\n{consult_question[:4000]}\n")
     elif plan_only:
         prior = (project.dev_plan or "").strip()
-        prior_block = (f"\n\n### Prior plan and customer feedback (revise it)\n{prior[:8000]}\n"
-                       if prior else "")
+        # §plan revision: the customer's feedback is APPENDED to the stored plan,
+        # so slicing the concatenation handed the agent 8000 characters of its own
+        # previous plan and dropped the feedback entirely whenever the plan was
+        # longer than that - it "revised" the plan having never seen what was
+        # asked for, and nothing anywhere reported the loss. Split the two apart
+        # and give each its own budget. At most one feedback block is ever
+        # appended: the next plan pass overwrites dev_plan wholesale.
+        prior_plan, _, prior_feedback = prior.partition(PLAN_FEEDBACK_HEADING)
+        prior_block = (f"\n\n### Prior plan (revise it)\n{prior_plan.strip()[:8000]}\n"
+                       if prior_plan.strip() else "")
+        if prior_feedback.strip():
+            prior_block += ("\n### Customer feedback on that plan - ADDRESS THIS\n"
+                            f"{prior_feedback.strip()[:4000]}\n")
         plan_block = (
             "\n\n## PLAN-ONLY RUN - do NOT implement\n"
             "Execute ONLY steps 1-4 of the Working method: understand the ask, map "
@@ -6004,6 +6015,29 @@ def run_mcp_consult(project_id: str, job_id: str, question: str) -> None:
         _consult_write(job_id, state="done", answer=answer)
 
 
+# §plan visibility: how much of the plan the immutable approval MESSAGE carries.
+# The rest is not lost - the full text lives on Project.dev_plan and the app
+# offers it beside the question (chat messages can never be edited, so a
+# thousands-of-words plan pasted inline would sit in the thread forever).
+PLAN_CHAT_CHARS = 4000
+# The heading the customer's plan feedback is stored under, inside dev_plan.
+PLAN_FEEDBACK_HEADING = "## Customer feedback"
+PLAN_FEEDBACK_MARKER = f"\n\n{PLAN_FEEDBACK_HEADING}\n"
+
+
+def _plan_excerpt(plan: str) -> str:
+    """What the immutable approval MESSAGE shows. The remainder is not lost -
+    the app offers the full plan beside the question - so the note points the
+    customer THERE. It used to say the full plan was "kept", which was true of
+    the database and useless to a customer who had no way to open it: they were
+    asked to approve a plan they could read about a third of."""
+    if len(plan) <= PLAN_CHAT_CHARS:
+        return plan
+    return (plan[:PLAN_CHAT_CHARS]
+            + f"\n\n*Showing the first {PLAN_CHAT_CHARS:,} characters of {len(plan):,} - "
+              "open the full plan below before you decide.*")
+
+
 def _run_plan_pass(db: Session, project: Project, target: dict) -> None:
     """§working method plan gate: a bounded PLAN-ONLY sandbox pass (explore +
     write .openvisor/plan.md, no edits, no publish), then the plan goes to chat
@@ -6043,9 +6077,25 @@ def _run_plan_pass(db: Session, project: Project, target: dict) -> None:
                   fault=fault)
         db.commit()
         return
+    # §plan visibility: the plan is agent-authored text the customer now reads IN
+    # FULL in the app, so it gets the same scrub the build console applies to
+    # everything the sandbox writes (§devfeed redaction): platform secrets, this
+    # project's own secret Memory values, credential-shaped strings and verbatim
+    # KB spans. The excerpt used to be the only exposure and was never cleaned.
+    secrets, fingerprints = devfeed._guards(project)
+    plan = devfeed._clean_text(plan, secrets, fingerprints)
+    if plan == devfeed.WITHHELD:
+        _post_message(db, project.id, _dev_thread(db, project), "agent",
+                      "The planning pass wrote a plan I can't show you - it quoted "
+                      "confidential material. Nothing was built; hit Resume to retry.")
+        _safe_transition(db, project, "awaiting_customer", "Plan withheld")
+        _save_run(project, "failed", logs=logs,
+                  error="Plan withheld by the content guard", fault=dev_faults.PLATFORM)
+        db.commit()
+        return
     project.dev_plan = plan[:20000]
     project.dev_plan_status = "proposed"
-    shown = plan[:4000] + ("\n\n[plan truncated - full plan kept]" if len(plan) > 4000 else "")
+    shown = _plan_excerpt(plan)
     # The approval question goes to MAIN, not the build thread: approvals are
     # orchestrator decisions (same pattern as the §12 scoped-request confirm),
     # and the deterministic plan branch in classify_chat_message listens there.
@@ -6054,6 +6104,9 @@ def _run_plan_pass(db: Session, project: Project, target: dict) -> None:
         "Here's my implementation plan:\n\n" + shown +
         "\n\nShall I build this?",
         meta={"kind": "question",
+              # §plan visibility: marks THIS question as the plan approval, so the
+              # app renders the full plan beside it instead of the excerpt alone.
+              "plan": True,
               "question": "Shall I build this plan?",
               "options": [
                   {"label": PLAN_APPROVE_LABEL,

@@ -328,6 +328,11 @@ def project_out(p: Project, *, include_secrets: bool = True) -> dict:
         "quick_devs_enabled": False,
         "dev_run_state": p.dev_run_state,
         "dev_plan_status": p.dev_plan_status,
+        # §plan visibility: the FULL plan. The approval message carries only an
+        # excerpt (immutable chat), so without this the customer was asked to
+        # approve a plan they could read maybe a third of. Null on every project
+        # that never ran a plan pass, which is most of them.
+        "dev_plan": p.dev_plan,
         # §threads: the request the in-flight/last run is scoped to (null = the
         # MVP build) - lets the SPA mark which thread is building.
         "dev_request_id": p.dev_request_id,
