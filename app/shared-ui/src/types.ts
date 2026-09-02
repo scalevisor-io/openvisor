@@ -20,6 +20,9 @@ export interface MessageQuestionMeta {
   question: string;
   options: MessageQuestionOption[];
   allow_free_text?: boolean;
+  // §plan visibility: this question is the plan approval, so the host offers
+  // the project's full plan next to it (the body holds only an excerpt).
+  plan?: boolean;
 }
 
 export interface MessageConfirmMeta {

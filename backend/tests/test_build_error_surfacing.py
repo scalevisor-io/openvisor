@@ -215,7 +215,7 @@ def test_plan_only_task_block_and_approved_plan_block(monkeypatch):
 
     text, _ = tasks._build_task_file(None, _Proj(), plan_only=True)
     assert "PLAN-ONLY RUN" in text and "plan.md" in text
-    assert "Prior plan and customer feedback" in text and "old plan" in text
+    assert "Prior plan (revise it)" in text and "old plan" in text
 
     text2, _ = tasks._build_task_file(None, _Proj(), approved_plan="THE PLAN")
     assert "Approved plan" in text2 and "THE PLAN" in text2
@@ -508,3 +508,74 @@ def test_preflight_fails_open_when_only_models_is_down(monkeypatch):
     assert tasks._model_preflight(None, _P()) is None
     _fake_models(monkeypatch, status=502, probe_status=400, probe_text="odd gateway")
     assert tasks._model_preflight(None, _P()) is None  # not this guard's call
+
+
+# ------------------------------------------------- §plan visibility / revision
+
+class _PlanProj:
+    id = "p1"
+    name = "P"
+    description = "d"
+    speciality = "general-webapp"
+    from_scratch = True
+    sovereign = False
+    sovereign_comment = None
+    kind = "ai"
+    kb_ids = None
+    dev_request_id = None
+    dev_plan_status = "proposed"
+    org_id = "o1"
+    use_global_memory = None
+    dev_plan = ""
+
+
+def _plan_task_text(monkeypatch, dev_plan):
+    monkeypatch.setattr(tasks, "_context_repos", lambda db, project: [])
+    monkeypatch.setattr(tasks, "_effective_memory", lambda db, project: [])
+    monkeypatch.setattr(tasks, "_project_files_meta", lambda db, project: [])
+    monkeypatch.setattr(tasks.rag, "search", lambda *a, **k: [])
+    from app.services import speciality as spec
+    monkeypatch.setattr(spec, "deliverable_clause", lambda p: "x")
+    monkeypatch.setattr(spec, "knowledge_tags", lambda p: [])
+    monkeypatch.setattr(spec, "one_shot_example", lambda p: "")
+    from app.agents import pipeline as pl
+    monkeypatch.setattr(pl, "_project_context", lambda db, p: "ctx")
+    proj = _PlanProj()
+    proj.dev_plan = dev_plan
+    text, _ = tasks._build_task_file(None, proj, plan_only=True)
+    return text
+
+
+def test_plan_feedback_reaches_the_revision_past_the_plan_budget(monkeypatch):
+    """The prod bug: feedback is APPENDED to dev_plan, so slicing the
+    concatenation at 8000 chars handed the agent its own previous plan and
+    dropped what the customer asked for - silently, on any longer plan."""
+    long_plan = "# Plan\n" + ("x" * 13000)
+    stored = long_plan + tasks.PLAN_FEEDBACK_MARKER + "Please use Postgres, not SQLite."
+    # the naive slice the old code used could not see the feedback at all
+    assert "Postgres" not in stored[:8000]
+
+    text = _plan_task_text(monkeypatch, stored)
+    assert "Postgres" in text, "the revision must see the customer's feedback"
+    assert "ADDRESS THIS" in text
+    assert "Prior plan (revise it)" in text
+
+
+def test_plan_without_feedback_carries_no_empty_feedback_block(monkeypatch):
+    text = _plan_task_text(monkeypatch, "# Plan\njust the plan")
+    assert "Prior plan (revise it)" in text and "just the plan" in text
+    assert "ADDRESS THIS" not in text
+
+
+def test_plan_excerpt_points_at_the_full_plan_instead_of_claiming_it_is_kept():
+    """'[plan truncated - full plan kept]' was true of the database and useless
+    to the customer, who had no way to open the rest."""
+    short = "# Plan\nsmall"
+    assert tasks._plan_excerpt(short) == short   # nothing to reveal
+
+    plan = "y" * 13508
+    shown = tasks._plan_excerpt(plan)
+    assert shown.startswith("y" * tasks.PLAN_CHAT_CHARS)
+    assert "open the full plan below" in shown
+    assert "13,508" in shown
+    assert "kept" not in shown

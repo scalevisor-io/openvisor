@@ -1,0 +1,38 @@
+.pd {
+  margin-top: 0.6rem;
+}
+.pd-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border, #d8dbe3);
+  border-radius: 8px;
+  background: var(--surface-2, #f7f8fa);
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.pd-toggle:hover {
+  border-color: var(--accent, #5b78ff);
+}
+.pd-count {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 0.82em;
+  opacity: 0.65;
+}
+.pd-body {
+  margin-top: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border, #d8dbe3);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  /* A long plan scrolls inside its own box instead of burying the buttons
+     the customer needs to answer with. */
+  max-height: 26rem;
+  overflow-y: auto;
+}
