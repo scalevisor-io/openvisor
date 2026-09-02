@@ -313,7 +313,8 @@ def main() -> int:
     admin.call("PATCH", f"/api/admin/projects/{pid}", json={"block_auto_development": False})
     p = admin.post(f"/api/admin/projects/{pid}/status", {"status": "payment_due", "note": "E2E: ready for payment"})
     check(p["status"] == "payment_due", "4 admin -> payment_due", f"status={p['status']}")
-    wait_for("4 customer payment_due email", lambda: mailpit_find("payment_due", email), 90)
+    # The subject says the reader-facing label ("payment due"), not the wire status.
+    wait_for("4 customer payment_due email", lambda: mailpit_find("payment due", email), 90)
 
     # 5. Payment: the documented local fallback (a credit grant auto-advances
     #    payment_due -> development once the wallet covers the estimate).
