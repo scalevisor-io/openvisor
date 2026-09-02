@@ -3003,6 +3003,25 @@ def _run_repo_target(db: Session, project: Project, run) -> dict | None:
     return None
 
 
+def _run_timeout_minutes(project: Project) -> int:
+    """§14.5 run wall-clock for THIS project: its own override, else the instance
+    default. The single resolver - the dispatch that arms the deployer's kill, the
+    copy that tells the customer which limit they hit, and the reaper that decides
+    a run can only be an orphan must all read the same number, or a project with a
+    raised ceiling gets reaped mid-build by a reaper still using the default."""
+    return project.dev_run_timeout_minutes or settings.dev_run_timeout_minutes
+
+
+def _reap_cutoff(own_timeout_minutes: int | None) -> datetime:
+    """The instant before which an in-flight run can only be an ORPHAN: its own
+    wall-clock (the deployer force-kills anything live past it) plus the grace.
+    Takes the raw per-project override rather than a Project so the reaper can
+    judge candidate rows without loading each one."""
+    return utcnow() - timedelta(
+        minutes=(own_timeout_minutes or settings.dev_run_timeout_minutes)
+        + settings.dev_run_reap_grace_minutes)
+
+
 def _dev_target(db: Session, project: Project) -> dict | None:
     """Where this project's development pushes. §repo binding: a BOUND run
     resolves to ITS pinned repo first (_run_repo_target - the chain never
@@ -3341,7 +3360,7 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
             cpu_request=project.dev_cpu_request or "",
             mem_request=project.dev_mem_request or "",
             harness=harness.id, max_usd=settings.dev_run_max_usd,
-            timeout_s=settings.dev_run_timeout_minutes * 60)
+            timeout_s=_run_timeout_minutes(project) * 60)
         if not _remote_unreachable(result) or attempt == _GIT_PREFLIGHT_ATTEMPTS - 1:
             return result
         log.warning("dev run for %s could not reach the git remote (attempt %s/%s) - "
@@ -4251,7 +4270,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
             # truncated workspace and falsely delivered a request.
             if (result or {}).get("timed_out"):
                 _post_message(db, project_id, _dev_thread(db, project), "agent",
-                              f"The build ran past its {settings.dev_run_timeout_minutes}-minute "
+                              f"The build ran past its {_run_timeout_minutes(project)}-minute "
                               "safety limit and was stopped to avoid runaway spend. Its progress "
                               "is saved - hit Resume to continue.")
                 _safe_transition(db, project, "awaiting_customer", "Build timed out (fail-safe)")
@@ -4954,7 +4973,7 @@ def _build_and_boot(db: Session, project: Project, target: dict, *, thread: str,
                                  "Branch already carries the change - publishing it")
         if result.get("timed_out"):
             _post_message(db, project.id, thread, "agent",
-                          f"The build ran past its {settings.dev_run_timeout_minutes}-minute "
+                          f"The build ran past its {_run_timeout_minutes(project)}-minute "
                           "safety limit and was stopped to avoid runaway spend. Its progress "
                           "is saved on the branch - hit Resume to continue.")
             _safe_transition(db, project, "awaiting_customer", "Build timed out (fail-safe)")
@@ -6544,13 +6563,19 @@ def dev_run_reaper() -> None:
     never in the window. awaiting_merge is deliberately NOT reaped - it waits for
     the customer to merge the PR (dev_pr_sweep owns its liveness), not a worker.
     Never raises: a bad row is logged and skipped so Beat keeps ticking."""
-    cutoff = utcnow() - timedelta(
-        minutes=settings.dev_run_timeout_minutes + settings.dev_run_reap_grace_minutes)
+    # §14.5 per-project wall-clock: the cutoff is no longer one number. A project
+    # whose admin raised its timeout is legitimately still building long after the
+    # instance default would have expired, so a single global cutoff would reap a
+    # LIVE run and park a build that was working. The candidate set is only the
+    # projects currently in flight, so it is cheap to select them all and judge
+    # each against its own deadline.
     with SyncSession() as db:
-        stale_ids = db.execute(select(Project.id).where(
+        candidates = db.execute(select(Project.id, Project.dev_run_started_at,
+                                       Project.dev_run_timeout_minutes).where(
             Project.dev_run_state.in_(DEV_INFLIGHT_STATES),
-            Project.dev_run_started_at.isnot(None),
-            Project.dev_run_started_at < cutoff)).scalars().all()
+            Project.dev_run_started_at.isnot(None))).all()
+    stale_ids = [pid for pid, started, own in candidates
+                 if started < _reap_cutoff(own)]
     for pid in stale_ids:
         try:
             with SyncSession() as db:
@@ -6562,7 +6587,8 @@ def dev_run_reaper() -> None:
                 # scan - the reaper must only ever touch a genuine orphan.
                 if (project.dev_run_state not in DEV_INFLIGHT_STATES
                         or project.dev_run_started_at is None
-                        or project.dev_run_started_at >= cutoff):
+                        or project.dev_run_started_at
+                        >= _reap_cutoff(project.dev_run_timeout_minutes)):
                     continue
                 dev_concurrency.bind_run(project, dev_concurrency.adopt_or_create(db, project))
                 _reap_dev_run(db, project)
@@ -6576,11 +6602,13 @@ def dev_run_reaper() -> None:
     # recovery; with live siblings -> a row-only park + mirror recompute.
     try:
         with SyncSession() as db:
-            stale_row_ids = [r.id for r in db.query(DevRun).filter(
-                DevRun.state.in_(("running", "deploying")),
-                DevRun.workspace_dir != "",
-                DevRun.started_at.isnot(None),
-                DevRun.started_at < cutoff).all()]
+            stale_row_ids = [
+                r.id for r, own in db.query(DevRun, Project.dev_run_timeout_minutes)
+                .join(Project, Project.id == DevRun.project_id)
+                .filter(DevRun.state.in_(("running", "deploying")),
+                        DevRun.workspace_dir != "",
+                        DevRun.started_at.isnot(None)).all()
+                if r.started_at < _reap_cutoff(own)]
     except Exception:
         stale_row_ids = []
         log.exception("dev_run_reaper: parallel row scan failed")
@@ -6588,10 +6616,13 @@ def dev_run_reaper() -> None:
         try:
             with SyncSession() as db:
                 row = db.get(DevRun, rid)
-                if row is None or row.state not in ("running", "deploying")                         or row.started_at is None or row.started_at >= cutoff:
+                if (row is None or row.state not in ("running", "deploying")
+                        or row.started_at is None):
                     continue
                 project = db.get(Project, row.project_id)
                 if project is None:
+                    continue
+                if row.started_at >= _reap_cutoff(project.dev_run_timeout_minutes):
                     continue
                 dev_concurrency.bind_run(project, row)
                 siblings = (db.query(DevRun)
@@ -6619,8 +6650,11 @@ def dev_run_reaper() -> None:
     # slot forever - fail it once it is older than the same stale window.
     try:
         with SyncSession() as db:
-            stale_rows = db.query(DevRun).filter(
-                DevRun.state == "queued", DevRun.created_at < cutoff).all()
+            stale_rows = [
+                r for r, own in db.query(DevRun, Project.dev_run_timeout_minutes)
+                .join(Project, Project.id == DevRun.project_id)
+                .filter(DevRun.state == "queued").all()
+                if r.created_at < _reap_cutoff(own)]
             for row in stale_rows:
                 row.state = "failed"
                 row.run_error = "Dispatch lost before the run started"

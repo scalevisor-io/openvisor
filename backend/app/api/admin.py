@@ -100,6 +100,11 @@ async def _settings_out(db: AsyncSession) -> dict:
     out["routines_disabled"] = await app_settings.get_flag(
         db, routines_svc.ROUTINES_DISABLED)
     out["default_model"] = settings.openai_model
+    # §14.5 caps: the instance defaults behind the per-project overrides, so the
+    # project card can show the number a blank field inherits instead of the
+    # words "instance default" - which named no value the admin could weigh.
+    out["dev_max_iterations_default"] = settings.dev_max_iterations_default
+    out["dev_run_timeout_minutes_default"] = settings.dev_run_timeout_minutes
     out.update(await dev_harness.admin_state(db))
     out.update(await _egress_out(db))
     out["speciality_fees"] = await _fees_out(db)
@@ -304,6 +309,8 @@ async def patch_project(project_id: str, body: ProjectPatchIn,
             project.kb_ids = sorted(set(body.kb_ids))
     if "dev_max_iterations" in body.model_fields_set:
         project.dev_max_iterations = body.dev_max_iterations
+    if "dev_run_timeout_minutes" in body.model_fields_set:
+        project.dev_run_timeout_minutes = body.dev_run_timeout_minutes
     if "dev_parallel_limit" in body.model_fields_set:
         project.dev_parallel_limit = body.dev_parallel_limit
     if "dev_harness" in body.model_fields_set:

@@ -401,6 +401,10 @@ class ProjectPatchIn(BaseModel):
     # Per-project agent-iteration cap: null resets to the instance default; the
     # route checks model_fields_set (None also means "field omitted").
     dev_max_iterations: int | None = Field(default=None, ge=1, le=500)
+    # §14.5 run wall-clock, per project. Floor of 5 so a typo cannot make every
+    # build unwinnable; ceiling of 240 because this cap is a spend fail-safe -
+    # a run that may sit unattended for four hours is already generous.
+    dev_run_timeout_minutes: int | None = Field(default=None, ge=5, le=240)
     # §parallel-builds MR3: per-project concurrency entitlement (1 = serialized,
     # null resets to the instance default; server-side ceiling re-clamped by
     # effective_parallel_limit regardless).

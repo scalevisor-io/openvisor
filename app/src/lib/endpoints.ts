@@ -486,6 +486,7 @@ export const adminApi = {
       block_auto_development?: boolean;
       kb_ids?: string[] | null;
       dev_max_iterations?: number | null;
+      dev_run_timeout_minutes?: number | null;
       dev_parallel_limit?: number | null;
       dev_cpu_request?: string | null;
       dev_mem_request?: string | null;

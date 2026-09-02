@@ -335,3 +335,75 @@ def test_reaped_project_is_resumable(quiet):
         enabled, blocker = dev_resume_capability(p)
         assert enabled and blocker is None
         db.rollback()
+
+
+# ---- §14.5 per-project wall-clock ----
+
+def test_reaper_respects_a_raised_per_project_timeout(reaper_org, quiet):
+    """The regression a single global cutoff would cause: a project whose admin
+    raised the wall-clock is legitimately STILL BUILDING past the instance
+    default, and reaping it would park a run that was working."""
+    started = utcnow() - timedelta(
+        minutes=settings.dev_run_timeout_minutes + settings.dev_run_reap_grace_minutes + 5)
+    pid = _commit_project(reaper_org, dev_run_state="running",
+                          dev_run_started_at=started,
+                          dev_run_timeout_minutes=settings.dev_run_timeout_minutes + 60)
+    tasks.dev_run_reaper()
+    with SyncSession() as db:
+        p = db.get(Project, pid)
+        assert p.dev_run_state == "running", "a live build under its own cap was reaped"
+        assert p.status == "development"
+
+
+def test_reaper_uses_a_lowered_per_project_timeout(reaper_org, quiet):
+    """The other direction: a project capped BELOW the instance default is an
+    orphan sooner, and the reaper must not wait for the global deadline."""
+    started = utcnow() - timedelta(minutes=settings.dev_run_reap_grace_minutes + 6)
+    pid = _commit_project(reaper_org, dev_run_state="running",
+                          dev_run_started_at=started, dev_run_timeout_minutes=5)
+    tasks.dev_run_reaper()
+    with SyncSession() as db:
+        p = db.get(Project, pid)
+        assert p.dev_run_state == "failed"
+        assert p.status == "awaiting_customer"
+
+
+def test_run_timeout_resolver_prefers_the_project_pin():
+    class _P:
+        dev_run_timeout_minutes = None
+    p = _P()
+    assert tasks._run_timeout_minutes(p) == settings.dev_run_timeout_minutes
+    p.dev_run_timeout_minutes = 90
+    assert tasks._run_timeout_minutes(p) == 90
+
+
+def _commit_queued_run(pid, age_minutes):
+    with SyncSession() as db:
+        row = DevRun(project_id=pid, state="queued",
+                     created_at=utcnow() - timedelta(minutes=age_minutes))
+        db.add(row)
+        db.commit()
+        return row.id
+
+
+def test_reaper_fails_a_stale_queued_row(reaper_org, quiet):
+    """§parallel-builds MR1: a dispatch lost before the run started holds its
+    request's slot forever. This sweep had NO test, which is how a NameError in
+    it survived - the whole block is wrapped in `except Exception: log`, so it
+    failed silently on every tick while the suite stayed green."""
+    pid = _commit_project(reaper_org, dev_run_state="idle", status="development",
+                          dev_run_started_at=None)
+    rid = _commit_queued_run(pid, settings.dev_run_timeout_minutes
+                             + settings.dev_run_reap_grace_minutes + 5)
+    tasks.dev_run_reaper()
+    with SyncSession() as db:
+        assert db.get(DevRun, rid).state == "failed"
+
+
+def test_reaper_leaves_a_fresh_queued_row_alone(reaper_org, quiet):
+    pid = _commit_project(reaper_org, dev_run_state="idle", status="development",
+                          dev_run_started_at=None)
+    rid = _commit_queued_run(pid, 1)
+    tasks.dev_run_reaper()
+    with SyncSession() as db:
+        assert db.get(DevRun, rid).state == "queued"

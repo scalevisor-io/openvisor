@@ -34,6 +34,15 @@ const STATUSES: ProjectStatus[] = [
 const RESOURCE_RE = /^[0-9]+(\.[0-9]+)?[bkmgBKMG]?$/;
 
 /** Field label with the explanation in an ⓘ tooltip (dense admin form). */
+// A blank cap field inherits the instance default, and naming the NUMBER is the
+// whole point: "instance default" on its own told the admin nothing they could
+// weigh against the value they were about to type - they had to go read the
+// deployment's env to find out what they were overriding. Falls back to the bare
+// wording only while the settings payload is still in flight.
+function inheritPlaceholder(value: number | undefined): string {
+  return value == null ? "instance default" : `instance default (${value})`;
+}
+
 function LabelHint({ label, hint }: { label: string; hint: string }) {
   return (
     <span>
@@ -61,6 +70,9 @@ export default function AdminProjectControls({
   const [blockAuto, setBlockAuto] = useState(project.block_auto_development);
   const [maxIter, setMaxIter] = useState(
     project.dev_max_iterations == null ? "" : String(project.dev_max_iterations),
+  );
+  const [runTimeout, setRunTimeout] = useState(
+    project.dev_run_timeout_minutes == null ? "" : String(project.dev_run_timeout_minutes),
   );
   const [parallelLimit, setParallelLimit] = useState(
     project.dev_parallel_limit == null ? "" : String(project.dev_parallel_limit),
@@ -121,6 +133,16 @@ export default function AdminProjectControls({
   async function saveSettings() {
     setBusy("settings");
     try {
+      const timeoutTrim = runTimeout.trim();
+      const timeoutVal = timeoutTrim === "" ? null : parseInt(timeoutTrim, 10);
+      if (
+        timeoutVal !== null &&
+        (!Number.isInteger(timeoutVal) || timeoutVal < 5 || timeoutVal > 240)
+      ) {
+        toast.push("Run timeout must be 5-240 minutes (or empty for the instance default)", "err");
+        setBusy(null);
+        return;
+      }
       const iterTrim = maxIter.trim();
       const iterVal = iterTrim === "" ? null : parseInt(iterTrim, 10);
       if (iterVal !== null && (!Number.isInteger(iterVal) || iterVal < 1 || iterVal > 500)) {
@@ -148,6 +170,7 @@ export default function AdminProjectControls({
         subdomain: subdomain.trim(),
         block_auto_development: blockAuto,
         dev_max_iterations: iterVal,
+        dev_run_timeout_minutes: timeoutVal,
         dev_parallel_limit: plVal,
         dev_cpu_request: cpuVal,
         dev_mem_request: memVal,
@@ -254,7 +277,21 @@ export default function AdminProjectControls({
                 max={500}
                 value={maxIter}
                 onChange={(e) => setMaxIter(e.target.value)}
-                placeholder="instance default"
+                placeholder={inheritPlaceholder(adminSettings?.dev_max_iterations_default)}
+              />
+            </label>
+            <label className="field">
+              <LabelHint
+                label="Run timeout (minutes)"
+                hint="Wall-clock ceiling on ONE build. The sandbox is force-killed past it and the run parks resumable, so raise it for projects whose builds legitimately sit on a long step - and remember it is a spend fail-safe: a stuck run bills for every minute you give it."
+              />
+              <input
+                type="number"
+                min={5}
+                max={240}
+                value={runTimeout}
+                onChange={(e) => setRunTimeout(e.target.value)}
+                placeholder={inheritPlaceholder(adminSettings?.dev_run_timeout_minutes_default)}
               />
             </label>
             {harnessPickable && (

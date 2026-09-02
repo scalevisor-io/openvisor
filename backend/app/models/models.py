@@ -147,6 +147,11 @@ class Project(Base):
     # Admin-set per-project agent-iteration cap; null = the instance default
     # (settings.dev_max_iterations_default). Bounded by the run wall-clock either way.
     dev_max_iterations: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Admin-set per-project run wall-clock, in minutes; null = the instance
+    # default (settings.dev_run_timeout_minutes). The deployer force-kills a
+    # dispatch that exceeds it, so this is the cap that decides how long a build
+    # may sit on one slow step before it is stopped and parked resumable.
+    dev_run_timeout_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # §dev harness: which agent driver the sandbox runs for this project; null =
     # the instance default. Only honored while the admin has harness selection
     # enabled - services/dev_harness.resolve() ignores a pin made under a flag
