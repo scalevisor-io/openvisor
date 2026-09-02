@@ -132,6 +132,7 @@ export interface Project extends ProjectSummary {
   sovereign_comment?: string | null;
   block_auto_development: boolean;
   dev_max_iterations?: number | null;
+  dev_run_timeout_minutes?: number | null;
   // §dev harness: the project's pinned agent driver; null = the instance default.
   // Only honored while the admin has harness selection enabled.
   dev_harness?: string | null;
@@ -571,6 +572,11 @@ export interface AdminSettings {
   // §dev harness: per-project agent-driver selection. The flag gates the whole
   // feature; `allowed` narrows the catalog the runner image ships; `default` is
   // what a project with no pin runs on. `dev_harnesses` is the catalog itself.
+  // §14.5 caps: the instance defaults a project inherits when its own field is
+  // blank, so the admin card can name the number instead of the words "instance
+  // default".
+  dev_max_iterations_default?: number;
+  dev_run_timeout_minutes_default?: number;
   dev_harness_selection_enabled: boolean;
   dev_harness_allowed: string[];
   dev_harness_default: string;
