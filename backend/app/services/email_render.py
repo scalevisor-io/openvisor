@@ -261,7 +261,7 @@ def render_html(subject: str, body: str, cta: str | None = None) -> str:
             text = _autolink(str(content)).replace("\n", "<br>")
             parts.append(
                 f'<p style="margin:0 0 16px;color:{TEXT};font-family:{FONT};'
-                f'font-size:15px;line-height:23px;">{text}</p>')
+                f'font-size:15px;line-height:23px;word-break:break-word;">{text}</p>')
     if action:
         parts.append(_button(action, cta or f"Open in {settings.brand_name}", accent))
 
