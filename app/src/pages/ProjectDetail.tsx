@@ -968,6 +968,7 @@ export default function ProjectDetail() {
             assistant={isChat && !railRequest}
             readOnly={readOnly}
             projectStatus={project.status}
+            devPlan={project.dev_plan}
             imageSupport={project.image_support}
             onStatus={onStatusPush}
             onDev={onDevPush}

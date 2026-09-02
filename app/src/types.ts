@@ -174,6 +174,7 @@ export interface Project extends ProjectSummary {
   dev_run_error: string | null;
   dev_run_started_at: string | null;
   dev_plan_status?: "proposed" | "approved" | null;
+  dev_plan?: string | null;
   dev_pr_number: number | null;
   dev_pr_url: string | null;
   dev_can_resume: boolean;

@@ -4,6 +4,7 @@ export { BuildFeed } from "./BuildFeed";
 export type { BuildFeedEvent } from "./BuildFeed";
 export { DemoAccess } from "./DemoAccess";
 export { QuestionPrompt } from "./QuestionPrompt";
+export { PlanDisclosure } from "./PlanDisclosure";
 export { messageQuestion, questionState } from "./questions";
 export type { QuestionState } from "./questions";
 export { ConfirmPrompt } from "./ConfirmPrompt";

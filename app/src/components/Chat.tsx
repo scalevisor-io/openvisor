@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { chatApi, chatImageApi, requestsApi } from "../lib/endpoints";
 import { useAuth } from "../lib/auth";
 import { relTime, Spinner } from "./ui";
-import { ConfirmPrompt, MessageBody, PrChips, QuestionPrompt, confirmState, messageConfirm, messageQuestion, messagePrs, questionState, stripPrUrls, type PrRef } from "@shared-ui";
+import { ConfirmPrompt, MessageBody, PlanDisclosure, PrChips, QuestionPrompt, confirmState, messageConfirm, messageQuestion, messagePrs, questionState, stripPrUrls, type PrRef } from "@shared-ui";
 import type { ChatImage, ImageSupport, DevRunState, Message, ProjectStatus } from "../types";
 
 // Agent/system messages sometimes deep-link to a request detail page (the §12
@@ -70,6 +70,10 @@ function MessageImages({ projectId, message }: { projectId: string; message: Mes
 }
 
 
+// Mirrors PLAN_CHAT_CHARS in workers/tasks.py: how much of the plan the
+// approval message itself carries. Only the remainder needs revealing.
+const PLAN_CHAT_CHARS = 4000;
+
 export default function Chat({
   projectId,
   thread,
@@ -80,6 +84,7 @@ export default function Chat({
   assistant = false,
   readOnly = false,
   projectStatus,
+  devPlan,
   onStatus,
   onDev,
 }: {
@@ -95,6 +100,9 @@ export default function Chat({
   // so instead of the generic dev-workflow copy.
   assistant?: boolean;
   projectStatus?: ProjectStatus;
+  // §plan visibility: the project's full implementation plan, offered under the
+  // plan-approval question whose message body carries only an excerpt.
+  devPlan?: string | null;
   onStatus?: (status: ProjectStatus) => void;
   // Worker pushed a dev_run_state change (a build started/moved/ended) - the
   // page refreshes the project so the Development panel follows without a reload.
@@ -362,13 +370,20 @@ export default function Chat({
                       if (!q) return null;
                       const { active, selected } = questionState(messages, m.id);
                       return (
-                        <QuestionPrompt
-                          question={q}
-                          active={active && !readOnly}
-                          selected={selected}
-                          busy={sending}
-                          onSelect={answerQuestion}
-                        />
+                        <>
+                          {/* §plan visibility: the body above is an excerpt; the
+                              plan being approved is readable in full here. */}
+                          {q.plan && devPlan && (
+                            <PlanDisclosure plan={devPlan} excerptChars={PLAN_CHAT_CHARS} />
+                          )}
+                          <QuestionPrompt
+                            question={q}
+                            active={active && !readOnly}
+                            selected={selected}
+                            busy={sending}
+                            onSelect={answerQuestion}
+                          />
+                        </>
                       );
                     })()}
                     {(() => {
