@@ -153,3 +153,28 @@ def test_a_malformed_brand_colour_cannot_escape_an_attribute(monkeypatch):
     html = email_render.render_html("[acme.ai] S", "Body.\n\nhttps://app.acme.ai/x")
     assert "<script>" not in html
     assert 'bgcolor="#22d3ee"' in html
+
+
+# ---- the signup welcome (§22) ----
+
+def test_welcome_body_renders_as_intro_list_and_button(monkeypatch):
+    from app.api.auth import _WELCOME_BODY
+    body = _WELCOME_BODY.format(consultant="Flavien",
+                                url="https://app.acme.ai/verify-email?token=t0k")
+    html = email_render.render_html(f"Welcome to {settings.brand_name}", body,
+                                    "Verify your email")
+    assert "<h1" in html and "Welcome to acme.ai</h1>" in html
+    assert html.count("<li") == 3
+    assert ">Verify your email</a>" in html
+    assert 'href="https://app.acme.ai/verify-email?token=t0k"' in html
+    # The activation link is the button, never also a dangling paragraph.
+    assert html.count("token=t0k") == 1
+    # No {placeholder} survives the format() call.
+    assert "{" not in body and "}" not in body
+
+
+def test_welcome_subject_carries_no_brand_prefix():
+    # brand.subject() would read "[acme.ai] Welcome to acme.ai".
+    subject = f"Welcome to {settings.brand_name}"
+    assert not subject.startswith("[")
+    assert email_render._title(subject) == subject
