@@ -71,8 +71,14 @@ def _accent_on_dark(accent: str) -> str:
     return accent if _luminance(accent) > 0.22 else TEXT
 
 
+_HEX_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
 def _accent() -> str:
-    return (settings.brand_color_primary or "#22d3ee").strip()
+    """BRAND_COLOR_PRIMARY, but only ever a hex literal: the value lands inside
+    HTML attributes, and an env var is not a reason to trust a string."""
+    value = (settings.brand_color_primary or "").strip()
+    return value if _HEX_RE.fullmatch(value) else "#22d3ee"
 
 
 # ---------------------------------------------------------------- legal mentions

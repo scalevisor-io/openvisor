@@ -146,3 +146,10 @@ def test_send_email_keeps_a_display_name_smtp_from_already_has(monkeypatch):
     _FakeSMTP.sent = []
     assert emailer.send_email("to@example.com", "[acme.ai] S", "Body.") is True
     assert _FakeSMTP.sent[-1]["From"] == "Acme Support <help@acme.ai>"
+
+
+def test_a_malformed_brand_colour_cannot_escape_an_attribute(monkeypatch):
+    monkeypatch.setattr(settings, "brand_color_primary", '"><script>x</script>')
+    html = email_render.render_html("[acme.ai] S", "Body.\n\nhttps://app.acme.ai/x")
+    assert "<script>" not in html
+    assert 'bgcolor="#22d3ee"' in html
