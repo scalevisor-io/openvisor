@@ -36,14 +36,41 @@ def _set_session(response: Response, user_id: str) -> None:
                         samesite="lax", path="/")
 
 
-def _send_verification(user: User) -> None:
+# The signup email is the welcome: one message that introduces the practice AND
+# carries the activation link, rather than a bare "Verify your email" followed
+# by a second mail nobody asked for. A RESEND is not a welcome - somebody who
+# already read this one is chasing the link, so that path keeps the plain
+# subject. Ultra-concise per §22, first-person like the landing, and every brand
+# string comes from settings so a white-label spoke reads as itself.
+_WELCOME_BODY = """{consultant} here - thanks for signing up.
+
+Describe what you need in plain language; I review it myself before any code - \
+feasibility, scope, an honest estimate. Then my agent team builds it while you \
+follow along:
+
+- Live progress, and the code as real pull requests.
+- A running demo on its own subdomain, yours to click through.
+- Prepaid credits metered as the work happens - you see the estimate first.
+
+Confirm your address to activate your account. The link is valid for 48 hours.
+
+{url}"""
+
+
+def _send_verification(user: User, welcome: bool = False) -> None:
     token = create_action_token("verify", user.id)
     url = f"{settings.app_base_url}/verify-email?token={token}"
-    celery.send_task("app.workers.tasks.send_email", args=[
-        user.email, brand.subject("Verify your email"),
-        f"Welcome to {settings.brand_name}. Confirm your address to activate your "
-        f"account - the link is valid for 48 hours.\n\n{url}"],
-        kwargs={"cta": "Verify your email"})
+    if welcome:
+        subject = f"Welcome to {settings.brand_name}"
+        body = _WELCOME_BODY.format(
+            consultant=settings.consultant_first_name, url=url)
+    else:
+        subject = brand.subject("Verify your email")
+        body = (f"Confirm your address to activate your {settings.brand_name} "
+                f"account - the link is valid for 48 hours.\n\n{url}")
+    celery.send_task("app.workers.tasks.send_email",
+                     args=[user.email, subject, body],
+                     kwargs={"cta": "Verify your email"})
 
 
 @router.get("/csrf")
@@ -89,7 +116,7 @@ async def signup(body: SignupIn, request: Request, db: AsyncSession = Depends(ge
     await db.flush()
     db.add(Membership(org_id=org.id, user_id=user.id, role="owner"))
     await db.commit()
-    _send_verification(user)
+    _send_verification(user, welcome=True)
     audit.log_action(request, user.email)
     return {"ok": True}
 

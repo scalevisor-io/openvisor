@@ -248,7 +248,9 @@ def main() -> int:
     if (a := customer.altcha()):
         body["altcha"] = a
     customer.post("/api/auth/signup", body)
-    msg = wait_for("1 verification email in mailpit", lambda: mailpit_find("Verify your email", email), 90)
+    # Signup sends the WELCOME (subject "Welcome to <brand>"); the plain
+    # "Verify your email" subject belongs to a resend.
+    msg = wait_for("1 welcome email in mailpit", lambda: mailpit_find("Welcome to", email), 90)
     m = re.search(r"/verify-email\?token=([\w.\-]+)", mailpit_body(msg["ID"]))
     check(m is not None, "1 verification link found", msg["Subject"])
     customer.post("/api/auth/verify-email", {"token": m.group(1)})
