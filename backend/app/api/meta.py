@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.services import app_settings, consultant_photo
+from app.services import app_settings, brand, consultant_photo
 from app.services.pricing import load_static
 
 router = APIRouter(prefix="/api/meta", tags=["meta"])
@@ -43,6 +43,23 @@ async def legal(response: Response, db: AsyncSession = Depends(get_db)):
     # follow within the minute, and these two pages are low-traffic.
     response.headers["Cache-Control"] = "public, max-age=60"
     return await app_settings.get_legal_identity(db)
+
+
+@router.get("/consultant")
+async def consultant(response: Response):
+    """§consultant identity: the consultant's first and last name, as set on the
+    admin Settings page (falling back to CONSULTANT_NAME). The landing is a STATIC
+    build that bakes the env name at build time, so it reads this at runtime and
+    swaps the name in - hence the CORS header, for the same reason and under the
+    same reasoning as /meta/legal above: a credential-less GET returning the name
+    already printed on the public page.
+
+    Resolved, never raw: a reader wants the name to show, not the two fields and
+    the fallback rule. `brand` caches it, so this costs no query."""
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Cache-Control"] = "public, max-age=60"
+    first, last = brand.consultant_parts()
+    return {"first_name": first, "last_name": last, "full_name": brand.consultant_name()}
 
 
 @router.get("/consultant-photo")

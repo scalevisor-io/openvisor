@@ -153,11 +153,12 @@ export default function AdminSettings() {
 
       <LegalIdentityCard settings={settings} busy={busy} update={update} />
 
-      <ConsultantPhotoCard
-        photo={settings.consultant_photo ?? null}
+      <ConsultantCard
+        settings={settings}
         busy={busy}
         setBusy={setBusy}
-        onChange={(photo) => setSettings({ ...settings, consultant_photo: photo })}
+        update={update}
+        onPhotoChange={(photo) => setSettings({ ...settings, consultant_photo: photo })}
       />
 
       <FeesCard settings={settings} busy={busy} update={update} />
@@ -439,30 +440,48 @@ function LegalIdentityCard({
   );
 }
 
-// §consultant photo: the portrait the public landing shows next to the
-// consultant's name (the hero signature and the Direct quote card). The landing
-// is a static build, so it loads the photo from the API at runtime and shows its
-// photo slots only when one exists - no upload, no slots. Served as uploaded.
-function ConsultantPhotoCard({
-  photo,
+// §consultant identity: who the practice is - the name and the face, together,
+// because they are one answer to one question and were two cards asking it
+// twice. The NAME reaches everything the platform writes (the chat, the emails,
+// every prompt's {{CONSULTANT_NAME}}); the PHOTO is landing-only. Two fields,
+// not one string: a surname is not "everything after the first space" in every
+// culture, and the first name alone is what the chat says. Leaving a field empty
+// inherits it from the CONSULTANT_NAME env value, shown as the placeholder.
+function ConsultantCard({
+  settings,
   busy,
   setBusy,
-  onChange,
+  update,
+  onPhotoChange,
 }: {
-  photo: ConsultantPhoto | null;
+  settings: AdminSettingsT;
   busy: string | null;
   setBusy: (field: string | null) => void;
-  onChange: (photo: ConsultantPhoto | null) => void;
+  update: (patch: Partial<AdminSettingsT>, field: string) => Promise<void>;
+  onPhotoChange: (photo: ConsultantPhoto | null) => void;
 }) {
+  const photo = settings.consultant_photo ?? null;
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [first, setFirst] = useState(settings.consultant_first_name ?? "");
+  const [last, setLast] = useState(settings.consultant_last_name ?? "");
+
+  // Re-sync when the server answers with the stored (trimmed) values.
+  useEffect(() => {
+    setFirst(settings.consultant_first_name ?? "");
+    setLast(settings.consultant_last_name ?? "");
+  }, [settings.consultant_first_name, settings.consultant_last_name]);
+
+  const nameDirty =
+    first.trim() !== (settings.consultant_first_name ?? "") ||
+    last.trim() !== (settings.consultant_last_name ?? "");
 
   async function upload(file: File) {
     setBusy("photo");
     setError(null);
     try {
-      onChange(await adminApi.uploadConsultantPhoto(file));
+      onPhotoChange(await adminApi.uploadConsultantPhoto(file));
       toast.push("Photo saved", "ok");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not upload the photo.");
@@ -476,7 +495,7 @@ function ConsultantPhotoCard({
     setError(null);
     try {
       await adminApi.removeConsultantPhoto();
-      onChange(null);
+      onPhotoChange(null);
       toast.push("Photo removed", "ok");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not remove the photo.");
@@ -486,19 +505,66 @@ function ConsultantPhotoCard({
   }
 
   const summary = photo
-    ? `${photo.content_type.replace("image/", "").toUpperCase()} · ${Math.max(1, Math.round(photo.size_bytes / 1024))} KB`
-    : "No photo yet - the landing keeps its text-only layout.";
+    ? `Photo: ${photo.content_type.replace("image/", "").toUpperCase()} · ${Math.max(1, Math.round(photo.size_bytes / 1024))} KB`
+    : "No photo yet - the landing keeps its text-only layout. Square, at least 320 px, PNG, JPEG or WebP, 1 MB max.";
 
   return (
     <div className="card" style={{ maxWidth: 640, marginTop: "1.5rem" }}>
-      <h3 style={{ marginTop: 0 }}>Consultant photo</h3>
+      <h3 style={{ marginTop: 0 }}>Consultant</h3>
       <Alert kind="info">
-        Shown on the public landing next to your name: under the hero call to action and on the
-        Direct quote card. Square, at least 320 px, PNG, JPEG or WebP, 1 MB max - it is served
-        exactly as uploaded.
+        Who this instance's customers are working with. The name is what the chat, the emails and
+        every agent prompt say - it appears on the public landing too. Leave a field empty to
+        inherit it from the CONSULTANT_NAME the instance was deployed with.
       </Alert>
 
-      <div className="row gap-sm" style={{ marginTop: "1rem", alignItems: "center", gap: "1rem" }}>
+      <div style={{ marginTop: "1rem" }}>
+        <div className="row gap-sm" style={{ gap: "1rem", alignItems: "flex-start" }}>
+          <label className="field" style={{ flex: 1 }}>
+            <span>First name</span>
+            <input
+              type="text"
+              value={first}
+              maxLength={100}
+              placeholder={settings.consultant_first_name_effective || "Ada"}
+              onChange={(e) => setFirst(e.target.value)}
+            />
+          </label>
+          <label className="field" style={{ flex: 1 }}>
+            <span>Last name</span>
+            <input
+              type="text"
+              value={last}
+              maxLength={100}
+              placeholder={settings.consultant_last_name_effective || "Lovelace"}
+              onChange={(e) => setLast(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="row gap-sm">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={busy !== null || !nameDirty}
+            onClick={() =>
+              update(
+                { consultant_first_name: first.trim(), consultant_last_name: last.trim() },
+                "consultant-name",
+              )
+            }
+          >
+            Save name
+          </button>
+          {nameDirty ? (
+            <span className="muted small">Unsaved changes</span>
+          ) : (
+            <span className="muted small">
+              Customers see {settings.consultant_name_effective}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="row gap-sm" style={{ marginTop: "1.5rem", alignItems: "center", gap: "1rem" }}>
         {photo ? (
           <img
             src={adminApi.consultantPhotoUrl(photo.sha256)}

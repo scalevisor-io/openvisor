@@ -8,7 +8,7 @@ from app.core.encryption import decrypt
 from app.models import (
     DevRun, Message, Organization, Project, ProjectShare, Quote, Request, User,
 )
-from app.services import countries, dev_faults
+from app.services import brand, countries, dev_faults
 from app.services import repos as repolib
 
 
@@ -106,7 +106,7 @@ def dev_help_capability(p: Project) -> tuple[bool, str | None]:
         return False, ("This build failed on its own terms - Resume with a note, "
                        "or Start fresh")
     if p.status == "awaiting_admin":
-        return False, (f"{settings.consultant_first_name} already has this project - "
+        return False, (f"{brand.consultant_first_name()} already has this project - "
                        "the answer comes back in chat")
     blocker = _resume_closed_blocker(p)
     if blocker:

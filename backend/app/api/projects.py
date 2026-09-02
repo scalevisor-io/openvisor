@@ -25,7 +25,7 @@ from app.schemas.schemas import (
     RetryBuildIn, RoutineIn, RoutineUpdateIn, ShareIn,
 )
 from app.services import (
-    app_settings, dev_concurrency, devfeed, model_prices, naming, project_actions,
+    app_settings, brand, dev_concurrency, devfeed, model_prices, naming, project_actions,
     project_defaults, project_search, repos as repolib, routines as routines_svc,
     sshkeys, vision,
 )
@@ -539,7 +539,7 @@ async def require_review(project: Project = Depends(get_project_for_user),
     through the admin status control instead."""
     if user.role == "admin":
         raise HTTPException(403, "Admins can't request their own review - customers use "
-                                 f"this to hand the project to {settings.consultant_first_name}.")
+                                 f"this to hand the project to {brand.consultant_first_name()}.")
     try:
         await project_actions.require_review(db, project)
     except project_actions.ActionError as exc:
@@ -562,7 +562,7 @@ async def request_help(project: Project = Depends(get_project_for_user),
     Customer-only, exactly like require-review: the admin IS the reviewer."""
     if user.role == "admin":
         raise HTTPException(403, "Admins can't request their own help - customers use "
-                                 f"this to hand a broken build to {settings.consultant_first_name}.")
+                                 f"this to hand a broken build to {brand.consultant_first_name()}.")
     try:
         await project_actions.request_help(db, project)
     except project_actions.ActionError as exc:

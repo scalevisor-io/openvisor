@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.services import app_settings, routines as routines_svc, speciality as speciality_svc
+from app.services import app_settings, brand, routines as routines_svc, speciality as speciality_svc
 from app.services.pricing import load_static
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -23,8 +23,8 @@ async def public_settings(db: AsyncSession = Depends(get_db)):
         "brand_slug": settings.brand_slug,
         "brand_color_primary": settings.brand_color_primary,
         "brand_color_secondary": settings.brand_color_secondary,
-        "consultant_name": settings.consultant_name,
-        "consultant_first_name": settings.consultant_first_name,
+        "consultant_name": brand.consultant_name(),
+        "consultant_first_name": brand.consultant_first_name(),
         "credit_currency": settings.credit_currency,
         # Lets the auth forms skip the widget (and the wait for a challenge) on
         # a deployment that has the captcha switched off.

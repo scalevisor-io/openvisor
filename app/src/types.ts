@@ -606,6 +606,15 @@ export interface AdminSettings {
   // of service name. Empty = the landing keeps the value it was built with.
   legal_name: string;
   legal_address: string;
+  // §consultant identity: the STORED first/last name. Either one empty means that
+  // field falls back to the CONSULTANT_NAME env value - `*_effective` is what the
+  // pair currently resolves to, and what the card shows as the inherited
+  // placeholder. Only the two stored fields are writable.
+  consultant_first_name: string;
+  consultant_last_name: string;
+  consultant_first_name_effective: string;
+  consultant_last_name_effective: string;
+  consultant_name_effective: string;
   // §consultant photo: the portrait the landing shows next to the consultant's
   // name - metadata only, the bytes are served by GET /meta/consultant-photo.
   // null = none uploaded (the landing keeps its photo-less layout).

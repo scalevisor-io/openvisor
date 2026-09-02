@@ -62,7 +62,7 @@ async def request_human_answer(body: HumanAnswerIn,
         raise HTTPException(404, "Unknown thread")
     actor = "admin" if user.role == "admin" else "customer"
     msg = Message(project_id=project.id, thread=body.thread, author="agent",
-                  body=f"{settings.consultant_first_name} has been notified and will answer here.")
+                  body=f"{brand.consultant_first_name()} has been notified and will answer here.")
     db.add(msg)
     await db.flush()
     hub_events.record(db, project, "message", hub_events.message_payload(msg))

@@ -1,0 +1,17 @@
+---
+// §consultant identity: the consultant's name. Rendered from the build's env
+// value so crawlers and no-JS visitors read a real name; the script in
+// layouts/Base.astro swaps in the admin's value (Admin Settings -> Consultant)
+// when there is one. `first` renders the first name alone, for the sentences
+// that address the reader on first-name terms.
+import { consultantName } from '../lib/site';
+
+interface Props {
+  first?: boolean;
+}
+
+const { first = false } = Astro.props;
+const value = first ? (consultantName.trim().split(/\s+/)[0] ?? consultantName) : consultantName;
+---
+
+<span data-consultant-name={first ? 'first' : 'full'}>{value}</span>

@@ -63,7 +63,7 @@ def _send_verification(user: User, welcome: bool = False) -> None:
     if welcome:
         subject = f"Welcome to {settings.brand_name}"
         body = _WELCOME_BODY.format(
-            consultant=settings.consultant_first_name, url=url)
+            consultant=brand.consultant_first_name(), url=url)
     else:
         subject = brand.subject("Verify your email")
         body = (f"Confirm your address to activate your {settings.brand_name} "

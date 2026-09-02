@@ -319,6 +319,10 @@ class AppSettingsIn(BaseModel):
     # applies again); omitted leaves the stored value alone.
     legal_name: str | None = Field(default=None, max_length=200)
     legal_address: str | None = Field(default=None, max_length=500)
+    # §consultant identity: who the practice is, in two fields. "" clears the
+    # override back to CONSULTANT_NAME; omitted leaves the stored value alone.
+    consultant_first_name: str | None = Field(default=None, max_length=100)
+    consultant_last_name: str | None = Field(default=None, max_length=100)
 
 
 # ---- knowledge bases (§KB, admin) ----
