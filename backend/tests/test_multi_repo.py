@@ -15,8 +15,8 @@ from app.core.encryption import encrypt
 from app.core.security import hash_password
 from app.main import app
 from app.models import (
-    CreditTransaction, DevRun, Message, Organization, Project, ProjectMemory,
-    ProjectRepo, StatusChange, User,
+    CreditTransaction, DevRun, DevRunRecord, Message, Organization, Project,
+    ProjectMemory, ProjectRepo, Request, StatusChange, User,
 )
 from app.services import events, github, gitlab, repos as repolib
 from app.services.llm import LLMUnavailable
@@ -103,6 +103,9 @@ def org():
                 db.execute(delete(StatusChange).where(StatusChange.project_id.in_(pids)))
                 db.execute(delete(ProjectRepo).where(ProjectRepo.project_id.in_(pids)))
                 db.execute(delete(ProjectMemory).where(ProjectMemory.project_id.in_(pids)))
+                db.execute(delete(DevRunRecord).where(DevRunRecord.project_id.in_(pids)))
+                db.execute(delete(DevRun).where(DevRun.project_id.in_(pids)))
+                db.execute(delete(Request).where(Request.project_id.in_(pids)))
             db.execute(delete(CreditTransaction).where(CreditTransaction.org_id == oid))
             db.execute(delete(User).where(User.org_id == oid))
             db.execute(delete(Project).where(Project.org_id == oid))
@@ -689,3 +692,133 @@ def test_auto_merge_rejected_on_other_repo(org, client):
     assert r.json()["repos"][0]["can_auto_merge"] is False
     r = client.patch(f"/api/projects/{pid}/repos/{rid}", json={"auto_merge": True}, headers=h)
     assert r.status_code == 422
+
+
+# ------------------------------------------------- §14 no-target guard
+
+PLATFORM_REPO = {"id": 77, "ssh_url_to_repo": "git@gitlab.platform:grp/p.git",
+                 "web_url": "https://gitlab.platform/grp/p"}
+
+
+def _no_repo_project(oid):
+    """A project whose platform GitLab repo was never created (provisioning
+    400'd on the accented name) and which has no connected repo either, so
+    _dev_target resolves to None."""
+    return _project(oid, name="Créer une application pour l'équipe")
+
+
+def _quiet_dispatch(monkeypatch):
+    monkeypatch.setattr(tasks, "_resolve_base_branch", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_reset_stale_branch", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_ensure_dev_branch", lambda *a, **k: None)
+    monkeypatch.setattr(tasks, "_stamp_harness_version", lambda *a, **k: None)
+
+
+def test_no_repo_parks_instead_of_shipping_a_scaffold(org, monkeypatch, quiet):
+    """The prod regression: a project with nowhere to push used to fall through
+    to the deterministic scaffold and DEPLOY it as the customer's MVP."""
+    pid = _no_repo_project(org)
+    monkeypatch.setattr(tasks.settings, "openhands_enabled", True)
+    _quiet_dispatch(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("400 Bad Request")
+    monkeypatch.setattr(tasks.gitlab, "create_project", boom)
+    scaffolded, dispatched, demos = [], [], []
+    monkeypatch.setattr(tasks, "_scaffold_placeholder", lambda p: scaffolded.append(1))
+    monkeypatch.setattr(tasks, "_dispatch_runner",
+                        lambda *a, **k: dispatched.append(1) or {"exit_code": "0"})
+    monkeypatch.setattr(tasks.demo_start, "apply_async", lambda *a, **k: demos.append(1))
+
+    tasks._run_development_impl(pid)
+
+    assert scaffolded == [] and dispatched == [] and demos == []
+    with SyncSession() as db:
+        p = db.get(Project, pid)
+        assert p.status == "awaiting_admin"      # the consultant, not the customer
+        assert p.dev_run_state == "failed"
+        assert p.dev_run_fault == "platform"     # §request help: free to escalate
+
+
+def test_no_repo_provisions_then_plans_before_building(org, monkeypatch, quiet):
+    """The guard recovers the repo the project was owed - and does it early
+    enough that the plan gate still runs on the recovered target."""
+    pid = _no_repo_project(org)
+    monkeypatch.setattr(tasks.settings, "openhands_enabled", True)
+    monkeypatch.setattr(tasks.settings, "dev_plan_confirm", True)
+    _quiet_dispatch(monkeypatch)
+    monkeypatch.setattr(tasks.gitlab, "create_project", lambda prefix, name: PLATFORM_REPO)
+    monkeypatch.setattr(tasks.gitlab, "add_deploy_key", lambda *a, **k: None)
+    planned = []
+    monkeypatch.setattr(tasks, "_run_plan_pass",
+                        lambda db, p, target: planned.append(target))
+
+    tasks._run_development_impl(pid)
+
+    assert [t["remote"] for t in planned] == ["git@gitlab.platform:grp/p.git"]
+    with SyncSession() as db:
+        assert db.get(Project, pid).gitlab_project_id == 77
+
+
+def test_local_scaffold_still_ships_when_the_agent_is_off(org, monkeypatch, quiet):
+    """OPENHANDS_ENABLED=0 keeps its pure-local scaffold + demo: the guard is
+    for real builds, and must not reach for GitLab in a local stack."""
+    pid = _no_repo_project(org)
+    monkeypatch.setattr(tasks.settings, "openhands_enabled", False)
+    _quiet_dispatch(monkeypatch)
+    created, scaffolded, demos = [], [], []
+    monkeypatch.setattr(tasks.gitlab, "create_project",
+                        lambda *a, **k: created.append(1) or PLATFORM_REPO)
+    monkeypatch.setattr(tasks, "_scaffold_placeholder", lambda p: scaffolded.append(1))
+    monkeypatch.setattr(tasks.demo_start, "apply_async", lambda *a, **k: demos.append(1))
+
+    tasks._run_development_impl(pid)
+
+    assert scaffolded == [1] and demos == [1] and created == []
+
+
+# ------------------------------------------------- name -> identifier slugs
+
+def test_slugify_folds_accents_instead_of_dropping_them():
+    from app.services import naming
+    assert (naming.slugify("Créer une application pour l'équipe")
+            == "creer-une-application-pour-l-equipe")
+    assert naming.slugify("Ürün Takip, v2.0") == "urun-takip-v2-0"
+    assert naming.slugify("  --  ") == ""
+    assert naming.subdomain_for("662f1fac-ce04-4ef4", "Créer une app") \
+        == "662f1fac-creer-une-app"
+
+
+def test_create_project_slugifies_the_path_and_retries_a_refused_name(monkeypatch):
+    posted = []
+
+    class _R:
+        def __init__(self, status):
+            self.status_code, self.text = status, "path contains invalid characters"
+
+        def json(self):
+            return {"id": 1}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise RuntimeError(f"HTTP {self.status_code}")
+
+    class _C:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, data=None):
+            posted.append(data)
+            return _R(400 if len(posted) == 1 else 201)
+
+    monkeypatch.setattr(gitlab, "_client", lambda: _C())
+    monkeypatch.setattr(gitlab, "_group_id", lambda c: 9)
+
+    assert gitlab.create_project("662f1fac", "Créer une app pour l'équipe") == {"id": 1}
+    # the path never carries what GitLab refuses...
+    assert posted[0]["path"] == "662f1fac-creer-une-app-pour-l-equipe"
+    # ...and a name it still dislikes falls back to the unique uuid prefix
+    assert posted[1]["path"] == "662f1fac" and posted[1]["name"] == "662f1fac"
