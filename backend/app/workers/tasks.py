@@ -70,7 +70,7 @@ def email_chat_message(project_id: str, message_id: str) -> None:
         msg = db.get(Message, message_id)
         to = _owner_email(db, project)
         if to and msg:
-            emailer.send_email(to, brand.subject(f"{project.name} - message from {settings.consultant_first_name}"),
+            emailer.send_email(to, brand.subject(f"{project.name} - message from {brand.consultant_first_name()}"),
                                msg.body + "\n\n"
                                f"{settings.app_base_url}/projects/{project.id}",
                                "Reply in the app")
@@ -363,7 +363,7 @@ def handle_request(project_id: str, request_id: str, message_id: str) -> None:
             _post_message(db, project_id, thread, "agent",
                           "I can't start this build automatically yet (the project "
                           "needs its MVP delivered and development unblocked first). "
-                          f"Use \"Request human answer\" below to pull {settings.consultant_first_name} in.")
+                          f"Use \"Request human answer\" below to pull {brand.consultant_first_name()} in.")
             db.commit()
             return
         if _out_of_credits(db, project):
@@ -1068,7 +1068,7 @@ def answer_work_question(self, project_id: str, message_id: str, thread: str = "
                                    f"Project {project_id}: unpriced model {model} - "
                                    "work answers are refused until priced.")
                 _chat_notice(db, project_id, "workcfg",
-                             f"I can't answer right now - {settings.consultant_first_name} "
+                             f"I can't answer right now - {brand.consultant_first_name()} "
                              "has been notified of a configuration problem.", thread=thread)
                 return
 
@@ -1090,7 +1090,7 @@ def answer_work_question(self, project_id: str, message_id: str, thread: str = "
                 if m.author == "agent":
                     messages.append({"role": "assistant", "content": m.body[:4000]})
                 elif m.author in ("customer", "admin"):
-                    prefix = f"[{settings.consultant_first_name}] " if m.author == "admin" else ""
+                    prefix = f"[{brand.consultant_first_name()}] " if m.author == "admin" else ""
                     content = _message_content(db, m, allow_images)
                     if isinstance(content, str):
                         content = (prefix + content)[:4000]
@@ -1284,7 +1284,7 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
                                    f"Project {project_id}: unpriced models {unpriced} - "
                                    "chat answers are refused until priced.")
                 _chat_notice(db, project_id, "chatcfg",
-                             f"I can't answer right now - {settings.consultant_first_name} "
+                             f"I can't answer right now - {brand.consultant_first_name()} "
                              "has been notified of a configuration problem.")
                 return
 
@@ -1308,7 +1308,7 @@ def answer_chat_message(self, project_id: str, message_id: str) -> None:
                     if m.author == "agent":
                         messages.append({"role": "assistant", "content": m.body[:4000]})
                     elif m.author in ("customer", "admin"):
-                        prefix = f"[{settings.consultant_first_name}] " if m.author == "admin" else ""
+                        prefix = f"[{brand.consultant_first_name()}] " if m.author == "admin" else ""
                         content = _message_content(db, m, allow_images)
                         if isinstance(content, str):
                             content = (prefix + content)[:4000]
@@ -2850,13 +2850,13 @@ def _runner_exit_copy(project: Project,
     if err:
         msg = str(err["message"])[:300]
         chat = (f"The build stopped: {msg} You can fix the cause and Resume, or ask "
-                f"for {settings.consultant_first_name}'s review.")
+                f"for {brand.consultant_first_name()}'s review.")
         devfeed.append_event(project, "error", f"Build failed - {msg}")
         return chat, msg[:400], dev_faults.from_runner_category(err.get("category"))
     # No report at all: the driver died without managing to write one, which is
     # our machinery failing without even leaving a note - never the customer's.
     return ("The build agent exited with an error before publishing its work. "
-            f"You can Resume it, or ask for {settings.consultant_first_name}'s review.",
+            f"You can Resume it, or ask for {brand.consultant_first_name()}'s review.",
             "", dev_faults.PLATFORM)
 
 
@@ -3635,7 +3635,7 @@ def _fail_boot_check(db: Session, project: Project, boot_log: str, verb: str) ->
         run_error, human = park
         _post_message(db, project.id, _dev_thread(db, project), "agent",
                       f"The build uses {human}, so I didn't {verb}. The specifics are in "
-                      f"the build panel - hit Resume to retry, or ask for {settings.consultant_first_name}'s "
+                      f"the build panel - hit Resume to retry, or ask for {brand.consultant_first_name()}'s "
                       "review.")
         _safe_transition(db, project, "awaiting_customer", run_error)
         _save_run(project, "failed", logs=boot_log, error=run_error)
@@ -3643,7 +3643,7 @@ def _fail_boot_check(db: Session, project: Project, boot_log: str, verb: str) ->
     _post_message(db, project.id, _dev_thread(db, project), "agent",
                   "The build finished but its demo failed the automatic boot check "
                   f"(the app never answered HTTP), so I didn't {verb}. The boot log "
-                  f"is in the build panel - hit Resume to retry, or ask for {settings.consultant_first_name}'s "
+                  f"is in the build panel - hit Resume to retry, or ask for {brand.consultant_first_name()}'s "
                   "review.")
     _safe_transition(db, project, "awaiting_customer", "Demo boot check failed")
     _save_run(project, "failed", logs=boot_log, error="Demo boot check failed")
@@ -4164,7 +4164,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                     db, project,
                     "The build can't start: this project has no code repository yet, "
                     "so there is nothing to build into. Nothing was built or billed - "
-                    f"{settings.consultant_first_name} has been notified and will "
+                    f"{brand.consultant_first_name()} has been notified and will "
                     "sort it out.",
                     "No dev target: the project has no repository",
                     fault=dev_faults.PLATFORM)
@@ -4408,7 +4408,7 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                 _post_message(db, project_id, _dev_thread(db, project), "agent",
                               "The automatic fixes couldn't get the pipeline green after "
                               f"{settings.ci_max_retries} attempts. You can retry the "
-                              f"automatic fix, or ask for {settings.consultant_first_name}'s review.")
+                              f"automatic fix, or ask for {brand.consultant_first_name()}'s review.")
                 _safe_transition(db, project, "awaiting_customer", "CI fix retries exhausted")
                 _save_run(project, "failed", error="CI fix retries exhausted")
                 db.commit()
@@ -4865,7 +4865,7 @@ def _adopt_change(db: Session, project: Project, target: dict, thread: str,
                       "The build pushed changes that tripped the confidentiality "
                       f"safety check, and they are already visible as {noun} "
                       f"{ref}{change['number']} on your repository. "
-                      f"{settings.consultant_first_name} has been alerted to review "
+                      f"{brand.consultant_first_name()} has been alerted to review "
                       "it with you before anything is merged.")
         _safe_transition(db, project, "awaiting_admin",
                          "Published change tripped the leak scan")
@@ -5345,7 +5345,7 @@ def _remote_auto_merge(db: Session, project: Project, target: dict, ops: dict,
             _post_message(db, project.id, thread, "agent",
                           f"I opened {label} ({url}) but couldn't complete the automatic "
                           "security review, so I did NOT merge it. Review and merge it "
-                          f"yourself, or ask for {settings.consultant_first_name}'s review.",
+                          f"yourself, or ask for {brand.consultant_first_name()}'s review.",
                           meta=pr_meta)
             _save_run(project, "awaiting_merge", logs=logs)
             _safe_transition(db, project, "awaiting_customer",
@@ -5387,7 +5387,7 @@ def _remote_auto_merge(db: Session, project: Project, target: dict, ops: dict,
             _post_message(db, project.id, thread, "agent",
                           f"{label.capitalize()} passed the security review but couldn't be "
                           f"merged automatically ({reason}). Merge it yourself to deploy, or ask "
-                          f"for {settings.consultant_first_name}'s review.", meta=pr_meta)
+                          f"for {brand.consultant_first_name()}'s review.", meta=pr_meta)
             _save_run(project, "awaiting_merge", logs=logs)
             _safe_transition(db, project, "awaiting_customer", f"Auto-merge blocked: {reason}")
             db.commit()
@@ -5401,7 +5401,7 @@ def _remote_auto_merge(db: Session, project: Project, target: dict, ops: dict,
             _post_message(db, project.id, thread, "agent",
                           f"The automatic security review still flags {label} "
                           f"{why}: {summary}. I did NOT merge it - please review it "
-                          f"({url}) or ask for {settings.consultant_first_name}'s review.",
+                          f"({url}) or ask for {brand.consultant_first_name()}'s review.",
                           meta=pr_meta)
             _save_run(project, "awaiting_merge", logs=logs,
                       error="Security review unresolved; awaiting customer review")
@@ -5455,7 +5455,7 @@ def _remote_auto_merge(db: Session, project: Project, target: dict, ops: dict,
         if str((result or {}).get("exit_code", "0")) != "0":
             _post_message(db, project.id, thread, "agent",
                           "A security-fix build exited with an error before publishing. You can "
-                          f"Resume it, or ask for {settings.consultant_first_name}'s review.")
+                          f"Resume it, or ask for {brand.consultant_first_name()}'s review.")
             _safe_transition(db, project, "awaiting_customer", "Security-fix runner error")
             _save_run(project, "failed", logs=logs,
                       error=f"Security-fix runner exited {(result or {}).get('exit_code')}")
@@ -5847,7 +5847,7 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
         _post_message(db, project.id, _dev_thread(db, project), "agent",
                       f"The build stopped before completing: {msg} - hit Resume "
                       "to run it again once the cause is fixed, or ask for "
-                      f"{settings.consultant_first_name}'s review.")
+                      f"{brand.consultant_first_name()}'s review.")
         _safe_transition(db, project, "awaiting_customer", "Build agent crashed")
         _save_run(project, "failed", logs=logs, error=msg[:400],
                   fault=dev_faults.from_runner_category(err.get("category")))
@@ -5861,7 +5861,7 @@ def _fail_no_changes(db: Session, project: Project, logs: str) -> None:
                       f"The build stopped at its safety cap of {limit} agent steps before "
                       "anything was ready to publish. Work done so far is kept in the "
                       "workspace - hit Resume to continue with a fresh budget, or ask "
-                      f"{settings.consultant_first_name} to raise the cap for this project "
+                      f"{brand.consultant_first_name()} to raise the cap for this project "
                       "if it keeps happening.")
         _safe_transition(db, project, "awaiting_customer", "Build hit its iteration cap")
         _save_run(project, "failed", logs=logs,
@@ -6128,7 +6128,7 @@ def _fail_push(db: Session, project: Project, logs: str) -> None:
     _post_message(db, project.id, _dev_thread(db, project), "agent",
                   "The build finished, but pushing the branch to the repository "
                   f"failed.{hint} Your work is saved - hit Resume to retry, or ask for "
-                  f"{settings.consultant_first_name}'s review.")
+                  f"{brand.consultant_first_name()}'s review.")
     _safe_transition(db, project, "awaiting_customer", "Branch push failed")
     _save_run(project, "failed", logs=logs,
               error=("Pushing the branch failed -" + hint) if hint
@@ -6141,7 +6141,7 @@ def _fail_leak(db: Session, project: Project, logs: str) -> None:
     a scan false positive, and both want a human look before anything is published."""
     _post_message(db, project.id, _dev_thread(db, project), "agent",
                   "The build was stopped by an automated safety check before anything "
-                  f"was published, and is now awaiting {settings.consultant_first_name}'s review. Nothing was "
+                  f"was published, and is now awaiting {brand.consultant_first_name()}'s review. Nothing was "
                   "pushed to your repository.")
     _safe_transition(db, project, "awaiting_admin", "Blocked by pre-publish leak scan")
     _save_run(project, "failed", logs=logs, error="Blocked by pre-publish leak scan")
@@ -6269,7 +6269,7 @@ def _maybe_ci_fix(j: dict, sha: str | None) -> None:
                               f"The automatic fixes couldn't get the pipeline on {label} "
                               f"green after {settings.ci_max_retries} attempts. Fix or merge "
                               f"it yourself ({j.get('url')}) - your demo still deploys on the "
-                              f"merge - or ask for {settings.consultant_first_name}'s review.")
+                              f"merge - or ask for {brand.consultant_first_name()}'s review.")
                 db.commit()
             return
         if _out_of_credits(db, project):
@@ -6448,7 +6448,7 @@ def dev_pr_sweep() -> None:
                         _post_message(db, j["id"], _dev_thread(db, project), "agent",
                                       f"Merge request !{j['number']} couldn't be merged "
                                       f"automatically ({reason}). Hit Resume to rebuild, or ask "
-                                      f"for {settings.consultant_first_name}'s review.")
+                                      f"for {brand.consultant_first_name()}'s review.")
                         _save_run(project, "failed",
                                   error=f"Platform MR !{j['number']} not merged: {reason}")
                         db.commit()
@@ -6497,7 +6497,7 @@ def dev_pr_sweep() -> None:
                 _post_message(db, j["id"], _dev_thread(db, project), "agent",
                               f"{j['noun'].capitalize()} {j['ref']}{j['number']} was closed without "
                               f"merging. Hit Resume for a fresh pass - it opens a new {j['noun']} - "
-                              f"or ask for {settings.consultant_first_name}'s review.",
+                              f"or ask for {brand.consultant_first_name()}'s review.",
                               meta=_pr_meta(_pr_ref(j["number"], j.get("url"), j["provider"])))
                 _save_run(project, "failed", error=f"{j['noun'].capitalize()} closed without merging")
                 # A closed-unmerged change is rejected work: end the unit on the
@@ -6591,7 +6591,7 @@ def _reap_dev_run(db: Session, project: Project) -> None:
                   "This build was interrupted before it could finish (the process "
                   "running it was restarted). Nothing new was published to your "
                   f"repository in this run - hit Resume to continue, or ask for "
-                  f"{settings.consultant_first_name}'s review.")
+                  f"{brand.consultant_first_name()}'s review.")
     _safe_transition(db, project, "awaiting_customer", "Build run lost (worker interrupted)")
     _save_run(project, "failed",
               error="Build run lost (worker interrupted); resumable." + unmetered,

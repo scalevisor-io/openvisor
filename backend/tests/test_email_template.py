@@ -9,7 +9,7 @@ import smtplib
 import pytest
 
 from app.core.config import settings
-from app.services import email_render, emailer
+from app.services import brand, email_render, emailer
 from app.services.statuses import STATUSES, STATUS_LABELS, status_label
 
 
@@ -159,7 +159,7 @@ def test_a_malformed_brand_colour_cannot_escape_an_attribute(monkeypatch):
 
 def test_welcome_body_renders_as_intro_list_and_button(monkeypatch):
     from app.api.auth import _WELCOME_BODY
-    body = _WELCOME_BODY.format(consultant="Flavien",
+    body = _WELCOME_BODY.format(consultant=brand.consultant_first_name(),
                                 url="https://app.acme.ai/verify-email?token=t0k")
     html = email_render.render_html(f"Welcome to {settings.brand_name}", body,
                                     "Verify your email")

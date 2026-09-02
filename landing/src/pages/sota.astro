@@ -4,6 +4,7 @@ import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
 
 import { signupUrl, brandName, consultantName } from '../lib/site';
+import ConsultantName from '../components/ConsultantName.astro';
 
 // Same stroke grammar as the homepage icon set (24px grid, 1.7 stroke, round caps)
 // so this page reads as the same visual family.
@@ -32,7 +33,9 @@ const layers = [
     n: '01',
     eyebrow: 'Guarding the knowledge base',
     title: 'The knowledge base can inform an answer - never be copied out of one.',
-    intro: `${consultantName}'s private consulting knowledge is the asset customers pay to benefit from. The platform is built so that AI can use it to reason, while no user - or the AI builder itself - can trawl it back out.`,
+    // The name is wrapped so Base.astro's §consultant identity swap can reach it
+    // inside this string (the paragraph below renders it as HTML for that reason).
+    intro: `<span data-consultant-name="full">${consultantName}</span>'s private consulting knowledge is the asset customers pay to benefit from. The platform is built so that AI can use it to reason, while no user - or the AI builder itself - can trawl it back out.`,
     items: [
       {
         icon: 'book',
@@ -185,7 +188,7 @@ const references = [
             <div class="layer-head" data-reveal>
               <p class="eyebrow"><span class="eyebrow-i">{layer.n}</span>{layer.eyebrow}</p>
               <h2 class="section-title">{layer.title}</h2>
-              <p class="section-intro">{layer.intro}</p>
+              <p class="section-intro" set:html={layer.intro} />
             </div>
             <div class="tech-grid">
               {layer.items.map((item, i) => (
@@ -225,7 +228,7 @@ const references = [
           Every layer above, <span class="gradient-text">owned end to end</span>.
         </h2>
         <p class="final-lede">
-          {consultantName} designs and maintains every layer above. If you are evaluating {brandName}
+          <ConsultantName /> designs and maintains every layer above. If you are evaluating {brandName}
           and want to go deeper on any control, the door is open.
         </p>
         <div class="hero-cta">

@@ -18,6 +18,15 @@ from app.models import AppSetting
 LEGAL_NAME = "legal_business_name"
 LEGAL_ADDRESS = "legal_business_address"
 
+# §consultant identity: who the practice is, as two fields rather than one
+# string - a last name is not "everything after the first space" in every
+# culture, and the first name alone is what the chat and the emails say.
+# Admin-editable (Settings -> Consultant) so a deployment can name its
+# consultant without rebuilding the landing OR redeploying the API; empty
+# (the default) falls back to the CONSULTANT_NAME env var.
+CONSULTANT_FIRST_NAME = "consultant_first_name"
+CONSULTANT_LAST_NAME = "consultant_last_name"
+
 PAUSE_AI = "pause_ai_deposits"
 PAUSE_DIRECT = "pause_direct_deposits"
 PAUSE_AUTO_DEV = "pause_auto_dev_deposits"
@@ -135,3 +144,34 @@ async def set_legal_identity(db: AsyncSession, *, name: str | None = None,
         await set_value(db, LEGAL_NAME, name.strip())
     if address is not None:
         await set_value(db, LEGAL_ADDRESS, address.strip())
+
+
+# ---- §consultant identity ----
+
+async def get_consultant_identity(db: AsyncSession) -> dict[str, str]:
+    """The stored first/last name pair, both empty strings when never set.
+    Empty means "fall back to CONSULTANT_NAME" - resolving that fallback is
+    `services.brand`, so every reader gets the same answer."""
+    return {
+        "consultant_first_name": str(await get_value(db, CONSULTANT_FIRST_NAME, "") or ""),
+        "consultant_last_name": str(await get_value(db, CONSULTANT_LAST_NAME, "") or ""),
+    }
+
+
+async def set_consultant_identity(db: AsyncSession, *, first: str | None = None,
+                                  last: str | None = None) -> None:
+    """Partial update, trimmed; an empty string clears the field back to the
+    env default. Caller commits."""
+    if first is not None:
+        await set_value(db, CONSULTANT_FIRST_NAME, first.strip())
+    if last is not None:
+        await set_value(db, CONSULTANT_LAST_NAME, last.strip())
+
+
+def get_consultant_identity_sync(db: Session) -> dict[str, str]:
+    """The same pair in a sync (Celery) session - `services.brand` reads it
+    through here when it refreshes its cache."""
+    return {
+        "consultant_first_name": str(get_setting_sync(db, CONSULTANT_FIRST_NAME, "") or ""),
+        "consultant_last_name": str(get_setting_sync(db, CONSULTANT_LAST_NAME, "") or ""),
+    }

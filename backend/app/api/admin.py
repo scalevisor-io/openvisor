@@ -110,6 +110,14 @@ async def _settings_out(db: AsyncSession) -> dict:
     out["speciality_fees"] = await _fees_out(db)
     out.update(await project_defaults.describe(db))
     out.update(await app_settings.get_legal_identity(db))
+    # §consultant identity: the STORED pair (empty = inheriting the env name),
+    # plus what the two fields currently resolve to, so the card can show the
+    # inherited value in a placeholder instead of leaving the admin guessing.
+    out.update(await app_settings.get_consultant_identity(db))
+    eff_first, eff_last = brand.consultant_parts()
+    out["consultant_first_name_effective"] = eff_first
+    out["consultant_last_name_effective"] = eff_last
+    out["consultant_name_effective"] = brand.consultant_name()
     out["consultant_photo"] = await consultant_photo.describe(db)
     return out
 
@@ -222,7 +230,14 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
     # as the operating company. "" clears the override back to the built-in value.
     await app_settings.set_legal_identity(
         db, name=body.legal_name, address=body.legal_address)
+    # §consultant identity: the name the prompts, the chat and the emails say.
+    await app_settings.set_consultant_identity(
+        db, first=body.consultant_first_name, last=body.consultant_last_name)
     await db.commit()
+    # AFTER the commit, never before: the resolver refills its cache from a fresh
+    # session, so dropping it while the write is still uncommitted would cache the
+    # OLD name for the next five minutes - the exact staleness this call prevents.
+    brand.reset_cache()
     return await _settings_out(db)
 
 
@@ -470,7 +485,7 @@ async def create_credit_quote(project_id: str, body: QuoteCreateIn,
     await db.flush()
     await post_system_message(
         db, project.id,
-        f"{settings.consultant_first_name} sent a new quote: {quote.title} ({quote.price_credits:g} credits). "
+        f"{brand.consultant_first_name()} sent a new quote: {quote.title} ({quote.price_credits:g} credits). "
         f"Review it in the Quotes tab.")
     # Same session as the row it mirrors, so the event cannot outlive a rollback.
     hub_events.record(db, project, "quote", hub_events.quote_payload(quote))
@@ -528,7 +543,7 @@ async def cancel_quote(quote_id: str, body: QuoteCancelIn,
     quote.decision_comment = body.comment
     quote.decided_at = utcnow()
     quote.refunded_credits = refund if was_accepted else None
-    note = f"Quote canceled by {settings.consultant_first_name}: {quote.title}"
+    note = f"Quote canceled by {brand.consultant_first_name()}: {quote.title}"
     if was_accepted:
         note += f" - {refund:g} of {quote.price_credits:g} paid credits refunded"
     if body.comment:

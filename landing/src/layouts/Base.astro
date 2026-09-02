@@ -182,6 +182,31 @@ const colorOverride =
           });
       })();
 
+      // §consultant identity: the consultant's name is admin-editable (Admin
+      // Settings -> Consultant) while this page is a static build, so the env
+      // name renders first - that is what crawlers and no-JS visitors read - and
+      // the admin's value is swapped in here, exactly like the legal identity
+      // above. Any failure keeps the built-in name.
+      (() => {
+        const slots = document.querySelectorAll('[data-consultant-name]');
+        if (!slots.length) return;
+        fetch(apiOrigin() + '/api/meta/consultant')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!d) return;
+            const full = (d.full_name || '').trim();
+            const first = (d.first_name || '').trim();
+            if (!full && !first) return;
+            slots.forEach((el) => {
+              const value = el.getAttribute('data-consultant-name') === 'first' ? first : full;
+              if (value) el.textContent = value;
+            });
+          })
+          .catch(() => {
+            /* keep the name this page was built with */
+          });
+      })();
+
       // §consultant photo: the admin's portrait (Admin Settings -> Consultant
       // photo) is served by the API, never baked into this static build. Every
       // photo slot starts hidden; the first successful load flips one class on

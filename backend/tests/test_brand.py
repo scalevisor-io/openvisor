@@ -20,8 +20,11 @@ def test_render_substitutes_all_placeholders():
     out = brand.render(text)
     assert "{{" not in out
     assert settings.brand_name in out
-    assert settings.consultant_name in out
-    assert settings.consultant_first_name in out
+    # §consultant identity: the placeholders render the RESOLVED name (the
+    # admin's stored pair, else CONSULTANT_NAME) - asserting the env value here
+    # would pass only on an instance whose admin never set one.
+    assert brand.consultant_name() in out
+    assert brand.consultant_first_name() in out
     assert settings.consultant_focus in out
     assert settings.deploy_domain in out
 
@@ -30,7 +33,7 @@ def test_render_obj_recurses():
     data = {"a": ["{{BRAND_NAME}}", {"b": "{{CONSULTANT_NAME}}"}], "n": 3}
     out = brand.render_obj(data)
     assert out["a"][0] == settings.brand_name
-    assert out["a"][1]["b"] == settings.consultant_name
+    assert out["a"][1]["b"] == brand.consultant_name()
     assert out["n"] == 3
 
 
@@ -86,7 +89,7 @@ def test_public_settings_endpoint(client):
     assert data["brand_name"] == settings.brand_name
     assert data["brand_slug"] == settings.brand_slug
     assert data["brand_color_primary"].startswith("#")
-    assert data["consultant_first_name"] == settings.consultant_name.split()[0]
+    assert data["consultant_first_name"] == brand.consultant_first_name()
     expected_keys = {"id", "label", "description", "short_label", "icon",
                      "deliverable_type", "knowledge_tags", "capabilities",
                      "complexity_baseline", "base_fee_credits"}

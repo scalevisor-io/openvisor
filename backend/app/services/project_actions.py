@@ -15,7 +15,7 @@ from app.api.serializers import (
 )
 from app.core.config import settings
 from app.models import CreditTransaction, DevRun, Message, Organization, Project, Request
-from app.services import dev_concurrency, events, hub_events
+from app.services import brand, dev_concurrency, events, hub_events
 from app.services.lifecycle import TransitionError, transition_async
 from app.services.mentions import mentions_agent
 from app.workers.celery_app import celery
@@ -40,10 +40,10 @@ async def evaluate(db: AsyncSession, project: Project) -> str | None:
             "state": "done",
             "moderation": {"allowed": True, "flags": []},
             "feasibility": {"verdict": "pass",
-                            "reasons": [f"Direct quote - {settings.consultant_first_name} will review your request "
+                            "reasons": [f"Direct quote - {brand.consultant_first_name()} will review your request "
                                         "and send a custom quote. No charge to submit."]},
             "estimate": {"credits": None, "tokens": None, "cost_per_token": None,
-                         "explanation": f"A tailored quote will be provided by {settings.consultant_first_name} "
+                         "explanation": f"A tailored quote will be provided by {brand.consultant_first_name()} "
                                         "after reviewing this project. Submitting is free."},
         }
         await db.commit()
@@ -80,11 +80,11 @@ async def require_review(db: AsyncSession, project: Project) -> None:
     if charge:
         org = await db.get(Organization, project.org_id)
         if (org.credit_balance or 0.0) < fee:
-            raise ActionError(402, f"Requesting {settings.consultant_first_name}'s review costs {fee:g} credits; "
+            raise ActionError(402, f"Requesting {brand.consultant_first_name()}'s review costs {fee:g} credits; "
                                    f"your balance is too low. Top up to continue.")
     try:
         await transition_async(db, project, "awaiting_admin", "customer",
-                               f"Customer requested {settings.consultant_first_name}'s review")
+                               f"Customer requested {brand.consultant_first_name()}'s review")
     except TransitionError as exc:
         raise ActionError(409, str(exc))
     if charge:
@@ -93,7 +93,7 @@ async def require_review(db: AsyncSession, project: Project) -> None:
         db.expire(org, ["credit_balance"])
         db.add(CreditTransaction(org_id=org.id, project_id=project.id, amount=-fee,
                                  kind="review_request",
-                                 detail=f"Requested {settings.consultant_first_name}'s review (refundable)"))
+                                 detail=f"Requested {brand.consultant_first_name()}'s review (refundable)"))
     await db.commit()
 
 
@@ -131,7 +131,7 @@ async def request_help(db: AsyncSession, project: Project) -> None:
         thread = "main"
     msg = Message(project_id=project.id, thread=thread, author="agent",
                   body=("That build failed on our side, not yours, so this one is on us: "
-                        f"{settings.consultant_first_name} has been alerted and will pick it "
+                        f"{brand.consultant_first_name()} has been alerted and will pick it "
                         "up from here. No credits were charged for asking."))
     db.add(msg)
     await db.flush()
@@ -200,7 +200,7 @@ async def retry_build(db: AsyncSession, project: Project, is_admin: bool,
     if not enabled:
         raise ActionError(409, blocker or "Resume isn't available right now")
     if project.status == "awaiting_admin" and not is_admin:
-        raise ActionError(409, f"{settings.consultant_first_name} has the project - it resumes after review")
+        raise ActionError(409, f"{brand.consultant_first_name()} has the project - it resumes after review")
     actor = "admin" if is_admin else "customer"
     if project.status in ("awaiting_customer", "awaiting_admin"):
         try:
@@ -465,7 +465,7 @@ async def cancel_request(db: AsyncSession, project: Project, actor: str,
                                "cancel the project instead")
     if req.handling != "ai" or req.type == "production_deploy":
         raise ActionError(409, "Only AI-handled requests can be canceled - "
-                               f"ask {settings.consultant_first_name} to close manual work")
+                               f"ask {brand.consultant_first_name()} to close manual work")
     if req.status in ("done", "rejected"):
         raise ActionError(409, "This request is already closed")
     active = (await db.execute(select(DevRun).where(
@@ -519,7 +519,7 @@ async def cancel_request(db: AsyncSession, project: Project, actor: str,
             project.dev_run_error = None
     msg = Message(project_id=project.id, thread=f"request:{req.id}", author="system",
                   body="Request canceled"
-                       + (f" by {settings.consultant_first_name}." if actor == "admin"
+                       + (f" by {brand.consultant_first_name()}." if actor == "admin"
                           else " by the customer."))
     db.add(msg)
     await db.flush()
@@ -557,7 +557,7 @@ async def validate_request(db: AsyncSession, project: Project, actor: str,
                                "overview - use Approve delivery there")
     if req.handling != "ai" or req.type == "production_deploy":
         raise ActionError(409, "Only AI-handled requests can be validated - "
-                               f"{settings.consultant_first_name} closes manual work")
+                               f"{brand.consultant_first_name()} closes manual work")
     if req.status in ("done", "rejected"):
         raise ActionError(409, "This request is already closed")
     active = (await db.execute(select(DevRun).where(
@@ -590,7 +590,7 @@ async def validate_request(db: AsyncSession, project: Project, actor: str,
     # The paper trail lives in the request's own thread, in the actor's voice.
     msg = Message(project_id=project.id, thread=f"request:{req.id}", author="system",
                   body="Request validated as delivered"
-                       + (f" by {settings.consultant_first_name}." if actor == "admin"
+                       + (f" by {brand.consultant_first_name()}." if actor == "admin"
                           else " by the customer."))
     db.add(msg)
     await db.flush()

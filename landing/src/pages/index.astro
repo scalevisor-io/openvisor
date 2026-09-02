@@ -4,6 +4,7 @@ import Header from '../components/Header.astro';
 import Footer from '../components/Footer.astro';
 
 import { aiIntakeUrl, consultantName, programsUrl, signupUrl, tokensUrl } from '../lib/site';
+import ConsultantName from '../components/ConsultantName.astro';
 import content from '../lib/content';
 
 // Hand-drawn inline SVG icon set - one stroke grammar (24px grid, 1.7 stroke,
@@ -132,7 +133,7 @@ const pad = (i: number) => String(i + 1).padStart(2, '0');
               <img class="sign-img" alt={consultantName} data-consultant-photo-img />
             </span>
             <p class="hero-note">
-              <strong class="sign-name">{consultantName}</strong>
+              <strong class="sign-name"><ConsultantName /></strong>
               {hero.note}
             </p>
           </div>
