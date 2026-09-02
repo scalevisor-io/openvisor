@@ -137,6 +137,9 @@ class DevRunIn(BaseModel):
     # DEV_RUN_MAX_USD. 0 = unset; a driver whose SDK has no budget knob ignores it.
     max_usd: float = 0.0
     timeout_s: int = 1800
+    # §14.5 per-command cap in seconds, passed through as DEV_CMD_TIMEOUT_S: the
+    # driver applies it to shell calls the model left unbounded.
+    cmd_timeout_s: int = 600
 
 
 class ProgramRunIn(BaseModel):
@@ -580,6 +583,7 @@ def dev_run(body: DevRunIn):
         "-e", f"LLM_REASONING_EFFORT={body.reasoning_effort or ''}",
         "-e", f"DEV_HARNESS={body.harness}",
         "-e", f"DEV_RUN_MAX_USD={body.max_usd or ''}",
+        "-e", f"DEV_CMD_TIMEOUT_S={body.cmd_timeout_s}",
         # Stable per-workspace id (resume chains share it): the runner sends it as
         # prompt_cache_key so providers with opt-in prompt caching (Mistral) serve
         # + report cache reads, billed at the §18 cached rate. Last path segment

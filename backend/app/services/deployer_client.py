@@ -107,7 +107,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
                 egress_locked: bool = False, egress_allowlist: list[str] | None = None,
                 cpu_request: str = "", mem_request: str = "",
                 harness: str = "openhands", max_usd: float = 0.0,
-                timeout_s: int = 1800) -> dict:
+                timeout_s: int = 1800, cmd_timeout_s: int = 600) -> dict:
     # Give the deployer its full wall-clock budget plus a margin so the HTTP
     # client never times out before the deployer's own watchdog fires (the old
     # fixed 600s cut off any build longer than 10 min and orphaned the runner).
@@ -129,4 +129,7 @@ def run_dev_job(project_id: str, *, llm_model: str, llm_api_key: str, llm_base_u
         # whose SDK takes a budget can honor it.
         "max_usd": max_usd,
         "timeout_s": timeout_s,
+        # §14.5 per-command cap the driver applies to every shell call the model
+        # left unbounded (DEV_CMD_TIMEOUT_S).
+        "cmd_timeout_s": cmd_timeout_s,
     }, timeout=timeout_s + 120)

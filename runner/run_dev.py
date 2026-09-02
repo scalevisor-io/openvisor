@@ -48,6 +48,12 @@ TOOL_CONCURRENCY = int(os.environ.get("DEV_TOOL_CONCURRENCY") or 3)
 OBS_TEXT_LIMIT = int(os.environ.get("DEV_OBS_TEXT_LIMIT") or 20000)
 OBS_OVERFLOW_DIR = "/tmp/tool_output"
 
+# §14.5 per-command cap (seconds), set by the platform from DEV_CMD_TIMEOUT_S.
+# Applied in _install_tool_call_repairs to every terminal call the model left
+# unbounded - see tool_args.default_timeout for why the action, not the tool,
+# is where SDK 1.8.0 keeps this. 0 disables (the SDK's 30 s idle return alone).
+CMD_TIMEOUT_S = int(os.environ.get("DEV_CMD_TIMEOUT_S") or 600)
+
 
 def _tuned_observation_limit() -> None:
     """Clip oversized tool results harder, but persist the full text and point
@@ -422,6 +428,12 @@ def _install_tool_call_repairs(conversation) -> None:
                 arguments, name, allowed, action_type.model_validate)
             if replacement:
                 _log(f"read {name}={replacement!r} on a {action_type.__name__} call")
+        # §14.5 per-command cap: a terminal call with no timeout of its own gets
+        # the platform's, so a foreground server can block one step, not the run.
+        arguments, capped = tool_args.default_timeout(
+            arguments, action_type.__name__, _action_fields(action_type), CMD_TIMEOUT_S)
+        if capped:
+            _log(f"bounded an unbounded {action_type.__name__} call at {CMD_TIMEOUT_S}s")
         return arguments
 
     def _mcp_action(self, arguments):

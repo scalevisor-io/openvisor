@@ -89,6 +89,36 @@ def _message_text(message) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+def _timed_out(event) -> bool:
+    """Whether a terminal observation carries the SDK's timeout suffix
+    ("[The command timed out after N seconds ...]"). Tolerant of the
+    observation's shape - content list, text attribute, or the object itself -
+    and never raises: a wrong guess is a silent no-op, never a feed failure."""
+    try:
+        obs = getattr(event, "observation", None) or event
+        # SDK 1.8.0 puts the marker in CmdOutputMetadata.suffix, NOT in the
+        # observation text (probed in the runner image: .text is the raw output,
+        # .metadata.suffix carries "[The command timed out after 3.0 seconds …]"
+        # and exit_code is -1). Text/content stay as a fallback for a driver
+        # that renders the suffix inline.
+        meta = getattr(obs, "metadata", None)
+        suffix = getattr(meta, "suffix", None) if meta is not None else None
+        if suffix and "timed out after" in str(suffix).lower():
+            return True
+        text = getattr(obs, "text", None)
+        if not text:
+            content = getattr(obs, "content", None) or []
+            if isinstance(content, str):
+                text = content
+            else:
+                text = " ".join(
+                    c if isinstance(c, str) else (getattr(c, "text", "") or "")
+                    for c in content)
+        return "timed out after" in str(text or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _summarize_action(event, action) -> dict:
     aname = type(action).__name__
     command = getattr(action, "command", None)
@@ -139,6 +169,14 @@ def summarize_event(event):
     """One sanitized feed dict for an SDK event, or None for events that must
     not reach the customer (tool output, the task/system messages, plumbing)."""
     name = type(event).__name__
+    if "Observation" in name and _timed_out(event):
+        # §14.5 per-command cap: tool OUTPUT stays silent (it echoes files, env,
+        # KB text), but the one fact worth surfacing from it is that a step hit
+        # its timeout - otherwise the console shows a command, then a gap, and an
+        # admin reconstructs the hang from timestamps. Fixed copy, none of the
+        # observation's text.
+        return {"kind": "command",
+                "title": "Command still running after its timeout - the session moved on"}
     if any(s in name for s in _SILENT_NAMES):
         return None
     if "Error" in name:

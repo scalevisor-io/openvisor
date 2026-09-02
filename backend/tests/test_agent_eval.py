@@ -11,7 +11,8 @@ from app.services.agent_eval.metrics import RunRecord, gate_failed_open, gates_c
 
 
 def _settings(**over):
-    base = dict(dev_max_iterations_default=40, dev_run_timeout_minutes=20, dev_boot_fix_attempts=1,
+    base = dict(dev_max_iterations_default=40, dev_run_timeout_minutes=20, dev_cmd_timeout_s=600,
+                dev_boot_fix_attempts=1,
                 ci_max_retries=2, security_fix_attempts=10, kb_retrieval_min_score=0.5,
                 dev_boot_check=True, acceptance_checks_enabled=True,
                 kb_rules_digest_max_chars=12_000, kb_procedures_k=3)
@@ -42,6 +43,7 @@ def test_harness_version_changes_with_caps_and_prompts(tmp_path):
     (tmp_path / "security_review.md").write_text("B")
     base = hv.compute_harness_version(_settings(), tmp_path)
     assert hv.compute_harness_version(_settings(dev_max_iterations_default=60), tmp_path) != base
+    assert hv.compute_harness_version(_settings(dev_cmd_timeout_s=60), tmp_path) != base
     assert hv.compute_harness_version(_settings(kb_retrieval_min_score=0.7), tmp_path) != base
     assert hv.compute_harness_version(_settings(kb_rules_digest_max_chars=8_000), tmp_path) != base
     assert hv.compute_harness_version(_settings(kb_procedures_k=5), tmp_path) != base
@@ -54,6 +56,7 @@ def test_harness_config_excludes_model():
     cfg = hv.harness_config(_settings())
     assert "model" not in str(cfg).lower().replace("dev_max", "")  # the model is tracked separately
     assert cfg["caps"]["dev_max_iterations"] == 40 and cfg["gates"]["boot_check"] is True
+    assert cfg["schema"] == 3 and cfg["caps"]["dev_cmd_timeout_s"] == 600
 
 
 # ---- corpus ----

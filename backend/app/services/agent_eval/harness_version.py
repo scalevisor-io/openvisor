@@ -33,7 +33,7 @@ TOOL_PRESET_ID = "openhands-default:terminal+file_editor+task_tracker+grep+glob"
 # as one harness. Bump the harness's driver_revision for ANY change to its driver
 # script or pinned agent dependency. The default keeps a caller that passes neither
 # argument on the OpenHands identity.
-DRIVER_REVISION = "openhands-sdk1.8.0+drv2"
+DRIVER_REVISION = "openhands-sdk1.8.0+drv3"
 
 # RAG breadth is hardcoded in workers/tasks.py::_build_task_file (k=6). Kept here so a
 # change to it shifts the fingerprint even though it lives elsewhere.
@@ -57,10 +57,13 @@ def harness_config(settings, prompt_dir: Path | None = None,
     before it were produced by a harness whose driver build was not part of its
     identity, so they are genuinely not comparable with runs after it. Schema bumped
     to 2 to say so out loud rather than let the change look like a silent reshuffle.
+    Schema 3: `dev_cmd_timeout_s` joined the caps - a per-command bound changes what
+    a run can spend on one step exactly as the iteration cap does, and both drivers
+    changed with it.
     """
     pd = prompt_dir or PROMPT_DIR
     return {
-        "schema": 2,
+        "schema": 3,
         "tool_preset": tool_preset_id,
         "driver_revision": driver_revision,
         "prompts": {
@@ -70,6 +73,7 @@ def harness_config(settings, prompt_dir: Path | None = None,
         "caps": {
             "dev_max_iterations": settings.dev_max_iterations_default,
             "dev_run_timeout_minutes": settings.dev_run_timeout_minutes,
+            "dev_cmd_timeout_s": settings.dev_cmd_timeout_s,
             "dev_boot_fix_attempts": settings.dev_boot_fix_attempts,
             "ci_max_retries": settings.ci_max_retries,
             "security_fix_attempts": settings.security_fix_attempts,

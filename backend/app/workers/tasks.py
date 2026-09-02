@@ -2104,7 +2104,10 @@ def _build_task_file(db: Session, project: Project, fix_instruction: str | None 
         "dedicated inner daemon - `docker info` confirms it). Build and boot "
         "the project stack locally to verify your success check before "
         "finishing; the platform's boot gate still re-verifies after "
-        "publication.\n"
+        "publication. Detach every service you start (`docker compose up -d "
+        "--build`, never a foreground `up`): an attached server never returns, "
+        "so the step blocks until its timeout and shows you nothing. Verify "
+        "over HTTP, then read `docker compose logs --tail 60`.\n"
         if settings.dev_sandbox_docker else
         "\n\n## Sandbox capability: Docker\n"
         "Docker is NOT available inside this sandbox (no daemon), so never "
@@ -3371,7 +3374,8 @@ def _dispatch_runner(db: Session, project: Project, target: dict,
             cpu_request=project.dev_cpu_request or "",
             mem_request=project.dev_mem_request or "",
             harness=harness.id, max_usd=settings.dev_run_max_usd,
-            timeout_s=_run_timeout_minutes(project) * 60)
+            timeout_s=_run_timeout_minutes(project) * 60,
+            cmd_timeout_s=settings.dev_cmd_timeout_s)
         if not _remote_unreachable(result) or attempt == _GIT_PREFLIGHT_ATTEMPTS - 1:
             return result
         log.warning("dev run for %s could not reach the git remote (attempt %s/%s) - "
