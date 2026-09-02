@@ -269,7 +269,12 @@ _PR_CONTRACT_RULES = """1. **The repository's conventions win.** You are changin
    the reviewer reads the diff. Files whose only purpose is to satisfy the platform are
    noise in that diff."""
 
-_APP_VERIFY_WORKFLOW = """This sandbox runs its OWN docker daemon (`docker info` confirms it): a repository that ships a container workflow - compose files, a Makefile with dev/prod targets, a devcontainer - is built, run and tested through THAT workflow (`make dev`, `docker compose up --build`, its documented commands), because its containers already carry every toolchain it needs."""
+# `up -d`, not `up`: this line is the one the agent copies, and a production run
+# copied a foreground `docker compose up --build` from it - a web server that
+# never exits, piped into `tail` - and sat blocked for 36 minutes. Every other
+# place the platform spells its own boot (the contract rules, the deliverable
+# summary, the boot-fix instruction, the deployer itself) already detaches.
+_APP_VERIFY_WORKFLOW = """This sandbox runs its OWN docker daemon (`docker info` confirms it): a repository that ships a container workflow - compose files, a Makefile with dev/prod targets, a devcontainer - is built, run and tested through THAT workflow (`make dev`, `docker compose up -d --build`, its documented commands), because its containers already carry every toolchain it needs. Detach every service you start (`-d`): an attached server never returns, so the step blocks until its timeout and shows you nothing. Verify over HTTP, then read `docker compose logs --tail 60`."""
 
 _PR_VERIFY_WORKFLOW = (
     "Use the repository's own checks - its test suite, linters and CI config. This "

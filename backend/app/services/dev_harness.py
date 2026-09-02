@@ -82,7 +82,7 @@ HARNESSES: dict[str, Harness] = {
             "(read+write+edit+bash+glob+grep+websearch+task)"),
         # Both halves of this harness are the agent: the SDK and the CLI it drives
         # as a subprocess, pinned together in runner/Dockerfile.
-        driver_revision="claude-sdk0.2.148+cli2.1.251+drv3",
+        driver_revision="claude-sdk0.2.148+cli2.1.251+drv4",
         model_hints=("claude", "anthropic", "sonnet", "opus", "haiku"),
     ),
 }

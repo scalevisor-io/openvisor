@@ -136,3 +136,38 @@ def test_prefixed_or_miscased_tool_names_resolve_to_roster_names(tool_args):
     assert tool_args.repair_tool_name("terminal", roster) is None  # already a roster name
     assert tool_args.repair_tool_name("tool_grep", roster) is None  # resolves to nothing
     assert tool_args.repair_tool_name("browser_browser_navigate", roster) is None
+
+
+# ---- §14.5 per-command cap: default_timeout ----
+
+def test_default_timeout_bounds_an_unbounded_terminal_call(tool_args):
+    args, applied = tool_args.default_timeout(
+        {"command": "docker compose up --build"}, "TerminalAction", TERMINAL, 600)
+    assert applied and args["timeout"] == 600.0
+
+
+def test_default_timeout_keeps_the_models_own_value(tool_args):
+    args, applied = tool_args.default_timeout(
+        {"command": "sleep 5", "timeout": 30}, "TerminalAction", TERMINAL, 600)
+    assert not applied and args["timeout"] == 30
+
+
+def test_default_timeout_ignores_non_terminal_actions(tool_args):
+    # file_editor also has a `command` field - the terminal SHAPE is what matches
+    args, applied = tool_args.default_timeout(
+        {"command": "view", "path": "/x"}, "FileEditorAction", FILE_EDITOR, 600)
+    assert not applied and "timeout" not in args
+
+
+def test_default_timeout_matches_on_shape_when_the_name_is_unfamiliar(tool_args):
+    args, applied = tool_args.default_timeout(
+        {"command": "ls"}, "RenamedShellAction", TERMINAL, 60)
+    assert applied and args["timeout"] == 60.0
+
+
+def test_default_timeout_is_off_at_zero_and_never_raises(tool_args):
+    assert tool_args.default_timeout({"command": "ls"}, "TerminalAction", TERMINAL, 0) == (
+        {"command": "ls"}, False)
+    garbage = object()
+    assert tool_args.default_timeout(garbage, "TerminalAction", TERMINAL, 600) == (garbage, False)
+    assert tool_args.default_timeout({"is_input": True}, "TerminalAction", TERMINAL, 600)[1] is False

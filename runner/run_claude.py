@@ -214,10 +214,12 @@ def _mcp_servers() -> dict:
 _HEADLESS_NOTE = """\
 Operating environment: this is a single headless session. Nothing will wake you \
 up - there are no notifications, no scheduled resumes, and no turn after the one \
-you are in. If you start work in the background, poll it yourself until it \
-finishes. The session ends the moment you stop taking actions, and whatever is in \
-the workspace at that point is what gets published, so finish your verification \
-before you stop.
+you are in. If you start a build or a test run in the background, poll it yourself \
+until it finishes; a SERVICE is different - detach it (`docker compose up -d`, \
+never a foreground `up`) and probe it over HTTP, because an attached server never \
+returns and the step just blocks. The session ends the moment you stop taking \
+actions, and whatever is in the workspace at that point is what gets published, so \
+finish your verification before you stop.
 
 """
 
@@ -450,6 +452,11 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
 
     max_turns = int(os.environ.get("LLM_MAX_ITERATIONS") or 0)
     budget = float(os.environ.get("DEV_RUN_MAX_USD") or 0)
+    # §14.5 per-command cap: the CLI already bounds Bash (2 min default, 10 min
+    # ceiling, then auto-backgrounds the command) - but by ITS defaults, not the
+    # platform's. Governing both halves with the same DEV_CMD_TIMEOUT_S the
+    # OpenHands driver honors keeps one knob meaning one thing across harnesses.
+    cmd_timeout_ms = int(os.environ.get("DEV_CMD_TIMEOUT_S") or 600) * 1000
     # §dev harness: the endpoint's configured reasoning effort, which this driver
     # used to drop on the floor - an admin who set an endpoint to "xhigh" got the
     # provider default on every Claude build. Whitelisted rather than forwarded:
@@ -478,6 +485,8 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
         stderr=_capture_stderr,
         max_turns=max_turns or None,
         mcp_servers=_mcp_servers(),
+        env={"BASH_DEFAULT_TIMEOUT_MS": str(cmd_timeout_ms),
+             "BASH_MAX_TIMEOUT_MS": str(cmd_timeout_ms)},
         # §customer settings are NOT ours to load. /workspace is the customer's
         # repository: letting the SDK read its .claude/ would let a customer repo
         # inject hooks, skills and commands into a build running with our

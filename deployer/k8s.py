@@ -730,6 +730,8 @@ def dev_run(body, cpu: str, mem: str) -> dict:
         {"name": "DEV_HARNESS", "value": body.harness},
         # Per-run provider-side spend ceiling in USD ("" = unset).
         {"name": "DEV_RUN_MAX_USD", "value": str(body.max_usd or "")},
+        # §14.5 per-command cap the driver applies to unbounded shell calls.
+        {"name": "DEV_CMD_TIMEOUT_S", "value": str(body.cmd_timeout_s)},
         # Last path segment only (the run id): OpenAI caps prompt_cache_key at
         # 64 chars and the full devruns/<pid>/<rid> path is 85 - it 400s EVERY
         # call of the build.

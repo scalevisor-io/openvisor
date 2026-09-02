@@ -26,7 +26,7 @@ DEMO_ORDERS = [
     "The repo MUST ship `compose.demo.yml`",
     "You MUST also ship a **`.gitlab-ci.yml`**",
     "The platform test-boots",
-    "docker compose up --build",
+    "docker compose up -d --build",
     "building a customer MVP",
     "A working MVP matching the project description",
     "place all project files at the REPOSITORY ROOT",

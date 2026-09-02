@@ -97,6 +97,24 @@ class Settings(BaseSettings):
     # expensive model cost several times what the same run costs on a cheap one.
     # 0 = unset, the other two caps still apply.
     dev_run_max_usd: float = 0.0
+    # §14.5 per-COMMAND cap, in seconds, handed to the driver as DEV_CMD_TIMEOUT_S.
+    # The wall clock bounds a run; nothing bounded one shell command. Prod
+    # 2026-09-02: the agent ran `docker compose up --build` without `-d` - a web
+    # server that never exits - piped into `tail`, and sat blocked AND blind for
+    # 36 minutes until a human stopped it; the wall clock would have SIGKILLed the
+    # sandbox at 60 and lost usage.json with it. OpenHands SDK 1.8.0 leaves
+    # TerminalAction.timeout to the model (default None), and with None the only
+    # guard is a 30 s no-new-output return that a log-streaming server never
+    # trips. The driver fills this in when the model omitted one; the Claude
+    # driver maps it onto the CLI's BASH_*_TIMEOUT_MS. On expiry the SDK returns
+    # the partial output and KEEPS the process running (the next command
+    # interrupts it), so a booted stack survives to be probed.
+    # Trade-off worth knowing: a set timeout marks the call blocking, which turns
+    # OFF the 30 s idle return - a command that goes silent (stdin, a dead socket)
+    # now costs up to this long instead of 30 s. Bounded either way. 600 = the
+    # Claude CLI's own BASH_MAX_TIMEOUT_MS default, so both harnesses agree, and a
+    # cold `--build` (minutes) still fits.
+    dev_cmd_timeout_s: int = 600
     # §14.x stale dev-run reaper: run_development is synchronous and Celery is
     # not acks_late, so a worker that dies mid-run leaves the project stranded in
     # an in-flight sub-state forever (Resume blocked, orphaned dev job burning

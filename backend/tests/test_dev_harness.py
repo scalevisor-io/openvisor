@@ -742,3 +742,41 @@ def test_a_pin_the_project_model_cannot_run_is_refused(client, admin_headers):
                 ProjectModelConfig.project_id == pid))
             db.execute(delete(ModelEndpoint).where(ModelEndpoint.id == eid))
             db.commit()
+
+
+RUN_DEV = Path("/app/runner_src/run_dev.py")
+
+
+def test_the_command_cap_reaches_both_drivers(monkeypatch):
+    """§14.5 per-command cap. Prod 2026-09-02: a foreground `docker compose up
+    --build | tail` blocked a run for 36 minutes; nothing bounded one shell call.
+    The knob rides the /dev/run body to both deployer paths, the OpenHands
+    driver fills it into unbounded terminal calls, the Claude driver maps it
+    onto the CLI's own Bash bound."""
+    from app.services import deployer_client
+    sent = {}
+    monkeypatch.setattr(deployer_client, "_call",
+                        lambda method, path, body, timeout=None: sent.update(body) or {})
+    deployer_client.run_dev_job("pid", llm_model="m", llm_api_key="k", llm_base_url="u",
+                                cmd_timeout_s=123)
+    assert sent["cmd_timeout_s"] == 123
+    if not DEPLOYER_MAIN.exists():
+        pytest.skip("deployer source not mounted at /app/deployer_src")
+    assert "DEV_CMD_TIMEOUT_S={body.cmd_timeout_s}" in DEPLOYER_MAIN.read_text()
+    assert '{"name": "DEV_CMD_TIMEOUT_S"' in DEPLOYER_K8S.read_text()
+    if RUN_DEV.exists():
+        src = RUN_DEV.read_text()
+        assert 'os.environ.get("DEV_CMD_TIMEOUT_S")' in src
+        assert "tool_args.default_timeout(" in src
+    if RUN_CLAUDE.exists():
+        src = RUN_CLAUDE.read_text()
+        assert 'os.environ.get("DEV_CMD_TIMEOUT_S")' in src
+        assert "BASH_MAX_TIMEOUT_MS" in src and "BASH_DEFAULT_TIMEOUT_MS" in src
+
+
+def test_driver_revisions_moved_with_the_command_cap():
+    """Both driver scripts changed, so both fingerprints must (the rule that keeps
+    agent_eval from averaging a capped build with an uncapped one)."""
+    from app.services.agent_eval.harness_version import DRIVER_REVISION
+    assert DRIVER_REVISION.endswith("drv3")
+    assert dev_harness.HARNESSES["claude_sdk"].driver_revision.endswith("drv4")

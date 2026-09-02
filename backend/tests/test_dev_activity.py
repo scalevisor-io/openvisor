@@ -372,3 +372,27 @@ def test_livefeed_redacts_secret_values_and_token_shapes(live_events, tmp_path, 
     assert "env-memory-secret-token-1" not in raw
     assert "glpat-" not in raw
     assert raw.count("[redacted]") >= 3
+
+
+def test_summarizer_surfaces_a_timed_out_command_and_nothing_else_from_output(live_events):
+    """§14.5 per-command cap. Tool output stays silent, except the one fact an
+    admin needs: a step hit its timeout. SDK 1.8.0 carries that in
+    CmdOutputMetadata.suffix (probed in the runner image - .text is only the raw
+    output), and the feed line is fixed copy: none of the output reaches it."""
+    suffix = ("\n[The command timed out after 600.0 seconds. You may wait longer to see "
+              "additional output by sending empty command '' ...]")
+    timed_out = _obj("ObservationEvent", observation=_obj(
+        "TerminalObservation", text="tick\ntick\nSECRET=hunter2",
+        metadata=_obj("CmdOutputMetadata", exit_code=-1, suffix=suffix)))
+    out = live_events.summarize_event(timed_out)
+    assert out == {"kind": "command",
+                   "title": "Command still running after its timeout - the session moved on"}
+    assert "hunter2" not in json.dumps(out)
+    # a normal observation - same shape, empty suffix - is still silenced
+    quiet = _obj("ObservationEvent", observation=_obj(
+        "TerminalObservation", text="ok", metadata=_obj("CmdOutputMetadata", exit_code=0, suffix="")))
+    assert live_events.summarize_event(quiet) is None
+    # a driver that renders the marker inline (no metadata) is caught by the text fallback
+    inline = _obj("ObservationEvent", observation=_obj(
+        "BashObservation", content=[_obj("TextContent", text="... [The command timed out after 5 seconds]")]))
+    assert live_events.summarize_event(inline)["kind"] == "command"

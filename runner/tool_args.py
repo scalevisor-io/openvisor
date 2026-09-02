@@ -118,6 +118,39 @@ def fill_schema_defaults(arguments, schema):
 
 # Wrappers models put around a tool name; stripped only when what remains IS
 # a roster tool, so a real name is never rewritten.
+def default_timeout(arguments, action_name, fields, seconds):
+    """Return `(arguments, applied)`: a terminal call the model left unbounded
+    gets `timeout=seconds`; every other call, and a call carrying its own
+    `timeout`, comes back untouched.
+
+    Why this is a repair and not a tool setting: in OpenHands SDK 1.8.0 the
+    terminal's `timeout` lives on the ACTION, defaulting to None, and with None
+    the only bound is a 30 s no-new-output return - which a foreground server
+    (`docker compose up` without `-d`) never trips because it streams logs. A
+    real run sat on exactly that for 36 minutes. Filling the field here, before
+    validation, is the one place every terminal call passes through. The model's
+    own value always wins: a call that asked for 30 s gets 30 s.
+
+    Detection is structural (the terminal action's own field set) with the
+    class name as a tie-break, so a renamed action still matches and a
+    file_editor that also has `command` does not."""
+    try:
+        if not isinstance(arguments, dict) or "timeout" in arguments:
+            return arguments, False
+        if not seconds or seconds <= 0:
+            return arguments, False
+        terminal_shape = {"command", "is_input", "timeout"} <= set(fields or ())
+        if not (terminal_shape or "Terminal" in str(action_name or "")):
+            return arguments, False
+        if "command" not in arguments:
+            return arguments, False
+        out = dict(arguments)
+        out["timeout"] = float(seconds)
+        return out, True
+    except Exception:  # noqa: BLE001 - a repair never fails a call
+        return arguments, False
+
+
 TOOL_NAME_PREFIXES = ("tool_", "tools_", "tools.", "tool.", "functions.", "functions:",
                       "function.", "function_", "default_api.", "default_api:", "mcp__", "mcp_")
 
