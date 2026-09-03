@@ -80,6 +80,7 @@ class Snapshot:
     changes: list[Change] = field(default_factory=list)   # newest first
     live_run_state: str | None = None     # queued/running/deploying, else None
     latest_run_state: str | None = None   # newest row of the request (any state)
+    delivered_numbers: frozenset = frozenset()  # change numbers a `done` row of the request carries
     ci_available: bool | None = None      # platform only; None = not checked
     branches: list[str] = field(default_factory=list)
     error: str | None = None              # an observation that failed (fail-soft)
@@ -169,7 +170,8 @@ def observe(*, target: dict | None, gitlab_project_id: int | None,
             token: str | None, live_run_state: str | None,
             latest_run_state: str | None,
             ssh_merged: Callable[[], bool | None] | None = None,
-            base_branch: str = "main") -> Snapshot:
+            base_branch: str = "main",
+            delivered_numbers: frozenset = frozenset()) -> Snapshot:
     """Gather the request's changes from the provider. Fail-soft per call: a
     listing that errors is logged and the pointers still resolve; a pointer that
     errors is skipped. A request with a build in flight is not observed at all
@@ -182,7 +184,8 @@ def observe(*, target: dict | None, gitlab_project_id: int | None,
         target is None or (provider == "gitlab" and not target.get("customer")))
     snap = Snapshot(provider=provider, platform=platform, target=target,
                     branches=list(branches), live_run_state=live_run_state,
-                    latest_run_state=latest_run_state)
+                    latest_run_state=latest_run_state,
+                    delivered_numbers=frozenset(delivered_numbers))
     if live_run_state in LIVE_RUN_STATES or (target is None and not platform):
         return snap
     found: dict[int, Change] = {}
@@ -319,9 +322,14 @@ def decide(snap: Snapshot, *, request_status: str | None,
             return Verdict("wait", None, "pushed; waiting for the change to be merged")
         return Verdict("idle", None, "no change on the repository")
     if newest.state == "merged":
-        if request_status == "done" or snap.latest_run_state == "done":
+        if (request_status == "done" or snap.latest_run_state == "done"
+                or newest.number in snap.delivered_numbers):
             # Request #0 stays in_progress until the project finishes, so a
-            # `done` run is the delivery marker for an MVP.
+            # `done` run carrying this change is the delivery marker for an
+            # MVP - whichever row it is. Judging by the NEWEST row alone
+            # re-deployed a merged MVP every minute in prod: the newest row was
+            # a later Resume that died with its node, the `done` sat on the
+            # older row that owns the change.
             return Verdict("idle", newest, "delivered")
         if snap.latest_run_state == "merged":
             return Verdict("idle", newest,

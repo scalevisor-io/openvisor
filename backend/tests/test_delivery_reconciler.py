@@ -306,9 +306,35 @@ def test_merge_that_landed_after_the_park_deploys_on_the_next_tick(org_id, quiet
         assert p.dev_run_state == "deploying"
         assert p.dev_pr_number == 2                       # the pointer is re-derived
         assert req.delivery["action"] == "deploy" and req.delivery["change"]["number"] == 2
-        assert db.get(DevRun, older_id).state == "deploying"  # the row that owns MR !2
+        revived = db.get(DevRun, older_id)
+        assert revived.state == "deploying"                # the row that owns MR !2
+        # its clock restarted with it: the row-level reaper judges a deploying
+        # row by its own started_at, and this one used to read hours old
+        assert revived.started_at >= datetime.now(timezone.utc) - timedelta(minutes=1)
     assert deployed and deployed[0][1]["kwargs"]["run_id"] == older_id
     assert any("!2 was merged" in m for m in _messages(pid))
+    # The deploy finished (demo_start marks the owning row done). The newest
+    # row of the request is still the failed one - the next tick must read the
+    # `done` row that carries MR !2 as the delivery, not redeploy every minute.
+    with SyncSession() as db:
+        db.get(DevRun, older_id).state = "done"
+        p = db.get(Project, pid)
+        p.dev_run_state = "done"
+        db.commit()
+    tasks.dev_pr_sweep()
+    tasks.dev_pr_sweep()
+    with SyncSession() as db:
+        assert db.get(Request, rid).delivery["action"] == "idle"
+        assert db.get(Project, pid).dev_run_state == "done"
+    assert len(deployed) == 1
+    assert sum("!2 was merged" in m for m in _messages(pid)) == 1
+
+
+def test_decide_a_done_row_carrying_the_change_means_delivered():
+    v = decide(_snap([_mr(state="merged")], latest_run_state="failed",
+                     delivered_numbers=frozenset({2})),
+               request_status="in_progress", pr_deliverable=False)
+    assert v.action == "idle" and v.note == "delivered"
 
 
 def test_open_change_after_a_failed_park_is_watched_not_rebuilt(org_id, quiet, deployed,
@@ -547,3 +573,17 @@ def test_mirror_pointer_of_another_request_is_never_this_requests_change(org_id,
     tasks.dev_pr_sweep()
     assert 9 not in looked            # the mirror's pointer stayed the other request's
     assert looked == [2]              # the request's own row pointer still resolves
+
+
+def test_resume_while_a_deploy_is_in_flight_is_refused(org_id, quiet, deployed, monkeypatch):
+    """The tick found the change merged and is deploying it; a Resume clicked in
+    that window must not spend a sandbox (prod: it did, while the reaper had
+    momentarily re-labelled the deploying row as failed)."""
+    pid, rid, older_id = _the_night(org_id, run_state="failed")
+    with SyncSession() as db:
+        db.get(DevRun, older_id).state = "deploying"
+        db.commit()
+    _platform_repo(monkeypatch, {})
+    out = tasks.delivery_gate(pid, rid, fresh=False)
+    assert out["blocked"] and "in flight" in out["message"]
+    assert deployed == []
