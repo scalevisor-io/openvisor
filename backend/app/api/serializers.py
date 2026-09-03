@@ -430,4 +430,5 @@ def request_out(r: Request) -> dict:
             "cost_credits": round(r.cost_credits or 0.0, 4),
             "source_issue_url": r.source_issue_url,
             "pr_urls": r.pr_urls or [],
+            "delivery": r.delivery,
             "created_at": r.created_at}

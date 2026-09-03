@@ -91,6 +91,7 @@ def _parked_project(oid, provider="github", attempts=0):
 
 
 def _open_pr(monkeypatch, sha="abc123"):
+    monkeypatch.setattr(tasks.github, "list_prs_for_branch", lambda *a, **k: [])
     monkeypatch.setattr(tasks.github, "get_pr",
                         lambda o, r, n, token=None: {"state": "open", "merged": False,
                                                      "base": {"ref": "main"},
@@ -99,6 +100,7 @@ def _open_pr(monkeypatch, sha="abc123"):
 
 
 def _open_mr(monkeypatch, sha="abc123"):
+    monkeypatch.setattr(tasks.gitlab, "customer_list_mrs_for_branch", lambda *a, **k: [])
     monkeypatch.setattr(tasks.gitlab, "customer_get_mr",
                         lambda b, t, p, iid: {"state": "opened", "sha": sha})
     monkeypatch.setattr(tasks, "_agent_branch_merged_ssh", lambda pid, remote: False)

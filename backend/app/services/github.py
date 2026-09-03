@@ -100,6 +100,28 @@ def ensure_base_branch(owner: str, repo: str, branch: str = "main",
         log.info("seeded %s/%s base branch %s", owner, repo, branch)
 
 
+def list_prs_for_branch(owner: str, repo: str, head_branch: str,
+                        token: str | None = None) -> list[dict]:
+    """Every PR whose head is head_branch (same repo), in ANY state, newest
+    first (§delivery reconciler: the change is found by its branch, not by a
+    pointer the platform may since have cleared). The list payload carries
+    `merged_at` rather than `merged`; readers normalise."""
+    with _client(token) as c:
+        r = c.get(f"/repos/{owner}/{repo}/pulls",
+                  params={"state": "all", "head": f"{owner}:{head_branch}",
+                          "sort": "created", "direction": "desc", "per_page": 20})
+        r.raise_for_status()
+        return r.json()
+
+
+def close_pr(owner: str, repo: str, number: int, token: str | None = None) -> None:
+    """Close an open PR without merging (§delivery reconciler: Start fresh
+    discards the request's open change)."""
+    with _client(token) as c:
+        r = c.patch(f"/repos/{owner}/{repo}/pulls/{number}", json={"state": "closed"})
+        r.raise_for_status()
+
+
 def find_open_pr(owner: str, repo: str, head_branch: str,
                  token: str | None = None) -> dict | None:
     """Open PR whose head is head_branch (in the same repo, so head=owner:branch)."""

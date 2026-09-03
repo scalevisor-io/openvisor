@@ -145,6 +145,7 @@ def test_adopt_merged_change_delivers_instead_of_failing(quiet, org_id, monkeypa
     pid = _project(org_id, dev_run_state="running", gitlab_project_id=4242,
                    gitlab_web_url="https://gitlab.example.com/plat/proj")
     req_id, run_id = _request_and_run(pid, "running", pr_number=3)
+    monkeypatch.setattr(tasks.gitlab, "list_mrs_for_branch", lambda gid, br: [])
     monkeypatch.setattr(tasks.gitlab, "get_mr",
                         lambda glid, num: {"state": "merged"})
     dispatched: list = []
@@ -172,6 +173,7 @@ def test_adopt_merged_change_delivers_instead_of_failing(quiet, org_id, monkeypa
 def test_adopt_merged_change_ignores_open_changes(org_id, quiet, monkeypatch):
     pid = _project(org_id, dev_run_state="running", gitlab_project_id=4242)
     req_id, run_id = _request_and_run(pid, "running", pr_number=3)
+    monkeypatch.setattr(tasks.gitlab, "list_mrs_for_branch", lambda gid, br: [])
     monkeypatch.setattr(tasks.gitlab, "get_mr",
                         lambda glid, num: {"state": "opened"})
     with SyncSession() as db:
@@ -188,6 +190,7 @@ def test_adopt_merged_change_guards_foreign_urls(org_id, quiet, monkeypatch):
     req_id, run_id = _request_and_run(
         pid, "running", pr_number=9,
         pr_url="https://github.com/acme/other/pull/9")
+    monkeypatch.setattr(tasks.gitlab, "list_mrs_for_branch", lambda gid, br: [])
     monkeypatch.setattr(tasks.gitlab, "get_mr",
                         lambda glid, num: pytest.fail("foreign URL must not probe"))
     with SyncSession() as db:

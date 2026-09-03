@@ -11,7 +11,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
@@ -23,7 +23,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, deployer_client, dev_concurrency, dev_faults, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
+from app.services import acceptance, brand, contract, delivery, deployer_client, dev_concurrency, dev_faults, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -4417,9 +4417,26 @@ def _run_development_impl(project_id: str, fix_only: bool = False,
                 _save_run(project, "failed", error="CI fix retries exhausted")
                 db.commit()
                 return
-            human = {"ci_timeout": "The CI pipeline didn't finish in time."}.get(
-                reason, f"The build needs a manual look ({reason}).")
-            _fail_to_admin(db, project, human, f"Merge blocked: {reason}")
+            if "conflict" in reason:
+                _fail_to_admin(db, project,
+                               f"Merge request !{mr['iid']} has a merge conflict with the base "
+                               "branch and needs a manual look.", f"Merge blocked: {reason}")
+                db.commit()
+                return
+            # §delivery reconciler: an OPEN change is not a failure. CI still
+            # running, or a merge GitLab refused for now (`merge refused: …` -
+            # its own words, kept on the run): park awaiting_merge and let the
+            # reconciler merge it, fix its pipeline or park it with the real
+            # cause on its next tick. Parking to admin here dropped the run out
+            # of the sweep's watch, and an MR that merged on its own six
+            # minutes later went unseen while two rebuilds followed.
+            _post_message(db, project_id, _dev_thread(db, project), "agent",
+                          f"Merge request !{mr['iid']} is open; it merges automatically once "
+                          "its pipeline passes and your demo deploys right after. You can "
+                          "also merge it yourself.", meta=_pr_meta(mr_ref))
+            _save_run(project, "awaiting_merge", error=f"Merge pending: {reason}"[:512])
+            _safe_transition(db, project, "awaiting_customer",
+                             f"MR !{mr['iid']} awaiting merge")
             db.commit()
             return
 
@@ -4520,10 +4537,13 @@ def _change_is_merged(db: Session, project: Project, target: dict | None,
 
 
 def _proceed_merged(db: Session, project: Project, target: dict | None,
-                    thread: str, number: int, url: str | None) -> None:
-    """Handle an already-merged change exactly like the merge sweep's merged
-    branch: stamp the pointers, finalize a pr-deliverable request, else deploy
-    the demo (demo_start finalizes the run + request)."""
+                    thread: str, number: int, url: str | None,
+                    label: str | None = None) -> None:
+    """Handle a merged change: stamp the pointers, finalize a pr-deliverable
+    request, else deploy the demo (demo_start finalizes the run + request).
+    The ONE actuator for "the change landed", whoever noticed it - a run's own
+    exit path, the §delivery reconciler's tick, or a Resume's pre-dispatch
+    gate. `label` is the sentence announcing it (default: found already merged)."""
     provider = target["provider"] if target is not None else "gitlab"
     noun = "pull request" if provider == "github" else "merge request"
     sym = "#" if provider == "github" else "!"
@@ -4541,8 +4561,8 @@ def _proceed_merged(db: Session, project: Project, target: dict | None,
     req = dev_concurrency.run_request(db, project)
     ref = _pr_ref(number, url, provider)
     _record_request_pr(db, req, ref)
-    label = (f"{noun.capitalize()} {sym}{number} is already merged - the "
-             "requested change has landed.")
+    label = label or (f"{noun.capitalize()} {sym}{number} is already merged - the "
+                      "requested change has landed.")
     if _pr_deliverable_run(db, project):
         _finalize_pr_deliverable(db, project, label, _pr_meta(ref))
         return
@@ -4556,47 +4576,38 @@ def _proceed_merged(db: Session, project: Project, target: dict | None,
 
 def _adopt_merged_change(db: Session, project: Project, thread: str,
                          logs: str) -> bool:
-    """§14 adopt probe 0: the strongest landing signal - a change pointer the
-    PLATFORM itself stamped on this run's chain (run rows, project mirror,
-    request history) resolves to a MERGED PR/MR. A session that then produced
-    nothing (a resume of an already-delivered request re-verifies and exits
-    empty - prod regression: the platform auto-merged MR !3, the post-merge
-    deploy failure parked the run 'failed', and the customer's Resume burned a
-    full build to conclude "no changes") or died mid-flight is a DELIVERY, not
-    a failure: proceed exactly like the merge sweep instead of parking."""
+    """§14 adopt probe 0, now the §delivery reconciler's eyes: the NEWEST change
+    of this run's request is MERGED on the repository. A session that then
+    produced nothing (a resume of an already-delivered request re-verifies and
+    exits empty) is a DELIVERY, not a failure: proceed exactly like the merge
+    sweep instead of parking. Prod regressions, twice: the platform auto-merged
+    MR !3, the post-merge deploy failure parked the run 'failed', and the
+    customer's Resume burned a full build to conclude "no changes"; then an
+    MVP GitLab merged six minutes after a `ci_timeout` park was rebuilt from
+    scratch by a Start fresh whose unchaining had cleared every pointer this
+    probe used to read. The change is therefore found the way the reconciler
+    finds it - by the request's branches on the repository, pointers second -
+    so a cleared pointer can no longer hide a landed change."""
     run = dev_concurrency.bound_run(project)
-    req = dev_concurrency.run_request(db, project)
-    cands: list[tuple[int, str | None]] = []
-
-    def _add(number, url) -> None:
-        if number and int(number) not in [n for n, _ in cands]:
-            cands.append((int(number), url))
-
-    r, hops = run, 0
-    while r is not None and hops < 6:
-        _add(r.pr_number, r.pr_url)
-        r = db.get(DevRun, r.predecessor_id) if r.predecessor_id else None
-        hops += 1
-    _add(project.dev_pr_number, project.dev_pr_url)
-    for refd in (list(reversed(req.pr_urls or [])) if req is not None else []):
-        _add(refd.get("number"), refd.get("url"))
-    if not cands:
+    try:
+        req = _ledger_request(db, project, run)
+        snap = _delivery_snapshot(db, project, req, current_run=run)
+    except Exception:  # noqa: BLE001 - adoption must never mask the park
+        log.exception("merged-change probe failed for %s", project.id)
+        dev_concurrency.bind_run(project, run)
         return False
-    target = _dev_target(db, project)
-    for number, url in cands[:6]:
-        if not _url_matches_target(project, target, url):
-            continue
-        if not _change_is_merged(db, project, target, number):
-            continue
-        if run is not None and logs:
-            run.run_log = logs[-16000:]
-        try:
-            _proceed_merged(db, project, target, thread, number, url)
-        except Exception:  # noqa: BLE001
-            log.exception("merged-change adoption failed for %s", project.id)
-            return False
-        return True
-    return False
+    dev_concurrency.bind_run(project, run)
+    newest = snap.newest
+    if newest is None or newest.state != "merged" or newest.number is None:
+        return False
+    if run is not None and logs:
+        run.run_log = logs[-16000:]
+    try:
+        _proceed_merged(db, project, snap.target, thread, newest.number, newest.url)
+    except Exception:  # noqa: BLE001
+        log.exception("merged-change adoption failed for %s", project.id)
+        return False
+    return True
 
 
 def _adopt_landed_work(db: Session, project: Project, target: dict | None,
@@ -6234,10 +6245,14 @@ def _maybe_ci_fix(j: dict, sha: str | None) -> None:
     or merging it themselves still deploys through this sweep. Only API-visible
     changes (github / customer gitlab, with a token and a ledger row) are
     watched; every provider error is a silent skip until the next tick."""
-    if not (sha and j.get("run_id") and j.get("number") and j.get("token")):
+    platform = j["provider"] == "platform_gitlab"
+    if not (sha and j.get("run_id") and j.get("number") and (j.get("token") or platform)):
         return
     try:
-        if j["provider"] == "github":
+        if platform:
+            pipe = gitlab.pipeline_for_sha(j["gl_project_id"], sha) or {}
+            status = "failure" if pipe.get("status") in ("failed", "canceled") else "other"
+        elif j["provider"] == "github":
             status = github.ci_status(j["owner"], j["name"], sha, token=j["token"])
         else:
             status = gitlab.customer_pipeline_status(j["base_url"], j["token"],
@@ -6249,7 +6264,9 @@ def _maybe_ci_fix(j: dict, sha: str | None) -> None:
         return
     logs = ""
     try:
-        if j["provider"] == "github":
+        if platform:
+            logs = gitlab.failed_pipeline_logs(j["gl_project_id"], j["number"])
+        elif j["provider"] == "github":
             logs = github.failed_ci_logs(j["owner"], j["name"], sha, token=j["token"])
         else:
             logs = gitlab.customer_failed_pipeline_logs(j["base_url"], j["token"],
@@ -6318,205 +6335,494 @@ def _maybe_ci_fix(j: dict, sha: str | None) -> None:
                                         "fix_instruction": fix})
 
 
+# ---------------------------------------------------------------- §delivery reconciler
+# What a request's change IS on its repository, observed every tick, and what to
+# do about it - services/delivery.py holds the observation and the (pure)
+# decision; this block holds the worker's resolvers and the actuators. Every
+# path that used to decide a delivery's fate on its own (the inline platform
+# merge, the merge sweep's four provider arms, the reaper's platform recovery,
+# a Resume's slot acquisition) now converges here.
+
+# Requests whose newest run is older than this are not reconciled (only rows
+# explicitly parked awaiting_merge are, at any age).
+DELIVERY_RECONCILE_WINDOW_DAYS = 7
+# Project statuses a delivery can still advance in.
+DELIVERY_LIVE_STATUSES = ("development", "awaiting_customer", "awaiting_admin")
+
+
+def _change_words(provider: str | None) -> tuple[str, str]:
+    """(noun, symbol) for a change on this provider: ("pull request", "#") on
+    GitHub, ("merge request", "!") everywhere else."""
+    return ("pull request", "#") if provider == "github" else ("merge request", "!")
+
+
+def _ledger_request(db: Session, project: Project, run: DevRun | None) -> Request | None:
+    """The request a run's LEDGER rows are keyed on - the row's own request_id
+    (Request #0 included), else the project's default. Distinct from
+    `dev_concurrency.run_request`, which is the SCOPED identity and answers
+    None for an MVP build on purpose; the reconciler keys on rows, so it needs
+    the row's request, mvp or not."""
+    if run is not None and run.request_id:
+        return db.get(Request, run.request_id)
+    return dev_concurrency.default_request(db, project)
+
+
+def _delivery_runs(db: Session, project: Project, req: Request | None) -> list[DevRun]:
+    q = db.query(DevRun).filter(DevRun.project_id == project.id)
+    q = (q.filter(DevRun.request_id == req.id) if req is not None
+         else q.filter(DevRun.request_id.is_(None)))
+    return q.order_by(DevRun.created_at.desc()).all()
+
+
+def _delivery_snapshot(db: Session, project: Project, req: Request | None,
+                       current_run: DevRun | None = None) -> delivery.Snapshot:
+    """Observe this request's delivery (services/delivery.observe) with the
+    worker's own resolvers: the bound target (§repo binding), the repo token,
+    and every branch and change pointer any row of the request ever carried -
+    superseded and failed rows included, because a Start fresh unchains and
+    clears exactly the pointers a landed change would otherwise be found by.
+    `current_run` is the run whose own exit path is asking: live by definition,
+    so it must not read as "a build in flight". Leaves the newest row bound."""
+    rows = _delivery_runs(db, project, req)
+    others = [r for r in rows if current_run is None or r.id != current_run.id]
+    live = next((r for r in others if r.state in delivery.LIVE_RUN_STATES), None)
+    latest = others[0] if others else None
+    # The Project.dev_* scalars are a display mirror of whichever run stamped
+    # last; they belong to THIS request only when the mirror names it (or the
+    # project predates requests). A sibling's pointer must never resolve as
+    # this request's change.
+    mirror = req is None or project.dev_request_id == req.id
+    dev_concurrency.bind_run(project, current_run or latest)
+    target = _dev_target(db, project)
+    branches: list[str] = []
+    for r in rows:
+        if r.branch and r.branch not in branches:
+            branches.append(r.branch)
+    if mirror and project.dev_branch and project.dev_branch not in branches:
+        branches.append(project.dev_branch)
+    if not branches and (latest is not None or project.dev_run_state == "awaiting_merge"):
+        branches.append(AGENT_BRANCH)  # pre-naming rows pushed the legacy default
+    pointers: list[tuple[int, str | None]] = []
+
+    def _add(number, url) -> None:
+        if not number:
+            return
+        n = int(number)
+        if n in [x for x, _ in pointers]:
+            return
+        if not _url_matches_target(project, target, url):
+            return  # a chain re-pinned away from this repo (§repo binding)
+        pointers.append((n, url))
+
+    for r in rows:
+        _add(r.pr_number, r.pr_url)
+    if mirror:
+        _add(project.dev_pr_number, project.dev_pr_url)
+    for ref in reversed((req.pr_urls or []) if req is not None else []):
+        _add(ref.get("number"), ref.get("url"))
+    token = None
+    ssh = None
+    if target is not None and not _is_platform_gitlab(target):
+        if target["provider"] in ("github", "gitlab"):
+            token = _project_repo_token(db, project, target["provider"], target.get("remote"))
+        if not token:
+            remote = target.get("remote")
+            ssh = (lambda: _agent_branch_merged_ssh(project.id, remote)) if remote else None
+    snap = delivery.observe(
+        target=target, gitlab_project_id=project.gitlab_project_id,
+        branches=branches, pointers=pointers, token=token,
+        live_run_state=live.state if live is not None else None,
+        latest_run_state=latest.state if latest is not None else project.dev_run_state,
+        ssh_merged=ssh, base_branch=(target or {}).get("base_branch") or BASE_BRANCH)
+    return snap
+
+
+def _delivery_row(db: Session, project: Project, req: Request | None,
+                  change: "delivery.Change | None",
+                  current_run: DevRun | None = None) -> DevRun | None:
+    """The ledger row that carries a change: the request's ACTIVE row when it
+    has one (one active row per request is a database invariant - reviving a
+    second beside an awaiting_merge row would violate it), else the row stamped
+    with the change's number, else the one that pushed its branch, else the
+    request's newest row. Bound before any actuator runs, so pointers land on
+    the right row and §repo binding reads the right pin."""
+    rows = [r for r in _delivery_runs(db, project, req)
+            if current_run is None or r.id != current_run.id]
+    for r in rows:
+        if r.state in dev_concurrency.ACTIVE_ROW_STATES:
+            return r
+    if change is not None:
+        if change.number is not None:
+            for r in rows:
+                if r.pr_number == change.number:
+                    return r
+        if change.branch:
+            for r in rows:
+                if r.branch == change.branch:
+                    return r
+    return rows[0] if rows else None
+
+
+def _ci_fix_job(db: Session, project: Project, target: dict, row: DevRun | None,
+                change: "delivery.Change") -> dict:
+    """The §14.10 job dict `_maybe_ci_fix` chains a fix run from."""
+    j = {"id": project.id, "number": change.number, "url": change.url,
+         "run_id": row.id if row is not None else None, "remote": target.get("remote")}
+    if _is_platform_gitlab(target):
+        j.update(provider="platform_gitlab", gl_project_id=project.gitlab_project_id,
+                 noun="merge request", ref="!", token=None,
+                 squash=bool(target.get("squash", True)))
+    elif target["provider"] == "github":
+        j.update(provider="github", owner=target["owner"], name=target["repo"],
+                 noun="pull request", ref="#",
+                 token=_project_repo_token(db, project, "github"))
+    else:
+        j.update(provider="gitlab", base_url=target["base_url"], path=target["path"],
+                 noun="merge request", ref="!",
+                 token=_project_repo_token(db, project, "gitlab", target.get("remote")))
+    return j
+
+
+def _settle_awaiting_merge(db: Session, project: Project, row: DevRun | None,
+                           change: "delivery.Change", verdict: "delivery.Verdict",
+                           platform: bool) -> None:
+    """An open change is alive: the run sits in awaiting_merge while it waits,
+    whatever exit path parked it. Flipping a failed/superseded row here is the
+    one moment worth a message - the platform had told the customer the build
+    failed, and it had not."""
+    state = project.dev_run_state if row is None else row.state
+    if state in ("awaiting_merge", *delivery.LIVE_RUN_STATES) and (
+            row is None or project.dev_run_state == "awaiting_merge"
+            or project.dev_run_state in delivery.LIVE_RUN_STATES):
+        return
+    noun, sym = _change_words(change.provider)
+    _save_run(project, "awaiting_merge", error=f"Waiting: {verdict.note}"[:512])
+    if change.number is not None:
+        if platform:
+            body = (f"{noun.capitalize()} {sym}{change.number} is open; it merges "
+                    "automatically once its pipeline passes and your demo deploys right "
+                    "after. You can also merge it yourself.")
+        else:
+            body = (f"{noun.capitalize()} {sym}{change.number} is open - review and merge "
+                    "it; your demo deploys automatically once it lands.")
+        _post_message(db, project.id, _dev_thread(db, project), "agent", body,
+                      meta=_pr_meta(_pr_ref(change.number, change.url, change.provider)))
+    if project.status == "development":
+        _safe_transition(db, project, "awaiting_customer",
+                         f"{noun.capitalize()} {sym}{change.number} awaiting merge")
+
+
+def _park_delivery(db: Session, project: Project, row: DevRun | None,
+                   change: "delivery.Change", note: str, fault: str | None) -> None:
+    """Park on a merge nobody automatic can clear, saying WHY in the provider's
+    words. Platform-caused (GitLab rules, no runner): the consultant's, free for
+    the customer (§request help). Otherwise (a conflict): the customer's Resume
+    rebuilds. Idempotent on the reason: the same park is never repeated."""
+    noun, sym = _change_words(change.provider)
+    reason = f"{noun.capitalize()} {sym}{change.number} not merged: {note}"[:512]
+    if row is not None and row.state == "failed" and row.run_error == reason:
+        return
+    if project.dev_run_state == "failed" and project.dev_run_error == reason:
+        return
+    label = f"{noun.capitalize()} {sym}{change.number}"
+    if fault == dev_faults.PLATFORM:
+        _fail_to_admin(db, project,
+                       f"{label} can't be merged - {note}. {brand.consultant_first_name()} "
+                       "has been notified and will sort it out; there is nothing to "
+                       "rebuild on your side.", reason, fault=dev_faults.PLATFORM)
+        return
+    _post_message(db, project.id, _dev_thread(db, project), "agent",
+                  f"{label} can't be merged - {note}. Hit Resume and I'll rework it on top "
+                  f"of the current base branch, or ask for {brand.consultant_first_name()}'s "
+                  "review.", meta=_pr_meta(_pr_ref(change.number, change.url, change.provider)))
+    _safe_transition(db, project, "awaiting_customer", reason[:120])
+    _save_run(project, "failed", error=reason)
+
+
+def _reject_closed_change(db: Session, project: Project, row: DevRun | None,
+                          change: "delivery.Change") -> None:
+    """A change closed without merging is rejected work: end the unit on the
+    project AND the row - resume continuity must not resurrect the branch, and
+    no pointer to the closed change may reach the next run, or it continues
+    (or reopens) it instead of opening a new one."""
+    noun, sym = _change_words(change.provider)
+    _post_message(db, project.id, _dev_thread(db, project), "agent",
+                  f"{noun.capitalize()} {sym}{change.number} was closed without merging. "
+                  f"Hit Resume for a fresh pass - it opens a new {noun} - or ask for "
+                  f"{brand.consultant_first_name()}'s review.",
+                  meta=_pr_meta(_pr_ref(change.number, change.url, change.provider)))
+    _save_run(project, "failed", error=f"{noun.capitalize()} closed without merging")
+    project.dev_branch = None
+    project.dev_pr_number = None
+    project.dev_pr_url = None
+    if row is not None:
+        row.branch = None
+        row.pr_number = None
+        row.pr_url = None
+
+
+def _close_change(db: Session, project: Project, target: dict | None,
+                  change: "delivery.Change") -> bool:
+    """Close an open change the customer is discarding (Start fresh). One
+    request never carries two live changes: the next run's would sit beside
+    this one, and the reconciler judges the newest. Best-effort per provider;
+    False when it could not be closed (the customer closes it by hand)."""
+    if target is None or change.number is None:
+        return False
+    try:
+        if _is_platform_gitlab(target):
+            gitlab.close_mr(project.gitlab_project_id, change.number)
+        elif target["provider"] == "github":
+            token = _project_repo_token(db, project, "github")
+            if not token:
+                return False
+            github.close_pr(target["owner"], target["repo"], change.number, token=token)
+        elif target["provider"] == "gitlab":
+            token = _project_repo_token(db, project, "gitlab", target.get("remote"))
+            if not token:
+                return False
+            gitlab.customer_close_mr(target["base_url"], token, target["path"], change.number)
+        else:
+            return False
+    except Exception as exc:  # noqa: BLE001
+        log.warning("close change %s on %s failed: %s", change.number, project.id, exc)
+        return False
+    return True
+
+
+def _revive_row(row: DevRun | None) -> None:
+    """The ledger row that owns a change the reconciler is advancing must be
+    ACTIVE again: `_save_run` mirrors state only onto an active row (terminal
+    rows are never resurrected by accident), and demo_start finalizes the run
+    and its request only from an in-flight state. A row parked failed, or
+    superseded by a Start fresh, whose change turned out to be alive or merged
+    is exactly the row to carry the delivery - deliberately."""
+    if row is not None and row.state not in dev_concurrency.ACTIVE_ROW_STATES:
+        row.state = "awaiting_merge"
+
+
+def _apply_delivery(db: Session, project: Project, req: Request | None,
+                    row: DevRun | None, snap: delivery.Snapshot,
+                    verdict: delivery.Verdict, repeat: bool) -> tuple[bool, "Callable | None"]:
+    """Act on a verdict through the same actuators a run's own exit paths use.
+    Returns (announced, after): `announced` says the situation was handled or
+    told, so the next tick's identical verdict stays silent; `after` is work to
+    run once the caller's session has committed (a CI fix chains a run in its
+    own session). `repeat` = the same verdict was already announced."""
+    ch = verdict.change
+    target = snap.target
+    thread = _dev_thread(db, project)
+    action = verdict.action
+    if action in ("deploy", "finalize", "merge", "arm", "wait", "fix_ci") and (
+            action != "wait" or verdict.settle):
+        _revive_row(row)
+    if action in ("deploy", "finalize"):
+        noun, sym = _change_words(snap.provider)
+        if ch.number is None:
+            # merge seen over SSH: a branch landed, no change to point at
+            label = f"Your `{ch.branch or _project_branch(project)}` branch was merged."
+            if _pr_deliverable_run(db, project):
+                _finalize_pr_deliverable(db, project, label, None)
+                return True, None
+            _post_message(db, project.id, thread, "agent", f"{label} Deploying your demo…")
+            _enter_deploying(project)
+            db.commit()
+            demo_start.apply_async(args=[project.id, "start"],
+                                   kwargs={"run_id": row.id if row is not None else None})
+            return True, None
+        _proceed_merged(db, project, target, thread, ch.number, ch.url,
+                        label=f"{noun.capitalize()} {sym}{ch.number} was merged.")
+        return True, None
+    if action == "merge":
+        merged, reason = gitlab.merge_now(project.gitlab_project_id, ch.number,
+                                          squash=bool((target or {}).get("squash", True)))
+        if merged:
+            _proceed_merged(db, project, target, thread, ch.number, ch.url,
+                            label=f"Merge request !{ch.number} was merged ({verdict.note}).")
+            return True, None
+        _park_delivery(db, project, row, ch, f"GitLab refused the merge: {reason}",
+                       dev_faults.PLATFORM)
+        return True, None
+    if action == "arm":
+        if not ch.mwps and not repeat:
+            try:
+                gitlab.merge_now(project.gitlab_project_id, ch.number,
+                                 squash=bool((target or {}).get("squash", True)),
+                                 when_pipeline_succeeds=True)
+            except Exception as exc:  # noqa: BLE001
+                log.info("arm merge-when-pipeline-succeeds failed for %s: %s", project.id, exc)
+        _settle_awaiting_merge(db, project, row, ch, verdict, snap.platform)
+        return True, None
+    if action == "wait":
+        if verdict.settle and ch is not None:
+            _settle_awaiting_merge(db, project, row, ch, verdict, snap.platform)
+        return True, None
+    if action == "fix_ci":
+        _settle_awaiting_merge(db, project, row, ch, verdict, snap.platform)
+        if target is None:
+            return True, None
+        job = _ci_fix_job(db, project, target, row, ch)
+        sha = ch.head_sha
+        return True, (lambda: _maybe_ci_fix(job, sha))
+    if action == "reject":
+        _reject_closed_change(db, project, row, ch)
+        return True, None
+    if action == "park":
+        _park_delivery(db, project, row, ch, verdict.note, verdict.fault)
+        return True, None
+    return False, None
+
+
+def reconcile_delivery(db: Session, project: Project,
+                       req: Request | None) -> tuple[delivery.Verdict, "Callable | None"]:
+    """One reconciliation of one request: observe, decide, act, record. The
+    verdict's fingerprint is kept on `Request.delivery`, so a situation already
+    announced (a park, a settle) is not announced again on the next tick while
+    the idempotent actions (deploy, merge) still run whenever they apply. The
+    caller commits and then runs `after`, if any."""
+    snap = _delivery_snapshot(db, project, req)
+    row = _delivery_row(db, project, req, snap.newest)
+    dev_concurrency.bind_run(project, row)
+    verdict = delivery.decide(snap, request_status=req.status if req is not None else None,
+                              pr_deliverable=_pr_deliverable_run(db, project),
+                              project_status=project.status)
+    prev = (req.delivery or {}) if req is not None else {}
+    repeat = bool(prev.get("acted")) and prev.get("key") == verdict.key
+    announced, after = False, None
+    try:
+        announced, after = _apply_delivery(db, project, req, row, snap, verdict, repeat)
+    except Exception:  # noqa: BLE001 - one request's failure never stops the tick
+        log.exception("delivery: applying %s failed for %s", verdict.action, project.id)
+    if req is not None:
+        req.delivery = delivery.record(snap, verdict, announced or repeat)
+    return verdict, after
+
+
+def _reconcile_delivery_ids(project_id: str, request_id: str | None) -> delivery.Verdict | None:
+    after = None
+    with SyncSession() as db:
+        project = db.get(Project, project_id)
+        if project is None or project.status == "canceled":
+            return None
+        req = (db.get(Request, request_id) if request_id
+               else dev_concurrency.default_request(db, project))
+        verdict, after = reconcile_delivery(db, project, req)
+        db.commit()
+        log.info("delivery %s/%s: %s - %s", project_id[:8],
+                 (req.id[:8] if req is not None else "-"), verdict.action, verdict.note)
+    if after is not None:
+        after()
+    return verdict
+
+
 @celery.task(name="app.workers.tasks.dev_pr_sweep")
 def dev_pr_sweep() -> None:
-    """Celery Beat (§14.5): for projects waiting on a merge (a GitHub PR or a
-    customer-GitLab MR), detect it and deploy the demo without the customer
-    pressing anything. Follows the project's push repo (§multi-repo). Two
-    detection paths: with a token and an open change, poll it via the API; with no
-    token (or an 'other' host), detect the merge over SSH with the deploy key.
-    Keeps the graceful branch-pushed path moving instead of stranding it. The
-    platform-GitLab path normally merges inline in run_development; it only shows
-    up here after the reaper recovered a worker-interrupted run whose MR was
-    already open (dev_pr_number recorded) - then this sweep merges + deploys it."""
+    """Celery Beat, every minute: the §delivery reconciler tick. Every request
+    still in progress - plus any run or project parked awaiting_merge, for rows
+    born before requests - is observed on its repository and advanced: a merged
+    change deploys (or finalizes a PR deliverable), an open one is armed,
+    merged when mergeable, fixed when its pipeline failed (§14.10), or parked
+    with the provider's own words when nothing automatic can clear it; a closed
+    one ends its work unit. Selection is by REQUEST, never by run state: the
+    old sweep watched only awaiting_merge runs, so a park on `ci_timeout` made
+    the merge that followed invisible."""
     with SyncSession() as db:
-        # §parallel-builds: the mirror only shows the primary run, so select by
-        # awaiting_merge LEDGER rows too (a sibling can wait on its merge while
-        # the primary still builds); legacy projects keep matching via the scalar.
-        ids = {pid for (pid,) in db.execute(select(Project.id).where(
-            Project.dev_run_state == "awaiting_merge")).all()}
-        ids |= {pid for (pid,) in db.execute(select(DevRun.project_id).where(
-            DevRun.state == "awaiting_merge")).all()}
-        rows = [db.get(Project, pid) for pid in ids]
-        jobs = []
-        for p in rows:
-            if p is None:
-                continue
-            merge_row = (db.query(DevRun)
-                         .filter(DevRun.project_id == p.id,
-                                 DevRun.state == "awaiting_merge")
-                         .order_by(DevRun.created_at.desc()).first())
-            dev_concurrency.bind_run(p, merge_row)
-            if merge_row is not None and merge_row.pr_number:
-                # the row's own pointer drives a sibling's merge, not the mirror
-                p.dev_pr_number = merge_row.pr_number
-                p.dev_pr_url = merge_row.pr_url
-            target = _dev_target(db, p)
-            if target is None:
-                continue
-            provider = target["provider"]
-            if _is_platform_gitlab(target):
-                # Platform GitLab normally merges inline in run_development; it
-                # only sits here after the reaper recovered a worker-interrupted
-                # run (dev_pr_number recorded). Watch that MR and merge+deploy it.
-                if not (p.gitlab_project_id and p.dev_pr_number):
-                    continue
-                jobs.append({"id": p.id, "provider": "platform_gitlab",
-                             "gl_project_id": p.gitlab_project_id, "number": p.dev_pr_number,
-                             "url": p.dev_pr_url, "noun": "merge request", "ref": "!",
-                             "run_id": merge_row.id if merge_row else None,
-                             "squash": bool(target.get("squash", True))})
-                continue
-            job = {"id": p.id, "provider": provider, "number": p.dev_pr_number,
-                   "url": p.dev_pr_url, "remote": target["remote"], "token": None,
-                   "run_id": merge_row.id if merge_row else None}
-            if provider == "github":
-                job.update(owner=target["owner"], name=target["repo"], noun="pull request",
-                           ref="#", token=_project_repo_token(db, p, "github"))
-            elif provider == "gitlab":
-                job.update(base_url=target["base_url"], path=target["path"],
-                           noun="merge request", ref="!",
-                           token=_project_repo_token(db, p, "gitlab"))
-            else:  # other host - SSH detection only
-                job.update(noun="pull request", ref="#")
-            jobs.append(job)
+        pairs: list[tuple[str, str | None]] = []
+        seen: set = set()
 
-    for j in jobs:
-        merged, closed, head_sha = False, False, None
-        if j["provider"] == "github" and j["token"] and j["number"]:
-            try:
-                pr = github.get_pr(j["owner"], j["name"], j["number"], token=j["token"])
-            except Exception as exc:
-                log.warning("dev_pr_sweep: get_pr failed for %s: %s", j["id"], exc)
-                continue
-            head_sha = (pr.get("head") or {}).get("sha")
-            merged = bool(pr.get("merged"))
-            if not merged:
-                # A customer can resolve a conflict locally, merge, and push the
-                # base directly: the PR stays open (or gets closed) while its
-                # commits are already in the base - without this check it waits
-                # forever.
-                try:
-                    merged = github.commits_contained_in(
-                        j["owner"], j["name"], pr["base"]["ref"], pr["head"]["sha"],
-                        token=j["token"])
-                except Exception as exc:
-                    log.warning("dev_pr_sweep: containment check failed for %s: %s", j["id"], exc)
-            closed = pr.get("state") == "closed"
-        elif j["provider"] == "gitlab" and j["token"] and j["number"]:
-            try:
-                mr = gitlab.customer_get_mr(j["base_url"], j["token"], j["path"], j["number"])
-            except Exception as exc:
-                log.warning("dev_pr_sweep: get_mr failed for %s: %s", j["id"], exc)
-                continue
-            state = mr.get("state")
-            head_sha = mr.get("sha")
-            merged = state == "merged"
-            if not merged:
-                # Same out-of-band merge case as GitHub: detect it over SSH.
-                detected = _agent_branch_merged_ssh(j["id"], j["remote"])
-                if detected:
-                    merged = True
-            closed = state == "closed"
-        elif j["provider"] == "platform_gitlab":
-            try:
-                mr = gitlab.get_mr(j["gl_project_id"], j["number"])
-            except Exception as exc:
-                log.warning("dev_pr_sweep: platform get_mr failed for %s: %s", j["id"], exc)
-                continue
-            state = mr.get("state")
-            if state == "merged":
-                merged = True
-            elif state == "closed":
-                closed = True
+        def add(pid: str, rid: str | None) -> None:
+            if (pid, rid) not in seen:
+                seen.add((pid, rid))
+                pairs.append((pid, rid))
+
+        # In-progress requests of LIVE projects whose newest run is recent: a
+        # request left in progress on a finished project, or one whose last run
+        # is weeks old, is history - waking it would redeploy demos and post
+        # into threads nobody is watching. A row parked awaiting_merge is
+        # selected below whatever its age: it is explicitly waiting.
+        horizon = utcnow() - timedelta(days=DELIVERY_RECONCILE_WINDOW_DAYS)
+        newest_run = (select(DevRun.request_id, func.max(DevRun.created_at).label("at"))
+                      .group_by(DevRun.request_id).subquery())
+        for rid, pid in db.execute(
+                select(Request.id, Request.project_id)
+                .join(Project, Project.id == Request.project_id)
+                .join(newest_run, newest_run.c.request_id == Request.id)
+                .where(Request.status == "in_progress",
+                       Project.status.in_(DELIVERY_LIVE_STATUSES),
+                       newest_run.c.at >= horizon)
+                .order_by(Request.created_at)).all():
+            add(pid, rid)
+        for rid, pid in db.execute(select(DevRun.request_id, DevRun.project_id)
+                                   .where(DevRun.state == "awaiting_merge")).all():
+            add(pid, rid)
+        for (pid,) in db.execute(select(Project.id)
+                                 .where(Project.dev_run_state == "awaiting_merge")).all():
+            project = db.get(Project, pid)
+            default = dev_concurrency.default_request(db, project) if project else None
+            add(pid, default.id if default is not None else None)
+    for pid, rid in pairs:
+        try:
+            _reconcile_delivery_ids(pid, rid)
+        except Exception:  # noqa: BLE001 - Beat keeps ticking
+            log.exception("delivery reconcile failed for %s/%s", pid, rid)
+
+
+def delivery_gate(project_id: str, request_id: str | None, fresh: bool) -> dict:
+    """§delivery reconciler, before a Resume or Start fresh spends a run slot:
+    what the request's change already IS decides what the button does. A
+    merged change deploys instead of rebuilding ({"handled"}); an open one
+    keeps waiting - or is closed when the customer chose Start fresh, so the
+    new build opens the one live change; a failed pipeline gets its fix run;
+    only when the repository holds nothing does the build proceed ({}).
+    Blocking outcomes carry the sentence the API returns as a 409."""
+    after = None
+    with SyncSession() as db:
+        project = db.get(Project, project_id)
+        if project is None:
+            return {}
+        req = (db.get(Request, request_id) if request_id
+               else dev_concurrency.default_request(db, project))
+        snap = _delivery_snapshot(db, project, req)
+        row = _delivery_row(db, project, req, snap.newest)
+        dev_concurrency.bind_run(project, row)
+        verdict = delivery.decide(snap, request_status=req.status if req is not None else None,
+                                  pr_deliverable=_pr_deliverable_run(db, project),
+                              project_status=project.status)
+        noun, sym = _change_words(snap.provider)
+        ch = verdict.change
+        out: dict = {}
+        if verdict.action in ("deploy", "finalize", "merge"):
+            announced, after = _apply_delivery(db, project, req, row, snap, verdict, False)
+            if req is not None:
+                req.delivery = delivery.record(snap, verdict, announced)
+            out = {"handled": True,
+                   "message": f"{noun.capitalize()} {sym}{ch.number} is already merged - "
+                              "deploying it instead of rebuilding."}
+        elif verdict.action in ("arm", "wait", "fix_ci") and ch is not None and ch.state == "open":
+            if fresh:
+                if _close_change(db, project, snap.target, ch):
+                    _post_message(db, project.id, _dev_thread(db, project), "agent",
+                                  f"Start fresh: closed {noun} {sym}{ch.number} without merging - "
+                                  f"the new build opens a new {noun}.",
+                                  meta=_pr_meta(_pr_ref(ch.number, ch.url, ch.provider)))
+                db.commit()
+                return {}
+            announced, after = _apply_delivery(db, project, req, row, snap, verdict, False)
+            if req is not None:
+                req.delivery = delivery.record(snap, verdict, announced)
+            if verdict.action == "fix_ci":
+                out = {"handled": True,
+                       "message": f"The pipeline on {noun} {sym}{ch.number} failed - "
+                                  "dispatching an automatic fix instead of a rebuild."}
             else:
-                # Still open: (re-)arm auto-merge-on-green so the recovered build
-                # merges hands-off, exactly like the inline platform path would
-                # have. A short window - if CI is still pending it returns and the
-                # server-side merge_when_pipeline_succeeds it armed fires later,
-                # detected as `merged` on a subsequent tick.
-                try:
-                    merged, reason = gitlab.auto_merge(
-                        j["gl_project_id"], j["number"], timeout_s=45, squash=j["squash"])
-                except Exception as exc:
-                    log.warning("dev_pr_sweep: platform auto_merge failed for %s: %s",
-                                j["id"], exc)
-                    continue
-                if not merged:
-                    if reason == "ci_timeout":
-                        continue  # armed server-side; a later tick sees it merged
-                    with SyncSession() as db:
-                        project = db.get(Project, j["id"])
-                        if project is None or project.dev_run_state != "awaiting_merge":
-                            continue
-                        _post_message(db, j["id"], _dev_thread(db, project), "agent",
-                                      f"Merge request !{j['number']} couldn't be merged "
-                                      f"automatically ({reason}). Hit Resume to rebuild, or ask "
-                                      f"for {brand.consultant_first_name()}'s review.")
-                        _save_run(project, "failed",
-                                  error=f"Platform MR !{j['number']} not merged: {reason}")
-                        db.commit()
-                    continue
-        else:
-            # No token (or no change opened / 'other' host): detect the merge over
-            # SSH with the deploy key. None = undetectable this pass, retry next tick.
-            detected = _agent_branch_merged_ssh(j["id"], j["remote"])
-            if detected is None:
-                continue
-            merged = detected
-
-        if not merged and not closed and j["provider"] in ("github", "gitlab"):
-            # §14.10 CI watch: the change is open and waiting on its merge - a
-            # failed pipeline on its head commit gets an automatic fix chained
-            # onto the parked run instead of sitting red until a human notices.
-            _maybe_ci_fix(j, head_sha)
-
-        if merged:
-            with SyncSession() as db:
-                project = db.get(Project, j["id"])
-                if project is None or project.dev_run_state != "awaiting_merge":
-                    continue
-                if j.get("run_id"):
-                    # §repo binding: the predicate reads the merged run's pin.
-                    dev_concurrency.bind_run(project, db.get(DevRun, j["run_id"]))
-                label = (f"{j['noun'].capitalize()} {j['ref']}{j['number']} was merged."
-                         if j["number"] else f"Your `{_project_branch(project)}` branch was merged.")
-                if _pr_deliverable_run(db, project):
-                    _finalize_pr_deliverable(
-                        db, project, label,
-                        _pr_meta(_pr_ref(j["number"], j.get("url"), j["provider"])))
-                    continue
-                _post_message(db, j["id"], _dev_thread(db, project), "agent",
-                              f"{label} Deploying your demo…",
-                              meta=_pr_meta(_pr_ref(j["number"], j.get("url"), j["provider"])))
-                _enter_deploying(project)
-                db.commit()
-            demo_start.apply_async(args=[j["id"], "start"],
-                                   kwargs={"run_id": j.get("run_id")})
-        elif closed:
-            with SyncSession() as db:
-                project = db.get(Project, j["id"])
-                if project is None or project.dev_run_state != "awaiting_merge":
-                    continue
-                _post_message(db, j["id"], _dev_thread(db, project), "agent",
-                              f"{j['noun'].capitalize()} {j['ref']}{j['number']} was closed without "
-                              f"merging. Hit Resume for a fresh pass - it opens a new {j['noun']} - "
-                              f"or ask for {brand.consultant_first_name()}'s review.",
-                              meta=_pr_meta(_pr_ref(j["number"], j.get("url"), j["provider"])))
-                _save_run(project, "failed", error=f"{j['noun'].capitalize()} closed without merging")
-                # A closed-unmerged change is rejected work: end the unit on the
-                # project AND the parked row - resume continuity must not resurrect
-                # the branch, and no pointer to the closed change may reach the next
-                # run, or it continues (or reopens) it instead of opening a new one.
-                project.dev_branch = None
-                project.dev_pr_number = None
-                project.dev_pr_url = None
-                row = db.get(DevRun, j["run_id"]) if j.get("run_id") else None
-                if row is not None:
-                    row.branch = None
-                    row.pr_number = None
-                    row.pr_url = None
-                db.commit()
+                out = {"blocked": True,
+                       "message": f"{noun.capitalize()} {sym}{ch.number} is already open and "
+                                  "merges once its checks pass - nothing to rebuild. Start "
+                                  "fresh to discard it and build again."}
+        db.commit()
+    if after is not None:
+        after()
+    return out
 
 
 # ---------------------------------------------------------------- stale-run reaper

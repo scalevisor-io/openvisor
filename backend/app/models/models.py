@@ -523,6 +523,11 @@ class Request(Base):
     # §work answers: what this request's last published run says it did (the
     # redacted .openvisor/pr.md), so "what did you do?" is answerable from the DB.
     work_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # §delivery reconciler: the last OBSERVED state of this request's change on
+    # its repository and the verdict taken on it (services/delivery.record) -
+    # what is true, as the provider reported it, rather than what a run's exit
+    # path stamped. Reassign, never mutate in place (JSON change tracking).
+    delivery: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
