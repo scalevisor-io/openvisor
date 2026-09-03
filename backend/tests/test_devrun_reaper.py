@@ -216,7 +216,13 @@ def test_reaper_platform_mr_lookup_error_falls_through(reaper_org, monkeypatch, 
 
 # ---- dev_pr_sweep now merges + deploys a recovered platform MR ----
 
+def _no_branch_listing(monkeypatch):
+    # the reconciler lists changes by branch first; these projects have none
+    monkeypatch.setattr(tasks.gitlab, "list_mrs_for_branch", lambda gid, br: [])
+
+
 def test_sweep_platform_mr_merged_deploys(reaper_org, monkeypatch, quiet):
+    _no_branch_listing(monkeypatch)
     monkeypatch.setattr(tasks.gitlab, "get_mr", lambda gid, iid: {"state": "merged"})
     deployed = []
     monkeypatch.setattr(tasks.demo_start, "apply_async", lambda *a, **k: deployed.append(a))
@@ -228,39 +234,54 @@ def test_sweep_platform_mr_merged_deploys(reaper_org, monkeypatch, quiet):
     assert deployed
 
 
-def test_sweep_platform_mr_open_arms_then_merges(reaper_org, monkeypatch, quiet):
-    monkeypatch.setattr(tasks.gitlab, "get_mr", lambda gid, iid: {"state": "opened"})
-    armed = []
-    monkeypatch.setattr(tasks.gitlab, "auto_merge",
-                        lambda gid, iid, timeout_s=45, squash=True: armed.append(iid) or (True, "merged"))
+def test_sweep_platform_mr_open_green_merges(reaper_org, monkeypatch, quiet):
+    # green pipeline on the head commit: ONE non-blocking merge call, then deploy
+    _no_branch_listing(monkeypatch)
+    monkeypatch.setattr(tasks.gitlab, "get_mr",
+                        lambda gid, iid: {"state": "opened", "sha": "abc",
+                                          "detailed_merge_status": "mergeable"})
+    monkeypatch.setattr(tasks.gitlab, "pipeline_for_sha", lambda gid, sha: {"status": "success"})
+    merged = []
+    monkeypatch.setattr(tasks.gitlab, "merge_now",
+                        lambda gid, iid, squash=True, when_pipeline_succeeds=False:
+                        merged.append((iid, when_pipeline_succeeds)) or (True, "merged"))
     deployed = []
     monkeypatch.setattr(tasks.demo_start, "apply_async", lambda *a, **k: deployed.append(a))
     pid = _commit_project(reaper_org, dev_run_state="awaiting_merge",
                           status="awaiting_customer", dev_pr_number=5, **_PLATFORM)
     tasks.dev_pr_sweep()
-    assert armed == [5]                              # re-armed auto-merge-on-green
+    assert merged == [(5, False)]
     with SyncSession() as db:
         assert db.get(Project, pid).dev_run_state == "deploying"
     assert deployed
 
 
-def test_sweep_platform_mr_open_ci_pending_waits(reaper_org, monkeypatch, quiet):
-    # CI still running: auto_merge armed merge_when_pipeline_succeeds server-side
-    # and returned ci_timeout - stay awaiting_merge, a later tick sees it merged.
-    monkeypatch.setattr(tasks.gitlab, "get_mr", lambda gid, iid: {"state": "opened"})
-    monkeypatch.setattr(tasks.gitlab, "auto_merge",
-                        lambda gid, iid, timeout_s=45, squash=True: (False, "ci_timeout"))
+def test_sweep_platform_mr_open_ci_pending_arms_and_waits(reaper_org, monkeypatch, quiet):
+    # pipeline running: arm merge_when_pipeline_succeeds server-side and stay
+    # awaiting_merge - a later tick sees it merged. Never blocks in the tick.
+    _no_branch_listing(monkeypatch)
+    monkeypatch.setattr(tasks.gitlab, "get_mr",
+                        lambda gid, iid: {"state": "opened", "sha": "abc",
+                                          "detailed_merge_status": "ci_still_running"})
+    monkeypatch.setattr(tasks.gitlab, "pipeline_for_sha", lambda gid, sha: {"status": "running"})
+    monkeypatch.setattr(tasks.gitlab, "ci_available", lambda gid: True)
+    armed = []
+    monkeypatch.setattr(tasks.gitlab, "merge_now",
+                        lambda gid, iid, squash=True, when_pipeline_succeeds=False:
+                        armed.append((iid, when_pipeline_succeeds)) or (False, "armed"))
     deployed = []
     monkeypatch.setattr(tasks.demo_start, "apply_async", lambda *a, **k: deployed.append(a))
     pid = _commit_project(reaper_org, dev_run_state="awaiting_merge",
                           status="awaiting_customer", dev_pr_number=5, **_PLATFORM)
     tasks.dev_pr_sweep()
+    assert armed == [(5, True)]
     with SyncSession() as db:
         assert db.get(Project, pid).dev_run_state == "awaiting_merge"  # still waiting
     assert deployed == []
 
 
 def test_sweep_platform_mr_closed_fails(reaper_org, monkeypatch, quiet):
+    _no_branch_listing(monkeypatch)
     monkeypatch.setattr(tasks.gitlab, "get_mr", lambda gid, iid: {"state": "closed"})
     pid = _commit_project(reaper_org, dev_run_state="awaiting_merge",
                           status="awaiting_customer", dev_pr_number=5, **_PLATFORM)

@@ -362,12 +362,18 @@ def auto_merge(project_id: int, mr_iid: int, timeout_s: int = 300,
         ps = c.get(f"/projects/{project_id}/pipelines", params={"sha": sha}).json()
         return ps[0] if ps else None
 
+    refusal: list[str] = []   # the last refusal, in GitLab's words (see below)
+    saw_pipeline = False
+
     def try_merge(c, mwps=True):
         data = {"squash": True} if squash else {}
         if mwps:
             data["merge_when_pipeline_succeeds"] = True
         r = c.put(f"/projects/{project_id}/merge_requests/{mr_iid}/merge", data=data)
-        return r.status_code == 200 and r.json().get("state") == "merged"
+        if r.status_code == 200 and r.json().get("state") == "merged":
+            return True
+        refusal[:] = [_refusal_words(c, project_id, mr_iid, r)]
+        return False
 
     with _client() as c:
         while time.time() < deadline:
@@ -380,6 +386,7 @@ def auto_merge(project_id: int, mr_iid: int, timeout_s: int = 300,
 
             pipe = pipeline_for(c, mr.get("sha")) or {}
             status = pipe.get("status")
+            saw_pipeline = saw_pipeline or bool(pipe)
             if status in ("failed", "canceled"):
                 return False, "ci_failed"
             if status == "success":
@@ -395,7 +402,105 @@ def auto_merge(project_id: int, mr_iid: int, timeout_s: int = 300,
                       data={"merge_when_pipeline_succeeds": True,
                             **({"squash": True} if squash else {})})
             time.sleep(5)
+        # A pipeline that is still running is a timeout. No pipeline at all and a
+        # merge GitLab kept refusing is NOT - it is a refusal, and the reason is
+        # the one thing the next reader needs (a whole night was spent rebuilding
+        # an MVP whose MR sat behind a five-minute "ci_timeout" nobody could act on).
+        if not saw_pipeline and refusal:
+            return False, f"merge refused: {refusal[0]}"
         return False, "ci_timeout"
+
+
+def _refusal_words(c: httpx.Client, project_id: int, mr_iid: int,
+                   r: httpx.Response) -> str:
+    """GitLab's own verdict on a merge it refused: the MR's detailed merge
+    status plus the HTTP status and message of the refusal."""
+    msg = None
+    try:
+        body = r.json() if r.content else {}
+        msg = body.get("message") if isinstance(body, dict) else None
+    except ValueError:
+        msg = r.text[:120] or None
+    status = "unknown"
+    try:
+        mr = c.get(f"/projects/{project_id}/merge_requests/{mr_iid}").json()
+        status = mr.get("detailed_merge_status") or mr.get("merge_status") or "unknown"
+    except Exception:  # noqa: BLE001 - the refusal is the story, not this lookup
+        pass
+    detail = f"HTTP {r.status_code}" + (f": {str(msg)[:120]}" if msg else "")
+    return f"{status} ({detail})"
+
+
+def merge_now(project_id: int, mr_iid: int, squash: bool = True,
+              when_pipeline_succeeds: bool = False) -> tuple[bool, str]:
+    """ONE merge attempt, no polling (§delivery reconciler - a tick never
+    blocks). (merged, reason): on refusal the reason is GitLab's own verdict,
+    `detailed_merge_status` with the HTTP status and message, so a park says
+    why instead of `ci_timeout`. With `when_pipeline_succeeds` an accepted
+    request that has not merged yet comes back as (False, "armed")."""
+    data = {"squash": True} if squash else {}
+    if when_pipeline_succeeds:
+        data["merge_when_pipeline_succeeds"] = True
+    with _client() as c:
+        r = c.put(f"/projects/{project_id}/merge_requests/{mr_iid}/merge", data=data)
+        try:
+            body = r.json() if r.content else {}
+        except ValueError:
+            body = {}
+        if r.status_code == 200 and isinstance(body, dict) and body.get("state") == "merged":
+            return True, "merged"
+        if r.status_code == 200 and when_pipeline_succeeds:
+            return False, "armed"
+        return False, _refusal_words(c, project_id, mr_iid, r)
+
+
+def list_mrs_for_branch(project_id: int, source_branch: str) -> list[dict]:
+    """Every platform MR whose source is `source_branch`, in ANY state, newest
+    first (§delivery reconciler: a change is found by its branch on the
+    repository, not by a pointer the platform may since have cleared)."""
+    with _client() as c:
+        r = c.get(f"/projects/{project_id}/merge_requests",
+                  params={"state": "all", "source_branch": source_branch,
+                          "order_by": "created_at", "sort": "desc", "per_page": 20})
+        r.raise_for_status()
+        return r.json()
+
+
+def pipeline_for_sha(project_id: int, sha: str) -> dict | None:
+    """The newest pipeline for one commit (MR.head_pipeline is unreliable for
+    branch pipelines; auto_merge looks it up by SHA for the same reason)."""
+    with _client() as c:
+        r = c.get(f"/projects/{project_id}/pipelines", params={"sha": sha})
+        r.raise_for_status()
+        ps = r.json()
+        return ps[0] if ps else None
+
+
+def ci_available(project_id: int) -> bool:
+    """Whether a pipeline can run for this project AT ALL: CI/CD enabled on the
+    project and at least one runner (its own, its group's or a shared one) able
+    to take a job. A group whose shared runners are switched off leaves
+    `jobs_enabled` true and simply never runs anything - the runner list is
+    what actually goes empty, so that is what is checked."""
+    with _client() as c:
+        p = c.get(f"/projects/{project_id}")
+        p.raise_for_status()
+        proj = p.json()
+        if proj.get("jobs_enabled") is False or proj.get("builds_access_level") == "disabled":
+            return False
+        r = c.get(f"/projects/{project_id}/runners", params={"per_page": 20})
+        r.raise_for_status()
+        return any(x.get("active", True) and not x.get("paused") for x in r.json())
+
+
+def close_mr(project_id: int, mr_iid: int) -> None:
+    """Close an open platform MR without merging (§delivery reconciler: Start
+    fresh discards the request's open change so one request never carries two
+    live changes)."""
+    with _client() as c:
+        r = c.put(f"/projects/{project_id}/merge_requests/{mr_iid}",
+                  json={"state_event": "close"})
+        r.raise_for_status()
 
 
 def failed_pipeline_logs(project_id: int, mr_iid: int, max_chars: int = 6000) -> str:
@@ -472,6 +577,25 @@ def customer_ensure_base(base_url: str, token: str, path: str, branch: str = "ma
         if r.status_code not in (200, 201):
             raise GitLabError(f"seed base branch failed: {r.status_code} {r.text[:200]}")
         log.info("seeded customer %s base branch %s", path, branch)
+
+
+def customer_list_mrs_for_branch(base_url: str, token: str, path: str,
+                                 source_branch: str) -> list[dict]:
+    """list_mrs_for_branch against a CUSTOMER GitLab host."""
+    with _customer_client(base_url, token) as c:
+        r = c.get(f"/projects/{quote(path, safe='')}/merge_requests",
+                  params={"state": "all", "source_branch": source_branch,
+                          "order_by": "created_at", "sort": "desc", "per_page": 20})
+        r.raise_for_status()
+        return r.json()
+
+
+def customer_close_mr(base_url: str, token: str, path: str, mr_iid: int) -> None:
+    """close_mr against a CUSTOMER GitLab host."""
+    with _customer_client(base_url, token) as c:
+        r = c.put(f"/projects/{quote(path, safe='')}/merge_requests/{mr_iid}",
+                  json={"state_event": "close"})
+        r.raise_for_status()
 
 
 def customer_find_open_mr(base_url: str, token: str, path: str,

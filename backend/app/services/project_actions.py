@@ -201,6 +201,19 @@ async def retry_build(db: AsyncSession, project: Project, is_admin: bool,
         raise ActionError(409, blocker or "Resume isn't available right now")
     if project.status == "awaiting_admin" and not is_admin:
         raise ActionError(409, f"{brand.consultant_first_name()} has the project - it resumes after review")
+    # §delivery reconciler: before a run slot is spent, ask the repository what
+    # this request's change already IS. A merged change deploys instead of
+    # rebuilding; an open one keeps waiting (409 with the reason) unless the
+    # customer chose Start fresh, which closes it; a failed pipeline gets its
+    # fix run. Only when the repository holds nothing does a build follow. The
+    # worker module is imported late: services never import workers at load.
+    from app.workers import tasks as worker_tasks
+    gate = await run_in_threadpool(worker_tasks.delivery_gate, project.id, request_id, fresh)
+    if gate.get("blocked"):
+        raise ActionError(409, gate["message"])
+    if gate.get("handled"):
+        await db.refresh(project)
+        return
     actor = "admin" if is_admin else "customer"
     if project.status in ("awaiting_customer", "awaiting_admin"):
         try:

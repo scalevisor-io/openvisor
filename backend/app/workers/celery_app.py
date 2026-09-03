@@ -42,7 +42,10 @@ celery.conf.update(
         },
         "dev-pr-sweep": {
             "task": "app.workers.tasks.dev_pr_sweep",
-            "schedule": 60.0,  # every minute: deploy demos once their PR is merged
+            # every minute: the §delivery reconciler tick - every in-progress
+            # request's change observed on its repository and advanced (merge,
+            # deploy, CI fix, park with the real cause)
+            "schedule": 60.0,
         },
         "dev-run-reaper": {
             "task": "app.workers.tasks.dev_run_reaper",
