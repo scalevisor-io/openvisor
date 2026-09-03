@@ -146,10 +146,35 @@ def test_default_timeout_bounds_an_unbounded_terminal_call(tool_args):
     assert applied and args["timeout"] == 600.0
 
 
-def test_default_timeout_keeps_the_models_own_value(tool_args):
+def test_default_timeout_keeps_a_shorter_value_the_model_asked_for(tool_args):
     args, applied = tool_args.default_timeout(
         {"command": "sleep 5", "timeout": 30}, "TerminalAction", TERMINAL, 600)
     assert not applied and args["timeout"] == 30
+
+
+def test_default_timeout_clamps_a_longer_value_the_model_asked_for(tool_args):
+    """The production wedge: the model sent its own generous timeout, the cap
+    stepped aside, and one `docker compose up` held the run for 68 minutes."""
+    args, applied = tool_args.default_timeout(
+        {"command": "docker compose up --build", "timeout": 3600},
+        "TerminalAction", TERMINAL, 600)
+    assert applied and args["timeout"] == 600.0
+
+
+def test_default_timeout_clamps_an_unusable_value(tool_args):
+    # None/"" /a string is the model failing to bound the call, not asking for
+    # something - it gets the ceiling rather than sailing past it.
+    for bad in (None, "", "none", 0, -1):
+        args, applied = tool_args.default_timeout(
+            {"command": "docker compose up", "timeout": bad},
+            "TerminalAction", TERMINAL, 600)
+        assert applied and args["timeout"] == 600.0, bad
+
+
+def test_default_timeout_leaves_an_exactly_equal_value_alone(tool_args):
+    args, applied = tool_args.default_timeout(
+        {"command": "ls", "timeout": 600}, "TerminalAction", TERMINAL, 600)
+    assert not applied and args["timeout"] == 600
 
 
 def test_default_timeout_ignores_non_terminal_actions(tool_args):
