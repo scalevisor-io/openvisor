@@ -19,8 +19,7 @@ def _brand(monkeypatch):
     monkeypatch.setattr(settings, "brand_color_primary", "#22d3ee")
     monkeypatch.setattr(settings, "landing_base_url", "https://acme.ai")
     monkeypatch.setattr(email_render, "_legal_cache",
-                        (email_render.time.monotonic(),
-                         {"name": "Acme SAS", "address": "1 Rue Test\n75001 Paris"}))
+                        (email_render.time.monotonic(), "Acme SAS"))
 
 
 def test_html_carries_the_logo_lockup_and_legal_mentions():
@@ -29,7 +28,10 @@ def test_html_carries_the_logo_lockup_and_legal_mentions():
     # client blocks, so the template must have no external reference at all.
     assert "<img" not in html and "src=" not in html
     assert ">acme<" in html and ">.ai</span>" in html
-    assert "Acme SAS" in html and "1 Rue Test, 75001 Paris" in html
+    assert "Acme SAS" in html
+    # The registered address belongs on the landing's legal pages, not on the
+    # bottom of every status notification.
+    assert "Rue Test" not in html and "Registered address" not in html
     assert "https://acme.ai/terms" in html and "https://acme.ai/privacy" in html
 
 
@@ -38,7 +40,8 @@ def test_text_part_keeps_the_body_verbatim():
     text = email_render.render_text("[acme.ai] Verify your email", body)
     assert text.startswith(body)
     assert "https://app.acme.ai/verify?token=abc.DEF-123" in text
-    assert "Acme SAS" in text and "1 Rue Test, 75001 Paris" in text
+    assert "Acme SAS" in text
+    assert "Rue Test" not in text and "Registered address" not in text
 
 
 def test_trailing_url_becomes_the_button_and_takes_the_label():
@@ -73,9 +76,9 @@ def test_dash_bullets_become_a_list():
 
 def test_legal_mentions_degrade_when_unavailable(monkeypatch):
     monkeypatch.setattr(email_render, "_legal_cache", None)
-    monkeypatch.setattr(email_render, "_legal_identity", lambda: {"name": "", "address": ""})
+    monkeypatch.setattr(email_render, "_legal_name", lambda: "")
     html = email_render.render_html("[acme.ai] S", "Body.")
-    assert "acme.ai." in html and "Registered address" not in html
+    assert "acme.ai." in html and "a  service" not in html
 
 
 def test_button_text_stays_readable_on_a_dark_brand_colour(monkeypatch):
