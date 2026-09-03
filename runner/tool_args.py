@@ -119,23 +119,35 @@ def fill_schema_defaults(arguments, schema):
 # Wrappers models put around a tool name; stripped only when what remains IS
 # a roster tool, so a real name is never rewritten.
 def default_timeout(arguments, action_name, fields, seconds):
-    """Return `(arguments, applied)`: a terminal call the model left unbounded
-    gets `timeout=seconds`; every other call, and a call carrying its own
-    `timeout`, comes back untouched.
+    """Return `(arguments, applied)`: a terminal call gets a `timeout` of at most
+    `seconds` - filled in when the model left it out, clamped down when the model
+    asked for longer, kept as-is when the model asked for less. Every other call
+    comes back untouched.
 
     Why this is a repair and not a tool setting: in OpenHands SDK 1.8.0 the
     terminal's `timeout` lives on the ACTION, defaulting to None, and with None
     the only bound is a 30 s no-new-output return - which a foreground server
-    (`docker compose up` without `-d`) never trips because it streams logs. A
-    real run sat on exactly that for 36 minutes. Filling the field here, before
-    validation, is the one place every terminal call passes through. The model's
-    own value always wins: a call that asked for 30 s gets 30 s.
+    (`docker compose up` without `-d`) never trips because it streams logs.
+    Filling the field here, before validation, is the one place every terminal
+    call passes through.
+
+    A CEILING, not a default. It shipped as a default that stepped aside for any
+    `timeout` the model sent, on the reasoning that the model knows its own
+    command best. That reasoning only holds downwards. A production run then
+    wedged for 68 minutes on
+    `docker compose ... up --build 2>&1 | tail -40`: the model had supplied its
+    own timeout, so the cap never applied, the command could not return (and
+    `tail` withheld the output that might have told the agent so), and the run
+    burned its whole wall clock on one step - four times over, because each
+    resume replayed it. The platform's number is the only one that knows what
+    the RUN can afford, so it wins whenever the model asks for more; a call that
+    asked for 30 s still gets 30 s.
 
     Detection is structural (the terminal action's own field set) with the
     class name as a tie-break, so a renamed action still matches and a
     file_editor that also has `command` does not."""
     try:
-        if not isinstance(arguments, dict) or "timeout" in arguments:
+        if not isinstance(arguments, dict):
             return arguments, False
         if not seconds or seconds <= 0:
             return arguments, False
@@ -144,8 +156,19 @@ def default_timeout(arguments, action_name, fields, seconds):
             return arguments, False
         if "command" not in arguments:
             return arguments, False
+        cap = float(seconds)
+        if "timeout" in arguments:
+            asked = arguments["timeout"]
+            # A value that is not a number at all is the model failing to bound
+            # the call, not asking for something: it gets the ceiling.
+            try:
+                asked = float(asked)
+            except (TypeError, ValueError):
+                asked = None
+            if asked is not None and 0 < asked <= cap:
+                return arguments, False
         out = dict(arguments)
-        out["timeout"] = float(seconds)
+        out["timeout"] = cap
         return out, True
     except Exception:  # noqa: BLE001 - a repair never fails a call
         return arguments, False
