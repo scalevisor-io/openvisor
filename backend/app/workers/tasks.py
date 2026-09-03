@@ -6433,7 +6433,9 @@ def _delivery_snapshot(db: Session, project: Project, req: Request | None,
         branches=branches, pointers=pointers, token=token,
         live_run_state=live.state if live is not None else None,
         latest_run_state=latest.state if latest is not None else project.dev_run_state,
-        ssh_merged=ssh, base_branch=(target or {}).get("base_branch") or BASE_BRANCH)
+        ssh_merged=ssh, base_branch=(target or {}).get("base_branch") or BASE_BRANCH,
+        delivered_numbers=frozenset(r.pr_number for r in rows
+                                    if r.state == "done" and r.pr_number))
     return snap
 
 
@@ -6599,6 +6601,12 @@ def _revive_row(row: DevRun | None) -> None:
     is exactly the row to carry the delivery - deliberately."""
     if row is not None and row.state not in dev_concurrency.ACTIVE_ROW_STATES:
         row.state = "awaiting_merge"
+        # The row's clock restarts with it. The row-level reaper judges a
+        # running/deploying row by ITS OWN started_at, not the project mirror
+        # `_enter_deploying` re-stamps - prod: the revived row still carried its
+        # 02:22 start, so the reaper on the same Beat tick called the deploy an
+        # orphan, parked it and told the customer the build was interrupted.
+        row.started_at = utcnow()
 
 
 def _apply_delivery(db: Session, project: Project, req: Request | None,
@@ -6791,6 +6799,17 @@ def delivery_gate(project_id: str, request_id: str | None, fresh: bool) -> dict:
         noun, sym = _change_words(snap.provider)
         ch = verdict.change
         out: dict = {}
+        if snap.live_run_state in delivery.LIVE_RUN_STATES:
+            # A deploy (or a build) of this request is in flight - the tick's
+            # own demo deploy of a merged change, typically. "Wait" here means
+            # nothing to rebuild; it never means "go ahead". Prod: a Resume
+            # clicked during that deploy fell through this gate and spent a
+            # sandbox on a request whose change was landing at that moment.
+            db.commit()
+            what = "deploy" if snap.live_run_state == "deploying" else "build"
+            return {"blocked": True,
+                    "message": f"A {what} for this request is already in flight - "
+                               "nothing to rebuild right now."}
         if verdict.action in ("deploy", "finalize", "merge"):
             announced, after = _apply_delivery(db, project, req, row, snap, verdict, False)
             if req is not None:
