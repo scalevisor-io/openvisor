@@ -11,9 +11,10 @@ blocking, Gmail, Outlook and dark mode with nothing to load. And the brand is
 white-label (BRAND_NAME, BRAND_COLOR_*), so every colour that carries text is
 paired against the background it lands on rather than hardcoded readable.
 
-The footer's legal mentions come from the admin's §legal identity (AppSetting,
-/admin/settings) with a short TTL cache: mail is low-volume, and an unreachable
-database degrades to the brand name instead of failing the send.
+The footer names the operating company from the admin's §legal identity
+(AppSetting, /admin/settings) with a short TTL cache: mail is low-volume, and an
+unreachable database degrades to the brand name instead of failing the send. The
+registered address stays on the landing's legal pages - see `_legal_name`.
 """
 import html
 import logging
@@ -41,7 +42,7 @@ _URL_RE = re.compile(r"https?://[^\s<>\"']+")
 _URL_TRIM = ".,;:!?)]}'\""
 
 _LEGAL_TTL_SECONDS = 300
-_legal_cache: tuple[float, dict[str, str]] | None = None
+_legal_cache: tuple[float, str] | None = None
 
 
 # ---------------------------------------------------------------- colour
@@ -83,23 +84,24 @@ def _accent() -> str:
 
 # ---------------------------------------------------------------- legal mentions
 
-def _legal_identity() -> dict[str, str]:
-    """The operating company's name and registered address, cached briefly.
-    Empty strings when the admin never set them, or when the DB is unreachable."""
+def _legal_name() -> str:
+    """The operating company's name, cached briefly. Empty when the admin never
+    set one, or when the DB is unreachable.
+
+    The registered address is deliberately NOT here. It is on the landing's legal
+    pages, which is where a reader who wants it goes; repeating a postal address
+    on the bottom of every status notification is noise, and an email footer is
+    read at a glance."""
     global _legal_cache
     now = time.monotonic()
     if _legal_cache is not None and now - _legal_cache[0] < _LEGAL_TTL_SECONDS:
         return _legal_cache[1]
-    out = {"name": "", "address": ""}
+    out = ""
     try:
         from app.core.db import SyncSession
-        from app.services.app_settings import (LEGAL_ADDRESS, LEGAL_NAME,
-                                               get_setting_sync)
+        from app.services.app_settings import LEGAL_NAME, get_setting_sync
         with SyncSession() as db:
-            out = {
-                "name": str(get_setting_sync(db, LEGAL_NAME, "") or "").strip(),
-                "address": str(get_setting_sync(db, LEGAL_ADDRESS, "") or "").strip(),
-            }
+            out = str(get_setting_sync(db, LEGAL_NAME, "") or "").strip()
     except Exception as exc:  # noqa: BLE001 - mentions degrade, mail still goes out
         log.warning("legal identity unavailable for the email footer: %s", exc)
     _legal_cache = (now, out)
@@ -201,23 +203,13 @@ def _preheader(body: str) -> str:
     return html.escape(settings.brand_name)
 
 
-def _one_line(address: str) -> str:
-    """A multi-line registered address on one comma-separated line."""
-    return ", ".join(part.strip() for part in address.splitlines() if part.strip())
-
-
 def _footer_lines() -> list[str]:
     """The legal mentions, as escaped HTML fragments."""
-    legal = _legal_identity()
     year = datetime.now(timezone.utc).year
     brand_name = html.escape(settings.brand_name)
-    entity = html.escape(legal["name"]) if legal["name"] else ""
+    entity = html.escape(_legal_name())
     owner = f"{brand_name} - a {entity} service." if entity else f"{brand_name}."
-    lines = [f"&copy; {year} {owner}"]
-    if legal["address"]:
-        address = html.escape(_one_line(legal["address"]))
-        lines.append(f"Registered address: {address}")
-    return lines
+    return [f"&copy; {year} {owner}"]
 
 
 def _links_html(accent: str) -> str:
@@ -320,16 +312,14 @@ def render_text(subject: str, body: str) -> str:
     """The plain-text alternative: the body exactly as the call site wrote it,
     plus the same legal mentions. Never reflow it - the verification links the
     e2e harness scrapes have to survive byte for byte."""
-    legal = _legal_identity()
     year = datetime.now(timezone.utc).year
-    owner = (f"{settings.brand_name} - a {legal['name']} service."
-             if legal["name"] else f"{settings.brand_name}.")
+    entity = _legal_name()
+    owner = (f"{settings.brand_name} - a {entity} service."
+             if entity else f"{settings.brand_name}.")
     lines = [body.rstrip(), "", "--",
              f"Automated message from {settings.brand_name} - this mailbox is not "
              "monitored, reply from the app.",
              f"(c) {year} {owner}"]
-    if legal["address"]:
-        lines.append(f"Registered address: {_one_line(legal['address'])}")
     base = (settings.landing_base_url or "").rstrip("/")
     if base:
         lines.append(f"Terms: {base}/terms - Privacy: {base}/privacy")
