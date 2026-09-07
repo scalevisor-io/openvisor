@@ -1,0 +1,40 @@
+---
+// §profile services: what the consultant does, each card tagged with the door
+// it opens on the platform (Curated AI / Direct quote / Program).
+import SectionHead from './SectionHead.astro';
+import { icons } from '../../lib/icons';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { services } = content.profile;
+const doorHref = { curated: '#work-with-me', direct: '#work-with-me', program: '#programs' };
+const pad = (i: number) => String(i + 1).padStart(2, '0');
+---
+<section id="services" class="section services">
+  <div class="container">
+    <SectionHead n={n} eyebrow={services.eyebrow} title={services.title} intro={services.intro} />
+    <div class="service-grid">
+      {
+        services.items.map((item, i) => (
+          <article class="service-card" data-reveal style={`--d: ${(i % 3) * 70}ms`}>
+            <div class="platform-head">
+              <span class="platform-icon" set:html={icons[item.icon]} />
+              <span class="platform-i">/ {pad(i)}</span>
+            </div>
+            <h3 class="service-title">{item.title}</h3>
+            <p class="service-summary">{item.summary}</p>
+            <ul class="way-list service-list">
+              {item.capabilities.map((cap) => <li>{cap}</li>)}
+            </ul>
+            <a class={`door-tag door-tag--${item.door}`} href={doorHref[item.door]}>
+              {services.doorLabels[item.door]}
+            </a>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>

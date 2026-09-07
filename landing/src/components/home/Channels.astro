@@ -1,0 +1,72 @@
+---
+// Ways to work: the Curated AI path's two doors (web app / the customer's own
+// coding agent over MCP) and the hand-built Direct quote.
+import SectionHead from './SectionHead.astro';
+import { icons } from '../../lib/icons';
+import { consultantName, signupUrl, tokensUrl } from '../../lib/site';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { channels } = content;
+const portrait = content.profile.hero.portrait;
+---
+<section id="work-with-me" class="section channels">
+  <div class="container">
+    <SectionHead n={n} eyebrow={channels.eyebrow} title={channels.title} intro={channels.intro} />
+
+    <div class="ways-grid">
+      <article class="way-card way-card--primary" data-reveal>
+        <span class="way-glyph" set:html={icons.shieldNode} />
+        <span class="way-tag">{channels.platform.tag}</span>
+        <h3 class="way-title">{channels.platform.title}</h3>
+        <p class="way-lede">{channels.platform.lede}</p>
+        <div class="platform-surface chan-surface" set:html={channels.platform.surface} />
+        <ul class="way-list">
+          {channels.platform.list.map((item) => <li set:html={item} />)}
+        </ul>
+        <p class="way-for">
+          <span>{channels.platform.forLabel}</span> {channels.platform.forText}
+        </p>
+        <a href={signupUrl} class="btn btn-primary way-cta">{channels.platform.cta}</a>
+      </article>
+
+      <article class="way-card way-card--primary" data-reveal style="--d: 120ms">
+        <span class="way-glyph" set:html={icons.terminal} />
+        <span class="way-tag">{channels.agent.tag}</span>
+        <h3 class="way-title">{channels.agent.title}</h3>
+        <p class="way-lede">{channels.agent.lede}</p>
+        <div class="platform-surface chan-surface" set:html={channels.agent.surface} />
+        <ul class="way-list">
+          {channels.agent.list.map((item) => <li set:html={item} />)}
+        </ul>
+        <p class="way-for">
+          <span>{channels.agent.forLabel}</span> {channels.agent.forText}
+        </p>
+        <a href={tokensUrl} class="btn btn-ghost way-cta">{channels.agent.cta}</a>
+      </article>
+
+      <!-- Hand-built, on a direct quote: full width. The face is the committed
+           portrait (if any), swapped for the admin's photo at runtime. -->
+      <article class="way-card way-card--wide" data-reveal style="--d: 180ms">
+        <div class="wide-main">
+          <span class="way-glyph way-glyph--muted" set:html={icons.pen} />
+          <span class="way-face"><img src={portrait} alt={consultantName} data-consultant-photo-img /></span>
+          <span class="way-tag way-tag--muted">{channels.quote.tag}</span>
+          <h3 class="way-title">{channels.quote.title}</h3>
+          <p class="way-lede">{channels.quote.lede}</p>
+          <p class="way-for">
+            <span>{channels.quote.forLabel}</span> {channels.quote.forText}
+          </p>
+        </div>
+        <ul class="way-list wide-list">
+          {channels.quote.list.map((item) => <li>{item}</li>)}
+        </ul>
+        <a href={signupUrl} class="btn btn-ghost way-cta wide-cta">{channels.quote.cta}</a>
+      </article>
+    </div>
+    <p class="ways-note" data-reveal>{channels.note}</p>
+  </div>
+</section>

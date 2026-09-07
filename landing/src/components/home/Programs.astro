@@ -1,0 +1,161 @@
+---
+import SectionHead from './SectionHead.astro';
+import { glyphs } from '../../lib/icons';
+import { programsUrl } from '../../lib/site';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { programs } = content;
+const programExamples = programs.examples;
+---
+<section id="programs" class="section programs">
+  <div class="container">
+    <SectionHead n={n} eyebrow={programs.eyebrow} title={programs.title} intro={programs.intro} />
+
+    <div class="program-examples">
+      {
+        programExamples.map((ex, i) => (
+          <article class="program-card" data-reveal style={`--d: ${i * 70}ms`}>
+            <div class="program-head">
+              <span class="program-tile" aria-hidden="true" style={`background: linear-gradient(135deg, ${ex.from}, ${ex.to})`}>
+                {ex.monogram}
+              </span>
+              <div class="program-titles">
+                <h3>{ex.title}</h3>
+                <span class="program-mode">{ex.mode}</span>
+              </div>
+            </div>
+            <p class="program-body">{ex.body}</p>
+            <p class="program-meta">{ex.meta}</p>
+          </article>
+        ))
+      }
+    </div>
+    <div class="program-run" data-program-run data-reveal>
+      <div class="run-head">
+        <span
+          class="run-tile"
+          aria-hidden="true"
+          style={`background: linear-gradient(135deg, ${programExamples[0].from}, ${programExamples[0].to})`}
+        >
+          {programExamples[0].monogram}
+        </span>
+        <span class="run-name">{programExamples[0].title}</span>
+        <span class="run-id">{programExamples[0].run.id}</span>
+        <span class="demo-chip demo-chip--done run-chip">
+          <span class="chip-indicator" set:html={glyphs.check} />
+          <span class="chip-label">succeeded</span>
+        </span>
+      </div>
+      <div class="run-log">
+        {
+          programExamples[0].run.lines.map((l) => (
+            <p class={`run-line is-on${l.tone ? ` run-line--${l.tone}` : ''}`}>
+              <span class="run-g">{l.g}</span>
+              {l.text}
+            </p>
+          ))
+        }
+      </div>
+    </div>
+
+    <div class="programs-cta" data-reveal>
+      <a href={programsUrl} class="btn btn-primary">{programs.cta}</a>
+    </div>
+  </div>
+</section>
+
+<script define:vars={{ programs: programExamples, glyphs }}>
+  // Programs run panel: replay each example program's run - queued →
+  // running (log lines stream in) → succeeded (output, webhook, billing) -
+  // cycling through the catalog cards and highlighting the one playing.
+  // Starts when the panel first scrolls into view; reduced-motion visitors
+  // keep the server-rendered completed run.
+  const panel = document.querySelector('[data-program-run]');
+  const noMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  if (panel && !noMotion.matches) {
+    const cards = document.querySelectorAll('.program-card');
+    const tile = panel.querySelector('.run-tile');
+    const name = panel.querySelector('.run-name');
+    const runId = panel.querySelector('.run-id');
+    const chip = panel.querySelector('.run-chip');
+    const chipLabel = panel.querySelector('.chip-label');
+    const chipIndicator = panel.querySelector('.chip-indicator');
+    const lines = panel.querySelectorAll('.run-line');
+    const tones = ['wait', 'build', 'done'];
+    const CHIP = {
+      queued: ['wait', 'hourglass'],
+      running: ['build', 'spinner'],
+      succeeded: ['done', 'check'],
+    };
+    const setChip = (state) => {
+      tones.forEach((t) => chip.classList.remove('demo-chip--' + t));
+      chip.classList.add('demo-chip--' + CHIP[state][0]);
+      chipIndicator.innerHTML = glyphs[CHIP[state][1]];
+      chipLabel.textContent = state;
+    };
+
+    // Rewrite a server-rendered line node in place (the node and its
+    // children carry Astro's scoped-style attribute, so we keep them and
+    // only swap tone classes + content).
+    const lineTones = ['ok', 'file', 'hook', 'dim'];
+    const setLine = (el, l) => {
+      el.classList.remove('is-on');
+      lineTones.forEach((t) => el.classList.remove('run-line--' + t));
+      if (l.tone) el.classList.add('run-line--' + l.tone);
+      const g = el.querySelector('.run-g');
+      g.textContent = l.g;
+      Array.from(el.childNodes).forEach((n) => {
+        if (n !== g) el.removeChild(n);
+      });
+      el.appendChild(document.createTextNode(l.text));
+    };
+
+    // Tick the ASCII spinner while the running chip shows it.
+    const frames = ['|', '/', '-', '\\'];
+    let frame = 0;
+    window.setInterval(() => {
+      const spin = panel.querySelector('.ascii-spin');
+      if (spin) spin.textContent = frames[frame++ % frames.length];
+    }, 130);
+
+    let pi = 0;
+    let timers = [];
+    const at = (ms, fn) => timers.push(window.setTimeout(fn, ms));
+    const play = () => {
+      timers.forEach(window.clearTimeout);
+      timers = [];
+      const ex = programs[pi];
+      tile.style.background = `linear-gradient(135deg, ${ex.from}, ${ex.to})`;
+      tile.textContent = ex.monogram;
+      name.textContent = ex.title;
+      runId.textContent = ex.run.id;
+      cards.forEach((c, n) => c.classList.toggle('is-running', n === pi));
+      lines.forEach((el, n) => setLine(el, ex.run.lines[n]));
+      setChip('queued');
+      at(900, () => setChip('running'));
+      lines.forEach((el, n) => at(1150 + n * 560, () => el.classList.add('is-on')));
+      const done = 1150 + lines.length * 560;
+      at(done + 200, () => setChip('succeeded'));
+      at(done + 2800, () => lines.forEach((el) => el.classList.remove('is-on')));
+      at(done + 3180, () => {
+        pi = (pi + 1) % programs.length;
+        play();
+      });
+    };
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          io.disconnect();
+          play();
+        }
+      },
+      { threshold: 0.35 }
+    );
+    io.observe(panel);
+  }
+</script>

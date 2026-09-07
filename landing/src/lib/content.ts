@@ -8,7 +8,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { appUrl, brandName, consultantName, mcpUrl, tokensUrl } from './site';
+import {
+  aiIntakeUrl,
+  appUrl,
+  brandColorPrimary,
+  brandColorSecondary,
+  brandName,
+  consultantName,
+  mcpUrl,
+  programsUrl,
+  signupUrl,
+  tokensUrl,
+} from './site';
 
 export interface Offer {
   name: string;
@@ -88,6 +99,123 @@ export interface PriceCard {
   body: string;
 }
 
+// §profile: the consultant-led sections (hero, pillars, services, proof, about).
+// Everything here is instance content - a spoke rewrites it in site.yml.
+export interface Pillar {
+  icon: string;
+  title: string;
+  body: string;
+}
+
+// The door a service opens onto the platform: the Curated AI path, the
+// hand-built Direct quote, or a ready-made Program (§28).
+export type ServiceDoor = 'curated' | 'direct' | 'program';
+
+export interface ServiceItem {
+  icon: string;
+  title: string;
+  summary: string;
+  capabilities: string[];
+  door: ServiceDoor;
+}
+
+export interface Stat {
+  value: string;
+  label: string;
+}
+
+export interface FeaturedItem {
+  kind: string;
+  title: string;
+  href: string;
+  image?: string;
+  lang?: string;
+}
+
+export interface SocialLink {
+  label: string;
+  href: string;
+  icon: string;
+}
+
+export interface Profile {
+  hero: {
+    headline: string;
+    accent?: string;
+    roles: string[];
+    lede: string;
+    ctaPrimary: string;
+    ctaPrimaryHref: string;
+    ctaSecondary?: string;
+    ctaSecondaryHref?: string;
+    availability?: string;
+    // A committed portrait under public/ (a fork asset). The admin-uploaded
+    // photo (§consultant photo) replaces it at runtime when the API serves one.
+    portrait?: string;
+  };
+  pillars: { eyebrow: string; title: string; items: Pillar[] };
+  services: {
+    eyebrow: string;
+    title: string;
+    intro: string;
+    doorLabels: Record<ServiceDoor, string>;
+    items: ServiceItem[];
+  };
+  proof: {
+    eyebrow: string;
+    title: string;
+    intro: string;
+    stats: Stat[];
+    featured: FeaturedItem[];
+  };
+  about: { eyebrow: string; title: string; paragraphs: string[] };
+  socials: SocialLink[];
+}
+
+// §theme: the white-label style surface. Every key is optional - an unset key
+// keeps the stock token from global.css. Colours are CSS colour strings.
+export interface ThemePalette {
+  bg?: string;
+  bgElevated?: string;
+  border?: string;
+  text?: string;
+  textMuted?: string;
+  textStrong?: string;
+  accent?: string;
+  gradientFrom?: string;
+  gradientTo?: string;
+}
+
+export interface Theme {
+  // dark: dark only (stock). light: light only. toggle: dark default + a
+  // header switch remembered per visitor.
+  mode?: 'dark' | 'light' | 'toggle';
+  fonts?: { brand?: string; body?: string; mono?: string };
+  colors?: ThemePalette;
+  light?: ThemePalette;
+  radius?: string;
+  ornaments?: { ticks?: boolean; grid?: boolean };
+}
+
+// Section ids the home page can render, in the order site.yml lists them.
+export const SECTION_IDS = [
+  'hero',
+  'specs',
+  'pillars',
+  'services',
+  'proof',
+  'channels',
+  'platform',
+  'programs',
+  'how',
+  'pricing',
+  'sovereign',
+  'about',
+  'finalCta',
+] as const;
+export type SectionId = (typeof SECTION_IDS)[number];
+export const DEFAULT_SECTIONS: SectionId[] = [...SECTION_IDS];
+
 export interface SiteContent {
   seo: {
     title: string;
@@ -115,17 +243,9 @@ export interface SiteContent {
   footer: {
     tagline: string;
   };
-  hero: {
-    eyebrow: string[];
-    titleLead: string;
-    titleAccent: string;
-    lede: string;
-    ctaPrimary: string;
-    ctaSecondary: string;
-    note: string;
-    visualName: string;
-    visualCaption: string;
-  };
+  profile: Profile;
+  theme?: Theme;
+  sections?: SectionId[];
   specs: string[];
   stageLabels: string[];
   phases: Phase[];
@@ -145,6 +265,8 @@ export interface SiteContent {
     eyebrow: string;
     title: string;
     intro: string;
+    visualName: string;
+    visualCaption: string;
     points: PlatformPoint[];
   };
   programs: {
@@ -201,7 +323,12 @@ raw = raw
   .replaceAll('{{CONSULTANT_NAME}}', consultantName)
   .replaceAll('{{APP_URL}}', appUrl)
   .replaceAll('{{MCP_URL}}', mcpUrl)
-  .replaceAll('{{TOKENS_URL}}', tokensUrl);
+  .replaceAll('{{TOKENS_URL}}', tokensUrl)
+  .replaceAll('{{SIGNUP_URL}}', signupUrl)
+  .replaceAll('{{AI_INTAKE_URL}}', aiIntakeUrl)
+  .replaceAll('{{PROGRAMS_URL}}', programsUrl)
+  .replaceAll('{{BRAND_COLOR_PRIMARY}}', brandColorPrimary)
+  .replaceAll('{{BRAND_COLOR_SECONDARY}}', brandColorSecondary);
 
 const data = yaml.load(raw) as SiteContent;
 
@@ -211,7 +338,7 @@ const required: (keyof SiteContent)[] = [
   'seo',
   'legal',
   'footer',
-  'hero',
+  'profile',
   'specs',
   'stageLabels',
   'phases',
@@ -232,6 +359,15 @@ const missing = required.filter((key) => data[key] == null);
 if (missing.length) {
   throw new Error(`content: ${sourcePath} is missing required keys: ${missing.join(', ')}`);
 }
+
+// The section order is content too: an unknown id fails the build rather than
+// silently dropping a section a spoke expected to see.
+const unknown = (data.sections ?? []).filter((id) => !SECTION_IDS.includes(id));
+if (unknown.length) {
+  throw new Error(`content: ${sourcePath} lists unknown sections: ${unknown.join(', ')}`);
+}
+export const sections: SectionId[] = data.sections?.length ? data.sections : DEFAULT_SECTIONS;
+export const hasSection = (id: SectionId) => sections.includes(id);
 
 export const site: SiteContent = data;
 export default site;

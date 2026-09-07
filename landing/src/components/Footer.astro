@@ -2,7 +2,10 @@
 import { appUrl, signupUrl, brandName, wordmarkHead, wordmarkTail } from '../lib/site';
 import LegalEntity from './LegalEntity.astro';
 import Mark from './Mark.astro';
-import content from '../lib/content';
+import content, { hasSection } from '../lib/content';
+import { socialIcons } from '../lib/icons';
+
+const { socials } = content.profile;
 
 const year = new Date().getFullYear();
 ---
@@ -16,13 +19,17 @@ const year = new Date().getFullYear();
 
     <nav class="footer-nav" aria-label="Footer">
       <div class="footer-col">
-        <h3>Product</h3>
-        <a href="/#work-with-me">Ways to work</a>
-        <a href="/#projects">Projects</a>
-        <a href="/#programs">Programs</a>
-        <a href="/#how-it-works">How it works</a>
-        <a href="/#pricing">Pricing</a>
-        <a href="/#sovereign">Trust</a>
+        <h3>Explore</h3>
+        {hasSection('pillars') && <a href="/#expertise">Expertise</a>}
+        {hasSection('services') && <a href="/#services">Services</a>}
+        {hasSection('proof') && <a href="/#featured">Featured</a>}
+        {hasSection('channels') && <a href="/#work-with-me">Ways to work</a>}
+        {hasSection('platform') && <a href="/#projects">The platform</a>}
+        {hasSection('programs') && <a href="/#programs">Programs</a>}
+        {hasSection('how') && <a href="/#how-it-works">How it works</a>}
+        {hasSection('pricing') && <a href="/#pricing">Pricing</a>}
+        {hasSection('sovereign') && <a href="/#sovereign">Trust</a>}
+        {hasSection('about') && <a href="/#about">About</a>}
         <a href="/sota">Security &amp; SOTA</a>
       </div>
       <div class="footer-col">
@@ -31,7 +38,8 @@ const year = new Date().getFullYear();
         <a href={appUrl}>Sign in</a>
       </div>
       <div class="footer-col">
-        <h3>Company</h3>
+        <h3>Elsewhere</h3>
+        {socials.map((s) => <a href={s.href} target="_blank" rel="noopener noreferrer me">{s.label}</a>)}
         <a href="/llms.txt">llms.txt</a>
         <a href="/privacy">Privacy policy</a>
         <a href="/terms">Terms of service</a>
@@ -59,7 +67,7 @@ const year = new Date().getFullYear();
   .site-footer {
     border-top: 1px solid var(--border);
     padding-block: 3.5rem 2rem;
-    background: rgba(20, 25, 37, 0.35);
+    background: color-mix(in srgb, var(--bg-elevated) 35%, transparent);
   }
 
   .footer-inner {

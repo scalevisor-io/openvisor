@@ -1,0 +1,31 @@
+---
+import SectionHead from './SectionHead.astro';
+import { signupUrl } from '../../lib/site';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { pricing } = content;
+---
+<section id="pricing" class="section pricing">
+  <div class="container">
+    <SectionHead n={n} eyebrow={pricing.eyebrow} title={pricing.title} intro={pricing.intro} />
+    <div class="price-grid">
+      <div class="price-card price-card--accent" data-reveal>
+        <span class="price-tag">{pricing.primary.tag}</span>
+        <h3 class="price-title">{pricing.primary.title}</h3>
+        <p>{pricing.primary.body}</p>
+      </div>
+      <div class="price-card" data-reveal style="--d: 120ms">
+        <span class="price-tag price-tag--muted">{pricing.secondary.tag}</span>
+        <h3 class="price-title">{pricing.secondary.title}</h3>
+        <p>{pricing.secondary.body}</p>
+      </div>
+    </div>
+    <div class="pricing-cta" data-reveal>
+      <a href={signupUrl} class="btn btn-primary">{pricing.cta}</a>
+    </div>
+  </div>
+</section>

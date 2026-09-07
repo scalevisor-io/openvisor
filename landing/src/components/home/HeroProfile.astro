@@ -1,0 +1,59 @@
+---
+// §profile hero: the consultant first. Headline + accent, role chips, lede,
+// CTAs, availability, and the portrait as the visual. The portrait slot carries
+// data-consultant-photo-img so the admin-uploaded photo replaces the committed
+// one at runtime (Base.astro).
+import { consultantName } from '../../lib/site';
+import ConsultantName from '../ConsultantName.astro';
+import content from '../../lib/content';
+
+const { hero } = content.profile;
+---
+<section id="top" class="hero hero--profile section">
+  <div class="container hero-inner hero-inner--profile">
+    <div>
+      <ul class="role-chips rise r1" aria-label="Roles">
+        {hero.roles.map((role) => <li>{role}</li>)}
+      </ul>
+      <h1 class="hero-title rise r2">
+        {hero.headline}
+        {hero.accent && (
+          <>
+            <br />
+            <span class="gradient-text">{hero.accent}</span>
+          </>
+        )}
+      </h1>
+      <p class="hero-lede rise r3">{hero.lede}</p>
+      <div class="hero-cta rise r4">
+        <a href={hero.ctaPrimaryHref} class="btn btn-primary">{hero.ctaPrimary}</a>
+        {hero.ctaSecondary && (
+          <a href={hero.ctaSecondaryHref ?? '#work-with-me'} class="btn btn-ghost">{hero.ctaSecondary}</a>
+        )}
+      </div>
+      {hero.availability && (
+        <p class="hero-availability rise r5">
+          <span class="avail-dot" aria-hidden="true"></span>
+          {hero.availability}
+        </p>
+      )}
+    </div>
+
+    <figure class="hero-portrait rise r4">
+      <span class="portrait-frame">
+        <img
+          class="portrait-img"
+          src={hero.portrait}
+          alt={consultantName}
+          width="520"
+          height="520"
+          data-consultant-photo-img
+        />
+      </span>
+      <figcaption class="portrait-caption">
+        <strong><ConsultantName /></strong>
+        <span>{hero.roles[0]}</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>

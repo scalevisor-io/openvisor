@@ -1,0 +1,31 @@
+---
+import { icons } from '../../lib/icons';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { sovereign } = content;
+---
+<section id="sovereign" class="section sovereign">
+  <div class="container sovereign-inner">
+    <div data-reveal>
+      <p class="eyebrow"><span class="eyebrow-i">{n}</span>{sovereign.eyebrow}</p>
+      <h2 class="section-title">{sovereign.title}</h2>
+      <p class="section-intro">{sovereign.intro}</p>
+    </div>
+    <ul class="trust-list">
+      {
+        sovereign.trustPoints.map((point, i) => (
+          <li data-reveal style={`--d: ${i * 70}ms`}>
+            <span class="trust-icon" set:html={icons[point.icon]} />
+            <span>
+              <strong>{point.strong}</strong> {point.text}
+            </span>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>

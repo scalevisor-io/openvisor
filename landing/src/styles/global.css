@@ -26,6 +26,9 @@
   --speed-from: #22d3ee;
   --speed-to: #7c3aed;
   --gradient-speed: linear-gradient(135deg, #22d3ee, #7c3aed);
+  /* The accent as TEXT: identical to the gradient start on dark, darkened on
+     light so mono labels stay legible on white. */
+  --speed-ink: var(--speed-from);
 
   /* Alpha badge red */
   --alpha-red: #dc2626;
@@ -139,7 +142,7 @@ img {
   font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--speed-from);
+  color: var(--speed-ink);
   margin-bottom: 1.1rem;
 }
 
@@ -190,7 +193,7 @@ img {
 
 .btn-ghost:hover {
   border-color: var(--gray-300);
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--text-strong) 4%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -199,4 +202,36 @@ img {
     transition: none !important;
     animation: none !important;
   }
+}
+
+/* Light theme (§theme mode: light | toggle). The navy scale flips end for end
+   so every component keeps reading its own semantic tokens. */
+html[data-theme='light'] {
+  --gray-0: #ffffff;
+  --gray-50: #f3f4f7;
+  --gray-100: #e3e6ee;
+  --gray-200: #c3cadb;
+  --gray-300: #a3acc8;
+  --gray-400: #8490b5;
+  --gray-500: #6474a2;
+  --gray-600: #505d84;
+  --gray-700: #3d4663;
+  --gray-800: #283044;
+  --gray-900: #141925;
+  --gray-999: #090b11;
+  --accent-light: #1f5fbf;
+  --speed-ink: color-mix(in srgb, var(--speed-from) 55%, #0b3a4a);
+  --shadow-elev: 0 1px 2px rgba(9, 11, 17, 0.08), 0 12px 32px rgba(9, 11, 17, 0.1);
+  color-scheme: light;
+}
+
+/* §theme ornaments: a spoke can switch the defence-tech framing off. */
+html.no-ticks .way-card,
+html.no-ticks .price-card,
+html.no-ticks .final-cta-inner {
+  background-image: none;
+}
+
+html.no-grid .hero::before {
+  display: none;
 }

@@ -1,0 +1,15 @@
+---
+// Indexed section heading: mono eyebrow with its running number, title, intro.
+interface Props {
+  n: string;
+  eyebrow: string;
+  title: string;
+  intro?: string;
+  introHtml?: boolean;
+}
+const { n, eyebrow, title, intro, introHtml = false } = Astro.props;
+---
+<p class="eyebrow" data-reveal><span class="eyebrow-i">{n}</span>{eyebrow}</p>
+<h2 class="section-title" data-reveal style="--d: 60ms">{title}</h2>
+{intro && introHtml && <p class="section-intro" data-reveal style="--d: 120ms" set:html={intro} />}
+{intro && !introHtml && <p class="section-intro" data-reveal style="--d: 120ms">{intro}</p>}

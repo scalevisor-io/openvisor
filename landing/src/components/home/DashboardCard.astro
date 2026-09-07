@@ -1,0 +1,197 @@
+---
+// The customer project dashboard, cycled through the §8 lifecycle so a visitor
+// watches a project move Review → Delivery. PHASE_START renders server-side so
+// the first paint shows the signature build.
+import { glyphs, icons } from '../../lib/icons';
+import content from '../../lib/content';
+
+const { projects } = content;
+const stageLabels = content.stageLabels;
+const phases = content.phases.map((phase) => ({
+  ...phase,
+  events: phase.events.map((ev) => ({ ...ev, icon: icons[ev.icon] })),
+}));
+const PHASE_START = 2;
+const featureRequests = content.featureRequests.map((fr) => ({ ...fr, icon: icons[fr.icon] }));
+---
+<div class="hero-visual" aria-hidden="true">
+  <div class="demo-card" data-crm-card>
+    <div class="demo-head">
+      <span class="demo-name">{projects.visualName}</span>
+      <span class={`demo-chip demo-chip--${phases[PHASE_START].chip.tone}`}>
+        <span class="chip-indicator" set:html={glyphs[phases[PHASE_START].chip.indicator]} />
+        <span class="chip-label">{phases[PHASE_START].chip.label}</span>
+      </span>
+    </div>
+    <ol class="demo-timeline">
+      {
+        stageLabels.map((label, i) => {
+          const state = phases[PHASE_START].stages[i];
+          return (
+            <li class={state ? `t-${state}` : ''}>
+              <span class="t-node">{state === 'done' && <Fragment set:html={icons.check} />}</span>
+              <span class="t-label">{label}</span>
+            </li>
+          );
+        })
+      }
+    </ol>
+    <div class="demo-events">
+      {
+        phases[PHASE_START].events.map((ev) => (
+          <div class="demo-event">
+            <span class="event-icon" set:html={ev.icon} />
+            <p class="event-body">
+              {ev.body}
+              <span class="event-meta">{ev.meta}</span>
+            </p>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+  <p class="hero-visual-caption">{projects.visualCaption}</p>
+</div>
+
+<script define:vars={{ phases, glyphs, featureRequests, start: PHASE_START, checkIcon: icons.check }}>
+  // Cycle the hero project card through the lifecycle phases every 2.3s, so the
+  // visitor watches a project advance Review → Delivery. Held still for
+  // reduced-motion visitors (they keep the server-rendered "In build" phase).
+  const card = document.querySelector('[data-crm-card]');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  if (card && !reduce.matches) {
+    const chip = card.querySelector('.demo-chip');
+    const chipLabel = card.querySelector('.chip-label');
+    const chipIndicator = card.querySelector('.chip-indicator');
+    const nodes = card.querySelectorAll('.demo-timeline > li');
+    const list = card.querySelector('.demo-events');
+    const tones = ['wait', 'build', 'done'];
+    const isBuild = (i) => phases[i].chip.indicator === 'spinner';
+
+    // Write a message's icon + copy into a .demo-event node, keeping the
+    // server-rendered children (which carry Astro's scoped-style attribute).
+    const setEventContent = (el, ev) => {
+      el.querySelector('.event-icon').innerHTML = ev.icon;
+      const body = el.querySelector('.event-body');
+      const meta = body.querySelector('.event-meta');
+      Array.from(body.childNodes).forEach((n) => {
+        if (n !== meta) body.removeChild(n);
+      });
+      body.insertBefore(document.createTextNode(ev.body + ' '), meta);
+      meta.textContent = ev.meta;
+    };
+
+    // Reset the message pile to exactly this phase's events (the build feed may
+    // have swapped a base slot for a clone) and write their content.
+    const applyEvents = (evs) => {
+      let items = Array.from(list.querySelectorAll('.demo-event'));
+      while (items.length > evs.length) items.pop().remove();
+      items = Array.from(list.querySelectorAll('.demo-event'));
+      items.forEach((el) => {
+        el.style.cssText = ''; // clear any inline animation styles
+      });
+      items.forEach((el, n) => evs[n] && setEventContent(el, evs[n]));
+    };
+
+    // Build phase: a customer feature request slides in at the top of the pile,
+    // pushing it down and collapsing the oldest message off the bottom.
+    let frIdx = 0;
+    let feedTimer = null;
+    const insertFeatureRequest = () => {
+      const items = list.querySelectorAll('.demo-event');
+      if (items.length < 2) return;
+      const fr = featureRequests[frIdx++ % featureRequests.length];
+      const node = items[0].cloneNode(true); // clone keeps the scoped-style attrs
+      node.style.cssText = '';
+      setEventContent(node, fr);
+      list.insertBefore(node, list.firstChild);
+      const h = node.offsetHeight; // natural height before collapsing
+      node.style.transition = 'none';
+      node.style.maxHeight = '0px';
+      node.style.opacity = '0';
+      node.style.paddingTop = '0px';
+      node.style.paddingBottom = '0px';
+      void node.offsetHeight; // reflow so the open animates from collapsed
+      node.style.transition = '';
+      node.style.maxHeight = h + 'px';
+      node.style.opacity = '';
+      node.style.paddingTop = '';
+      node.style.paddingBottom = '';
+      window.setTimeout(() => {
+        node.style.maxHeight = '';
+      }, 500);
+
+      // Collapse the oldest message off the bottom.
+      const last = list.querySelector('.demo-event:last-child');
+      if (last && last !== node) {
+        last.style.maxHeight = last.offsetHeight + 'px';
+        void last.offsetHeight;
+        last.style.maxHeight = '0px';
+        last.style.opacity = '0';
+        last.style.marginTop = '0px';
+        last.style.paddingTop = '0px';
+        last.style.paddingBottom = '0px';
+        window.setTimeout(() => last.remove(), 520);
+      }
+    };
+    const scheduleBuildFeed = () => {
+      window.clearTimeout(feedTimer);
+      feedTimer = window.setTimeout(insertFeatureRequest, 1100);
+    };
+    const clearBuildFeed = () => window.clearTimeout(feedTimer);
+
+    const apply = (i) => {
+      const p = phases[i];
+      chipLabel.textContent = p.chip.label;
+      chipIndicator.innerHTML = glyphs[p.chip.indicator];
+      tones.forEach((t) => chip.classList.remove('demo-chip--' + t));
+      chip.classList.add('demo-chip--' + p.chip.tone);
+
+      nodes.forEach((li, n) => {
+        const st = p.stages[n];
+        li.classList.remove('t-done', 't-active');
+        if (st) li.classList.add('t-' + st);
+        const node = li.querySelector('.t-node');
+        if (node) node.innerHTML = st === 'done' ? checkIcon : '';
+      });
+
+      applyEvents(p.events);
+      if (isBuild(i)) scheduleBuildFeed();
+      else clearBuildFeed();
+    };
+
+    // Tick the ASCII build spinner. Runs whenever the build chip is showing
+    // (its .ascii-spin span is only in the DOM during that phase).
+    const frames = ['|', '/', '-', '\\'];
+    let frame = 0;
+    window.setInterval(() => {
+      const spin = card.querySelector('.ascii-spin');
+      if (spin) spin.textContent = frames[frame++ % frames.length];
+    }, 130);
+
+    // Kick off the feed for the server-rendered starting phase (build).
+    if (isBuild(start)) scheduleBuildFeed();
+
+    let idx = start;
+    window.setInterval(() => {
+      // Forward steps slide the comments left → right (progress); leaving the
+      // last phase loops back to the first, so it just fades.
+      const wrap = idx === phases.length - 1;
+      card.classList.add('is-swapping');
+      list.classList.add(wrap ? 'fade-exit' : 'slide-exit');
+      window.setTimeout(() => {
+        idx = (idx + 1) % phases.length;
+        apply(idx);
+        card.classList.remove('is-swapping');
+        if (wrap) {
+          list.classList.remove('fade-exit');
+        } else {
+          list.classList.remove('slide-exit');
+          list.classList.add('slide-enter'); // jump to the left, no transition
+          void list.offsetWidth; // reflow, then slide in from the left
+          list.classList.remove('slide-enter');
+        }
+      }, 320);
+    }, 2300);
+  }
+</script>

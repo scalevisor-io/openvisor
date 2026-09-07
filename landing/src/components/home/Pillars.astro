@@ -1,0 +1,27 @@
+---
+import SectionHead from './SectionHead.astro';
+import { icons } from '../../lib/icons';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { pillars } = content.profile;
+---
+<section id="expertise" class="section pillars">
+  <div class="container">
+    <SectionHead n={n} eyebrow={pillars.eyebrow} title={pillars.title} />
+    <div class="pillar-grid">
+      {
+        pillars.items.map((item, i) => (
+          <article class="pillar-card" data-reveal style={`--d: ${i * 70}ms`}>
+            <span class="platform-icon" set:html={icons[item.icon]} />
+            <h3 class="pillar-title">{item.title}</h3>
+            <p class="pillar-body">{item.body}</p>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>

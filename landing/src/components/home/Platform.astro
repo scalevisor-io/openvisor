@@ -1,0 +1,43 @@
+---
+// The platform: the visibility promise, with the live dashboard card as the
+// visual, then the three product surfaces.
+import SectionHead from './SectionHead.astro';
+import DashboardCard from './DashboardCard.astro';
+import { icons } from '../../lib/icons';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { projects } = content;
+const pad = (i: number) => String(i + 1).padStart(2, '0');
+---
+<section id="projects" class="section platform">
+  <div class="container">
+    <div class="platform-lead">
+      <div>
+        <SectionHead n={n} eyebrow={projects.eyebrow} title={projects.title} intro={projects.intro} />
+      </div>
+      <div data-reveal style="--d: 120ms">
+        <DashboardCard />
+      </div>
+    </div>
+
+    <div class="platform-grid">
+      {
+        projects.points.map((point, i) => (
+          <article class="platform-card" data-reveal style={`--d: ${i * 70}ms`}>
+            <div class="platform-head">
+              <span class="platform-icon" set:html={icons[point.icon]} />
+              <span class="platform-i">/ {pad(i)}</span>
+            </div>
+            <h3 class="platform-title">{point.title}</h3>
+            <div class="platform-surface" set:html={point.surface} />
+            <p class="platform-caption">{point.caption}</p>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>

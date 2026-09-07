@@ -1,0 +1,31 @@
+---
+import SectionHead from './SectionHead.astro';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { how } = content;
+---
+<section id="how-it-works" class="section">
+  <div class="container">
+    <SectionHead n={n} eyebrow={how.eyebrow} title={how.title} intro={how.intro} introHtml />
+    <ol class="steps">
+      {
+        how.steps.map((step, i) => (
+          <li class="step" data-reveal style={`--d: ${i * 60}ms`}>
+            <span class="step-n">{step.n}</span>
+            <div class="step-content">
+              <h3 class="step-title">
+                {step.title}
+                {step.who && <span class="step-who">{step.who}</span>}
+              </h3>
+              <p class="step-body">{step.body}</p>
+            </div>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>

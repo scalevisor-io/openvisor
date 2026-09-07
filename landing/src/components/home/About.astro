@@ -1,0 +1,33 @@
+---
+import SectionHead from './SectionHead.astro';
+import { socialIcons } from '../../lib/icons';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { about, socials } = content.profile;
+---
+<section id="about" class="section about">
+  <div class="container about-inner">
+    <div data-reveal>
+      <SectionHead n={n} eyebrow={about.eyebrow} title={about.title} />
+      <ul class="social-row" aria-label="Elsewhere">
+        {
+          socials.map((s) => (
+            <li>
+              <a href={s.href} target="_blank" rel="noopener noreferrer me">
+                <span class="social-icon" set:html={socialIcons[s.icon] ?? socialIcons.link} />
+                {s.label}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+    <div class="about-body">
+      {about.paragraphs.map((para, i) => <p data-reveal style={`--d: ${i * 60}ms`}>{para}</p>)}
+    </div>
+  </div>
+</section>
