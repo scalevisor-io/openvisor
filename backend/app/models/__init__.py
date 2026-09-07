@@ -26,6 +26,7 @@ from app.models.models import (  # noqa: F401
     ProgramInstance,
     ProgramRun,
     Project,
+    ChatDocument,
     ChatImage,
     ProjectFile,
     ProjectMemory,

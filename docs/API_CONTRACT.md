@@ -59,6 +59,13 @@ The delegation **spec is stored** - it is the work order the build runs from and
 - `GET /projects/{id}/chat-images/{image_id}` → the bytes, `Cache-Control: private`. Access rides on the project dependency, so a read-only share sees the thread's images and nobody else does.
 - `POST /projects/{id}/messages` accepts `image_ids: [...]` - ids uploaded above and not yet claimed. Unknown, already-claimed or another author's ids are ignored (messages are immutable, so an image can never move between them). The claimed set comes back on `Message.meta.images`.
 
+## Chat documents (§chat documents)
+
+- `POST /projects/{id}/chat-documents` (multipart `files`) → 201 `[{id, filename, content_type, size_bytes, char_count, truncated, pages}]`. The text is extracted server-side at upload, so **no model gate applies** (any model reads text). **409** while the instance switch is off (`chat_documents_disabled` in admin settings; the disabled composer is a courtesy, the route is the gate), 413 over 10 MB, **415** when the bytes are not a supported document (PDF, Word `.docx`, Markdown, HTML, CSV, JSON, plain text - sniffed from the bytes, the client's content-type is not trusted), **422** `"<filename>: <reason>"` when a supported document has nothing readable in it (a scanned PDF has no text layer, a password-protected PDF, a corrupt archive). `pages` is set for PDFs; `truncated` says the stored text was cut at the platform cap (120k characters), which the model is told. Max 4 per message.
+- `GET /projects/{id}/chat-documents/{document_id}` → the original bytes as a **download** (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`; `application/pdf` and the Word type keep their media type, everything else is `application/octet-stream`). Access rides on the project dependency like images.
+- `POST /projects/{id}/messages` accepts `document_ids: [...]` next to `image_ids`, with the same claim rules. The claimed set comes back on `Message.meta.documents` (the upload shape above).
+- **Instance switch:** `chat_documents_disabled` on `GET`/`PUT /admin/settings` (default false = on). Off refuses new uploads (409), makes the answer paths skip the text of documents already attached and stages none into dev sandboxes; chips of already-sent documents keep downloading. `GET /settings.chat_documents_enabled` mirrors it for the composer (advisory - the upload route re-checks).
+
 ## Model image support (§chat images)
 
 There is **no capability discovery** in the OpenAI-compatible contract - `/models` returns ids, never capabilities - so whether a model reads images has to be stored, and it is stored per saved endpoint:
@@ -196,7 +203,7 @@ A routine is a SAVED PROMPT on a project, optionally scheduled. It is a template
 
 Firing guards (all 409 on "Run now", all recorded in `last_skip_reason` on a scheduled tick, which then moves `next_run_at` on): the routine is paused, the project is canceled/finished or has automatic development blocked, the org wallet is empty, a build already holds the project's slot, or - the one specific to routines - **the previous request is still open**. Unlike the auto_dev sweep, a routine has no dedup key (running the same prompt every Monday IS the feature), so that last guard is what stops a weekly routine stacking a second build on an unmerged PR.
 
-Instance switch: `routines_disabled` (admin settings) hides the tab via `GET /settings.routines_enabled` and makes every routine write 403. Existing routines are kept and simply stop firing, so re-enabling resumes them.
+Instance switch: `routines_disabled` (admin settings) hides the tab via `GET /settings.routines_enabled, chat_documents_enabled (§chat documents switch, advisory - the upload route re-checks)` and makes every routine write 403. Existing routines are kept and simply stop firing, so re-enabling resumes them.
 
 
 ## Memory & files

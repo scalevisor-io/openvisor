@@ -531,6 +531,36 @@ class Request(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ChatDocument(Base):
+    """§chat documents: a document (PDF, Word, Markdown, HTML, text…) attached to a
+    chat message - the text twin of ChatImage.
+
+    The bytes are kept for the download chip; `text` is what the model reads,
+    extracted ONCE at upload by services/documents so any model - vision or not -
+    gets the document as plain text and the worker never re-parses one per answer.
+    `char_count`/`truncated`/`pages` are what the chip shows and what the model is
+    told when a document's text is left out of an answer's budget.
+
+    Like ChatImage: immutable, `message_id` null between upload and the post that
+    claims it, and copied (never moved) when a main-chat ask is filed as a request.
+    """
+    __tablename__ = "chat_document"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    message_id: Mapped[str | None] = mapped_column(ForeignKey("message.id"), nullable=True,
+                                                   index=True)
+    author: Mapped[str] = mapped_column(String(20))  # customer|admin
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(128))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    text: Mapped[str] = mapped_column(Text)
+    char_count: Mapped[int] = mapped_column(Integer)
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False)
+    pages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ChatImage(Base):
     """§chat images: an image pasted or imported into a chat thread.
 

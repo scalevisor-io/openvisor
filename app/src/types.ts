@@ -541,6 +541,9 @@ export interface PublicSettings {
   // §routines: false hides the Routines tab. Advisory only - every routine
   // write re-checks the flag server-side.
   routines_enabled: boolean;
+  // §chat documents: false hides document attachments in the chat composer.
+  // Advisory only - the upload route re-checks the switch server-side.
+  chat_documents_enabled: boolean;
 }
 
 // §routines: a saved prompt on a project. An empty schedule_cron = fired by
@@ -569,6 +572,8 @@ export interface AdminSettings {
   pause_chat_deposits: boolean;
   // §routines: instance kill switch (the feature is on unless this is true).
   routines_disabled: boolean;
+  // §chat documents: instance kill switch for document attachments in chat.
+  chat_documents_disabled: boolean;
   // §dev harness: per-project agent-driver selection. The flag gates the whole
   // feature; `allowed` narrows the catalog the runner image ships; `default` is
   // what a project with no pin runs on. `dev_harnesses` is the catalog itself.
@@ -949,6 +954,19 @@ export interface ImageSupport {
   enabled: boolean;
   reason: string | null;
   model: string;
+}
+
+// §chat documents: a document (PDF, Word, Markdown, HTML, text…) attached to a
+// chat message. The model reads its extracted text, so no vision gate applies;
+// `char_count`/`truncated`/`pages` are what the chip shows.
+export interface ChatDocument {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  char_count: number;
+  truncated: boolean;
+  pages: number | null;
 }
 
 export interface RunLogChunk {

@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.services import app_settings, brand, routines as routines_svc, speciality as speciality_svc
+from app.services import (app_settings, brand, documents as documents_svc, routines as routines_svc,
+                          speciality as speciality_svc)
 from app.services.pricing import load_static
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -29,6 +30,9 @@ async def public_settings(db: AsyncSession = Depends(get_db)):
         # Lets the auth forms skip the widget (and the wait for a challenge) on
         # a deployment that has the captcha switched off.
         "altcha_enabled": settings.altcha_enabled,
+        # §chat documents: false hides document attachments in the composer.
+        # Advisory only - the upload route re-checks the switch server-side.
+        "chat_documents_enabled": await documents_svc.enabled_async(db),
         # What this instance offers the hub network (development and/or
         # project_management); absent on older spokes, so hub readers fail soft.
         "capabilities": settings.capabilities_list,

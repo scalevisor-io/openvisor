@@ -188,6 +188,9 @@ class MessageIn(BaseModel):
     # §chat images: ids returned by POST /projects/{id}/chat-images, claimed by
     # this message. Unknown, already-claimed or someone else's ids are ignored.
     image_ids: list[str] = Field(default_factory=list, max_length=4)
+    # §chat documents: ids returned by POST /projects/{id}/chat-documents - same
+    # claim rules, no vision gate (the model reads the extracted text).
+    document_ids: list[str] = Field(default_factory=list, max_length=4)
 
 
 class HumanAnswerIn(BaseModel):
@@ -285,6 +288,10 @@ class AppSettingsIn(BaseModel):
     # §routines: instance kill switch for scheduled saved prompts (the
     # feature is on by default; this is what a future paid tier gates).
     routines_disabled: bool | None = None
+    # §chat documents: instance kill switch for document attachments in chat
+    # (on by default). Off = uploads refused, attached text no longer read by
+    # the model, nothing staged into sandboxes; existing chips keep downloading.
+    chat_documents_disabled: bool | None = None
     # §chat images: the instance-default model has no ModelEndpoint row to carry a
     # probe verdict, so the admin declares it here (saved endpoints are declared or
     # probed on the Model configuration page instead).

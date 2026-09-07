@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { chatApi, chatImageApi, requestsApi } from "../lib/endpoints";
+import { chatApi, chatDocumentApi, chatImageApi, requestsApi } from "../lib/endpoints";
 import { useAuth } from "../lib/auth";
 import { relTime, Spinner } from "./ui";
 import { ConfirmPrompt, MessageBody, PlanDisclosure, PrChips, QuestionPrompt, confirmState, messageConfirm, messageQuestion, messagePrs, questionState, stripPrUrls, type PrRef } from "@shared-ui";
-import type { ChatImage, ImageSupport, DevRunState, Message, ProjectStatus } from "../types";
+import type { ChatDocument, ChatImage, ImageSupport, DevRunState, Message, ProjectStatus } from "../types";
 
 // Agent/system messages sometimes deep-link to a request detail page (the §12
 // classifier's "On it - follow progress here: <url>" ack). Render that as an
@@ -50,13 +50,73 @@ function ChatBody({ text, prs = [] }: { text: string; prs?: PrRef[] }) {
 // Live message list for a thread. Uses the project WebSocket for push updates
 // with a polling fallback; dedupes by message id so both sources are safe.
 const MAX_IMAGES = 4;
+const MAX_DOCUMENTS = 4;
 
-// §chat images: images the sender attached, recorded on Message.meta so a
-// reader needs no second query. Clicking opens the full-size original.
-function MessageImages({ projectId, message }: { projectId: string; message: Message }) {
+// §chat documents: what the picker offers. Mirrors services/documents.py -
+// the server sniffs the bytes, this only shapes the file dialog.
+const DOCUMENT_ACCEPT =
+  ".pdf,.docx,.md,.markdown,.html,.htm,.txt,.csv,.json,application/pdf," +
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+  "text/markdown,text/html,text/plain,text/csv,application/json";
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
+
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Feather-style file icon, the same visual language as the attach button.
+function DocIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+    </svg>
+  );
+}
+
+// §chat documents: a chip naming the file - kind, pages, size - that downloads
+// the original on click (never an inline render: an uploaded HTML page must not
+// run as the app). `truncated` warns that the model read the head only.
+function DocChip({ href, doc, onRemove }: { href?: string; doc: ChatDocument; onRemove?: () => void }) {
+  const facts = [
+    doc.pages ? `${doc.pages} page${doc.pages === 1 ? "" : "s"}` : null,
+    fmtBytes(doc.size_bytes),
+    doc.truncated ? "text cut at the platform cap" : null,
+  ].filter(Boolean).join(" · ");
+  const inner = (
+    <>
+      <DocIcon />
+      <span className="chat-doc-name" title={doc.filename}>{doc.filename}</span>
+      <span className="chat-doc-facts">{facts}</span>
+    </>
+  );
+  return (
+    <span className="chat-attachment chat-doc">
+      {href ? (
+        <a href={href} className="chat-doc-link" title={`Download ${doc.filename}`}>{inner}</a>
+      ) : (
+        <span className="chat-doc-link">{inner}</span>
+      )}
+      {onRemove && (
+        <button type="button" className="chat-attachment-x" title="Remove" onClick={onRemove}>
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+// §chat images / §chat documents: what the sender attached, recorded on
+// Message.meta so a reader needs no second query. An image opens full-size; a
+// document chip downloads the original.
+function MessageAttachments({ projectId, message }: { projectId: string; message: Message }) {
   // meta is a platform-authored union; images ride in the generic half.
   const images = ((message.meta as Record<string, unknown> | null)?.images ?? []) as ChatImage[];
-  if (!images.length) return null;
+  const documents = ((message.meta as Record<string, unknown> | null)?.documents ?? []) as ChatDocument[];
+  if (!images.length && !documents.length) return null;
   return (
     <div className="chat-attachments msg-attachments">
       {images.map((img) => (
@@ -64,6 +124,9 @@ function MessageImages({ projectId, message }: { projectId: string; message: Mes
            rel="noreferrer noopener" className="chat-attachment">
           <img src={chatImageApi.url(projectId, img.id)} alt={img.filename} />
         </a>
+      ))}
+      {documents.map((doc) => (
+        <DocChip key={doc.id} doc={doc} href={chatDocumentApi.url(projectId, doc.id)} />
       ))}
     </div>
   );
@@ -118,12 +181,17 @@ export default function Chat({
 }) {
   const { settings } = useAuth();
   const consultant = settings?.consultant_first_name ?? "Consultant";
+  // §chat documents switch: advisory - the upload route re-checks it. Absent
+  // (an older API) reads as on, like the server's missing-row default.
+  const docsEnabled = settings?.chat_documents_enabled !== false;
+  const canAttach = docsEnabled || !!imageSupport?.enabled;
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState("");
   const [alsoEmail, setAlsoEmail] = useState(false);
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<ChatImage[]>([]);
+  const [pendingDocs, setPendingDocs] = useState<ChatDocument[]>([]);
   const [requestingHuman, setRequestingHuman] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // §12 live feedback: "reading" while the worker classifies the message (pushed
@@ -229,29 +297,50 @@ export default function Chat({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, agentActivity]);
 
-  // §chat images: files live here until the message that claims them is posted.
+  // §chat images / §chat documents: files live here until the message that
+  // claims them is posted. Images need a model that reads them (the server
+  // re-checks); anything else goes up as a document and the server decides
+  // whether it can read it - the errors it returns are written for the sender.
   async function attach(files: File[]) {
+    if (readOnly || !files.length) return;
     const images = files.filter((f) => f.type.startsWith("image/"));
-    if (!images.length || !imageSupport?.enabled) return;
+    const docs = files.filter((f) => !f.type.startsWith("image/"));
     setError(null);
-    try {
-      const up = await chatImageApi.upload(projectId, images.slice(0, MAX_IMAGES - pending.length));
-      setPending((p) => [...p, ...up].slice(0, MAX_IMAGES));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not attach the image.");
+    if (images.length && !imageSupport?.enabled) {
+      setError(imageSupport?.reason ?? "This project's model can't read images.");
+    } else if (images.length) {
+      try {
+        const up = await chatImageApi.upload(projectId, images.slice(0, MAX_IMAGES - pending.length));
+        setPending((p) => [...p, ...up].slice(0, MAX_IMAGES));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not attach the image.");
+      }
+    }
+    if (docs.length && !docsEnabled) {
+      setError("Document attachments are switched off on this instance.");
+    } else if (docs.length) {
+      try {
+        const up = await chatDocumentApi.upload(
+          projectId, docs.slice(0, MAX_DOCUMENTS - pendingDocs.length));
+        setPendingDocs((p) => [...p, ...up].slice(0, MAX_DOCUMENTS));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not attach the document.");
+      }
     }
   }
 
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!body.trim() && !pending.length) return;
+    if (!body.trim() && !pending.length && !pendingDocs.length) return;
     setSending(true);
     setError(null);
     try {
-      const msg = await chatApi.send(projectId, thread, body.trim() || "(image)",
-                                     canEmail && alsoEmail, pending.map((i) => i.id));
+      const msg = await chatApi.send(projectId, thread, body.trim() || "(attachment)",
+                                     canEmail && alsoEmail, pending.map((i) => i.id),
+                                     pendingDocs.map((d) => d.id));
       merge([msg]);
       setPending([]);
+      setPendingDocs([]);
       setBody("");
       setAlsoEmail(false);
       setAgentActivity(null); // a stale "no action" note doesn't apply to this message
@@ -364,7 +453,7 @@ export default function Chat({
                   </div>
                   <div className="msg-body">
                     <ChatBody text={m.body} prs={messagePrs(m)} />
-                    <MessageImages projectId={projectId} message={m} />
+                    <MessageAttachments projectId={projectId} message={m} />
                     {(() => {
                       const q = m.author === "agent" ? messageQuestion(m) : null;
                       if (!q) return null;
@@ -485,15 +574,15 @@ export default function Chat({
       <form
         className="chat-composer"
         onSubmit={send}
-        onDragOver={(e) => imageSupport?.enabled && e.preventDefault()}
+        onDragOver={(e) => canAttach && e.preventDefault()}
         onDrop={(e) => {
-          if (!imageSupport?.enabled) return;
+          if (!canAttach) return;
           e.preventDefault();
           attach([...e.dataTransfer.files]);
         }}
       >
         {error && <div className="tiny" style={{ color: "var(--danger)" }}>{error}</div>}
-        {pending.length > 0 && (
+        {(pending.length > 0 || pendingDocs.length > 0) && (
           <div className="chat-attachments">
             {pending.map((img) => (
               <span key={img.id} className="chat-attachment">
@@ -508,17 +597,27 @@ export default function Chat({
                 </button>
               </span>
             ))}
+            {pendingDocs.map((doc) => (
+              <DocChip
+                key={doc.id}
+                doc={doc}
+                onRemove={() => setPendingDocs((p) => p.filter((d) => d.id !== doc.id))}
+              />
+            ))}
           </div>
         )}
         <textarea
-          placeholder={imageSupport?.enabled ? "Write a message… (paste or drop an image)"
-                                             : "Write a message…"}
+          placeholder={!canAttach ? "Write a message…"
+            : imageSupport?.enabled && docsEnabled
+              ? "Write a message… (paste or drop a document or an image)"
+              : docsEnabled ? "Write a message… (paste or drop a document)"
+                            : "Write a message… (paste or drop an image)"}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           style={{ minHeight: 64 }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files];
-            if (files.length && imageSupport?.enabled) attach(files);
+            if (files.length && canAttach) attach(files);
           }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(e);
@@ -538,38 +637,47 @@ export default function Chat({
             <span className="tiny faint">⌘/Ctrl + Enter to send</span>
           )}
           <div className="row gap-sm">
-            {/* The button is always PRESENT - disabled with the reason - so the
-                capability is discoverable instead of mysteriously missing. */}
+            {/* Documents attach wherever the instance switch is on (the model
+                reads their text); images only when the model reads pixels. The
+                button is always PRESENT - disabled with the reason when neither
+                applies - so the capability is discoverable instead of mysterious. */}
             <label
-              className={`btn btn-sm btn-ghost${imageSupport?.enabled ? "" : " is-disabled"}`}
-              title={imageSupport?.enabled
-                ? "Attach an image (or paste / drop one)"
-                : (imageSupport?.reason ?? "Image attachments need a model that reads images.")}
+              className={`btn btn-sm btn-ghost${canAttach ? "" : " is-disabled"}`}
+              title={!canAttach
+                ? "Attachments are off: documents are switched off on this instance, and "
+                  + (imageSupport?.reason ?? "images need a model that reads them.")
+                : docsEnabled && imageSupport?.enabled
+                  ? "Attach a document (PDF, Word, Markdown, HTML, text) or an image - or paste / drop one"
+                  : docsEnabled
+                    ? "Attach a document (PDF, Word, Markdown, HTML, text) - or paste / drop one. "
+                      + (imageSupport?.reason ?? "Images need a model that reads them.")
+                    : "Attach an image (or paste / drop one). Documents are switched off on this instance."}
             >
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
+                accept={[docsEnabled ? DOCUMENT_ACCEPT : "", imageSupport?.enabled ? IMAGE_ACCEPT : ""]
+                  .filter(Boolean).join(",")}
                 multiple
                 hidden
-                disabled={!imageSupport?.enabled || pending.length >= MAX_IMAGES}
+                disabled={!canAttach
+                  || ((!docsEnabled || pendingDocs.length >= MAX_DOCUMENTS)
+                      && (!imageSupport?.enabled || pending.length >= MAX_IMAGES))}
                 onChange={(e) => {
                   attach([...(e.target.files ?? [])]);
                   e.target.value = "";
                 }}
               />
-              {/* Feather-style 24-viewBox stroke icon in currentColor, the same
+              {/* Feather-style 24-viewBox paperclip in currentColor, the same
                   visual language as the sidebar/theme icons. */}
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
                    stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
                    strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
-              <span className="sr-only">Attach an image</span>
+              <span className="sr-only">Attach a file</span>
             </label>
             <button type="submit" className="btn btn-primary btn-sm"
-                    disabled={sending || (!body.trim() && !pending.length)}>
+                    disabled={sending || (!body.trim() && !pending.length && !pendingDocs.length)}>
               {sending ? <Spinner /> : "Send"}
             </button>
           </div>

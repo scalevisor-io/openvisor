@@ -18,6 +18,8 @@ cryptography>=42
 pgvector>=0.2.5
 stripe>=9.0
 pyyaml>=6.0
+# §chat documents: PDF text extraction (pure Python, no system deps)
+pypdf>=5.1,<7
 croniter>=2.0
 pytest>=8.0
 pytest-asyncio>=0.23
