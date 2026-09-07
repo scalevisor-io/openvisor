@@ -1622,10 +1622,17 @@ html.has-consultant-photo .way-card--wide .way-glyph {
   }
 }
 
+/* No portrait (neither committed nor uploaded): the figure stays hidden and the
+   hero keeps one column, so a fresh instance never shows an empty frame. */
 .hero-portrait {
+  display: none;
   margin: 0;
   justify-self: center;
   width: min(100%, 22rem);
+}
+
+html.has-consultant-photo .hero-portrait {
+  display: block;
 }
 
 /* Gradient frame with HUD ticks: the portrait sits in the same register as the
@@ -1670,7 +1677,7 @@ html.has-consultant-photo .way-card--wide .way-glyph {
 }
 
 @media (min-width: 880px) {
-  .hero-inner--profile {
+  html.has-consultant-photo .hero-inner--profile {
     grid-template-columns: 1.35fr 1fr;
   }
   .hero-portrait {
