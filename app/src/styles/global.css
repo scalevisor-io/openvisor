@@ -2864,6 +2864,39 @@ table.data tbody tr:hover {
   max-height: 140px;
   object-fit: cover;
 }
+/* §chat documents: a file chip (name + facts) that downloads on click. */
+.chat-attachment.chat-doc {
+  align-items: center;
+  max-width: 100%;
+}
+.chat-doc-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+.chat-doc-link:hover {
+  background: var(--bg);
+}
+.chat-doc-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-doc-facts {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+.chat-doc .chat-attachment-x {
+  position: static;
+  margin-right: 0.3rem;
+}
 .chat-attachment-x {
   position: absolute;
   top: 2px;

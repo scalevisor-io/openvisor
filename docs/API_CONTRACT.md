@@ -59,6 +59,12 @@ The delegation **spec is stored** - it is the work order the build runs from and
 - `GET /projects/{id}/chat-images/{image_id}` → the bytes, `Cache-Control: private`. Access rides on the project dependency, so a read-only share sees the thread's images and nobody else does.
 - `POST /projects/{id}/messages` accepts `image_ids: [...]` - ids uploaded above and not yet claimed. Unknown, already-claimed or another author's ids are ignored (messages are immutable, so an image can never move between them). The claimed set comes back on `Message.meta.images`.
 
+## Chat documents (§chat documents)
+
+- `POST /projects/{id}/chat-documents` (multipart `files`) → 201 `[{id, filename, content_type, size_bytes, char_count, truncated, pages}]`. The text is extracted server-side at upload, so **no model gate applies** (any model reads text). 413 over 10 MB, **415** when the bytes are not a supported document (PDF, Word `.docx`, Markdown, HTML, CSV, JSON, plain text - sniffed from the bytes, the client's content-type is not trusted), **422** `"<filename>: <reason>"` when a supported document has nothing readable in it (a scanned PDF has no text layer, a password-protected PDF, a corrupt archive). `pages` is set for PDFs; `truncated` says the stored text was cut at the platform cap (120k characters), which the model is told. Max 4 per message.
+- `GET /projects/{id}/chat-documents/{document_id}` → the original bytes as a **download** (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`; `application/pdf` and the Word type keep their media type, everything else is `application/octet-stream`). Access rides on the project dependency like images.
+- `POST /projects/{id}/messages` accepts `document_ids: [...]` next to `image_ids`, with the same claim rules. The claimed set comes back on `Message.meta.documents` (the upload shape above).
+
 ## Model image support (§chat images)
 
 There is **no capability discovery** in the OpenAI-compatible contract - `/models` returns ids, never capabilities - so whether a model reads images has to be stored, and it is stored per saved endpoint:

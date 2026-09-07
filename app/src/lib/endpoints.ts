@@ -12,6 +12,7 @@ import type {
   ApiToken,
   DevActivityChunk,
   DevRunSummary,
+  ChatDocument,
   ChatImage,
   McpProjectToken,
   McpToken,
@@ -129,6 +130,18 @@ export const chatImageApi = {
   },
   url: (projectId: string, imageId: string) =>
     `/api/projects/${projectId}/chat-images/${imageId}`,
+};
+
+// §chat documents: same two-step as images (upload, then claim by id on the
+// message); the url is a download, never an inline render.
+export const chatDocumentApi = {
+  upload: (projectId: string, files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return api.postForm<ChatDocument[]>(`/projects/${projectId}/chat-documents`, fd);
+  },
+  url: (projectId: string, documentId: string) =>
+    `/api/projects/${projectId}/chat-documents/${documentId}`,
 };
 
 export const mcpApi = {
@@ -267,12 +280,13 @@ export const chatApi = {
   messages: (id: string, thread: string) =>
     api.get<Message[]>(`/projects/${id}/messages?thread=${encodeURIComponent(thread)}`),
   send: (id: string, thread: string, body: string, alsoEmail?: boolean,
-         imageIds?: string[]) =>
+         imageIds?: string[], documentIds?: string[]) =>
     api.post<Message>(`/projects/${id}/messages`, {
       thread,
       body,
       ...(alsoEmail ? { also_email: true } : {}),
       ...(imageIds?.length ? { image_ids: imageIds } : {}),
+      ...(documentIds?.length ? { document_ids: documentIds } : {}),
     }),
   requestHumanAnswer: (id: string, thread: string) =>
     api.post<{ ok: boolean }>(`/projects/${id}/request-human-answer`, { thread }),

@@ -951,6 +951,19 @@ export interface ImageSupport {
   model: string;
 }
 
+// §chat documents: a document (PDF, Word, Markdown, HTML, text…) attached to a
+// chat message. The model reads its extracted text, so no vision gate applies;
+// `char_count`/`truncated`/`pages` are what the chip shows.
+export interface ChatDocument {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  char_count: number;
+  truncated: boolean;
+  pages: number | null;
+}
+
 export interface RunLogChunk {
   content: string;
   next_offset: number;

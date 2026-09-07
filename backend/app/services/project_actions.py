@@ -329,14 +329,18 @@ async def valid_thread(db: AsyncSession, project: Project, thread: str) -> bool:
 async def post_chat_message(db: AsyncSession, project: Project, author: str,
                             thread: str, body: str,
                             also_email: bool = False,
-                            image_ids: list[str] | None = None) -> Message:
+                            image_ids: list[str] | None = None,
+                            document_ids: list[str] | None = None) -> Message:
     """Append an immutable chat message as `author` ('customer' | 'admin') and run
     the message side effects: WS publish, optional admin email, and the §12
     chat-intent classifier on human main-thread messages.
 
     §chat images: `image_ids` claims images this author already uploaded to this
     project (see api/chat_images) - they are recorded on Message.meta so every
-    reader, including the hub, sees them without a second query."""
+    reader, including the hub, sees them without a second query. §chat documents:
+    `document_ids` does the same for documents (api/chat_documents), under
+    `meta["documents"]`."""
+    from app.api.chat_documents import link_to_message as link_documents
     from app.api.chat_images import link_to_message
 
     if not await valid_thread(db, project, thread):
@@ -349,6 +353,10 @@ async def post_chat_message(db: AsyncSession, project: Project, author: str,
         images = await link_to_message(db, project, msg.id, image_ids, author)
         if images:
             msg.meta = {**(msg.meta or {}), "images": images}
+    if document_ids:
+        docs = await link_documents(db, project, msg.id, document_ids, author)
+        if docs:
+            msg.meta = {**(msg.meta or {}), "documents": docs}
     hub_events.record(db, project, "message", hub_events.message_payload(msg))
     await db.commit()
     await events.publish_async(project.id, {"type": "message", "message": message_out(msg)})

@@ -1,7 +1,7 @@
 from fastapi import Depends, FastAPI
 
 from app.api import (
-    account, admin, auth, billing, chat, chat_images, demo, files, hub, knowledge,
+    account, admin, auth, billing, chat, chat_documents, chat_images, demo, files, hub, knowledge,
     knowledge_bases,
     tools, memory, meta, model_endpoints, org_memory, program_hooks, programs, projects,
     mcp_delegate,
@@ -26,6 +26,7 @@ app.include_router(settings_api.router)  # public brand/activity catalog, GET-on
 app.include_router(projects.router, dependencies=_csrf)
 app.include_router(chat.router, dependencies=_csrf)
 app.include_router(chat_images.router, dependencies=_csrf)
+app.include_router(chat_documents.router, dependencies=_csrf)
 app.include_router(chat.ws_router)
 app.include_router(memory.router, dependencies=_csrf)
 app.include_router(files.router, dependencies=_csrf)

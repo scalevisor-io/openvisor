@@ -188,6 +188,9 @@ class MessageIn(BaseModel):
     # §chat images: ids returned by POST /projects/{id}/chat-images, claimed by
     # this message. Unknown, already-claimed or someone else's ids are ignored.
     image_ids: list[str] = Field(default_factory=list, max_length=4)
+    # §chat documents: ids returned by POST /projects/{id}/chat-documents - same
+    # claim rules, no vision gate (the model reads the extracted text).
+    document_ids: list[str] = Field(default_factory=list, max_length=4)
 
 
 class HumanAnswerIn(BaseModel):

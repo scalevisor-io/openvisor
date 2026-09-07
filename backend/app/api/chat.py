@@ -44,7 +44,7 @@ async def post_message(body: MessageIn,
     try:
         msg = await project_actions.post_chat_message(
             db, project, author, body.thread, body.body, also_email=body.also_email,
-            image_ids=body.image_ids)
+            image_ids=body.image_ids, document_ids=body.document_ids)
     except project_actions.ActionError as exc:
         raise HTTPException(exc.status, exc.detail)
     return message_out(msg)
