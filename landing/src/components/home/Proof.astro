@@ -1,0 +1,49 @@
+---
+// §profile proof: the public trail - stats, then a scroll-snap strip of
+// featured items (books, talks, press, products). No script: CSS snap only.
+import SectionHead from './SectionHead.astro';
+import content from '../../lib/content';
+
+interface Props {
+  n: string;
+}
+const { n } = Astro.props;
+const { proof } = content.profile;
+---
+<section id="featured" class="section proof">
+  <div class="container">
+    <SectionHead n={n} eyebrow={proof.eyebrow} title={proof.title} intro={proof.intro} />
+    <dl class="stat-row" data-reveal>
+      {
+        proof.stats.map((stat) => (
+          <div class="stat">
+            <dd class="stat-value">{stat.value}</dd>
+            <dt class="stat-label">{stat.label}</dt>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+  <div class="featured-strip" data-reveal style="--d: 120ms">
+    <ul class="featured-track">
+      {
+        proof.featured.map((item) => (
+          <li class="featured-card">
+            <a href={item.href} target="_blank" rel="noopener noreferrer">
+              {item.image && (
+                <span class="featured-media">
+                  <img src={item.image} alt="" loading="lazy" decoding="async" />
+                </span>
+              )}
+              <span class="featured-meta">
+                <span class="featured-kind">{item.kind}</span>
+                {item.lang && <span class="featured-lang">{item.lang}</span>}
+              </span>
+              <span class="featured-title">{item.title}</span>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>

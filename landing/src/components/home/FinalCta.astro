@@ -1,0 +1,18 @@
+---
+import { signupUrl } from '../../lib/site';
+import content from '../../lib/content';
+
+const { finalCta } = content;
+---
+<section class="section final-cta">
+  <div class="container final-cta-inner" data-reveal>
+    <h2 class="final-title">
+      {finalCta.titleLead} <span class="gradient-text">{finalCta.titleAccent}</span>
+    </h2>
+    <p class="final-lede">{finalCta.lede}</p>
+    <div class="hero-cta">
+      <a href={signupUrl} class="btn btn-primary">{finalCta.ctaPrimary}</a>
+      <a href={finalCta.ctaSecondaryHref} class="btn btn-ghost">{finalCta.ctaSecondaryLabel}</a>
+    </div>
+  </div>
+</section>

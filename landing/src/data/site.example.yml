@@ -6,13 +6,157 @@
 # directory and edit freely - when present, site.yml REPLACES this file
 # wholesale (no merge). Brand name, consultant name, colours and site URL
 # arrive separately from build-time env (see .env `# Brand` block); the
-# {{BRAND_NAME}} and {{CONSULTANT_NAME}} placeholders below are filled from
-# BRAND_NAME / CONSULTANT_NAME at build time. Icons are referenced by id;
-# the SVG set itself lives in src/pages/index.astro.
+# {{BRAND_NAME}}, {{CONSULTANT_NAME}}, {{BRAND_COLOR_PRIMARY}} and
+# {{BRAND_COLOR_SECONDARY}} placeholders below are filled from env at build
+# time, and {{APP_URL}} / {{SIGNUP_URL}} / {{AI_INTAKE_URL}} / {{PROGRAMS_URL}}
+# / {{TOKENS_URL}} / {{MCP_URL}} from the app URL. Icons are referenced by id;
+# the SVG set itself lives in src/lib/icons.ts.
+#
+# Three blocks make the page a spoke's own:
+#   theme     - style tokens (mode, fonts, colours, ornaments), see src/lib/content.ts
+#   sections  - which home sections render, in this order (drop a line to hide one)
+#   profile   - the consultant: hero, pillars, services, proof, about, socials
 # ------------------------------------------------------------------ #
 
+theme:
+  # dark | light | toggle (dark by default, a header switch remembered per visitor)
+  mode: toggle
+  # fonts:
+  #   brand: "YourBrandFont"   # declare its @font-face in src/styles/global.css
+  colors:
+    gradientFrom: "{{BRAND_COLOR_PRIMARY}}"
+    gradientTo: "{{BRAND_COLOR_SECONDARY}}"
+    # Any of bg, bgElevated, border, text, textMuted, textStrong, accent
+    # overrides the stock navy scale; `light:` takes the same keys for the
+    # light theme.
+  ornaments:
+    ticks: true   # HUD corner ticks on offer cards
+    grid: true    # masked blueprint grid behind the hero
+
+sections:
+  - hero
+  - specs
+  - pillars
+  - services
+  - proof
+  - channels
+  - platform
+  - programs
+  - how
+  - pricing
+  - sovereign
+  - about
+  - finalCta
+
+# The consultant. Every value here is a placeholder to replace with your own
+# positioning, services and public track record.
+profile:
+  hero:
+    headline: "Senior software & infrastructure"
+    accent: "consultant"
+    roles:
+      - "Your sector"
+      - "Consulting"
+      - "Engineer"
+    lede: "Two sentences on what you do and for whom. Every project is reviewed by you before it starts - then either the agents you direct build it, or you build it by hand."
+    ctaPrimary: "Work with me"
+    ctaPrimaryHref: "{{AI_INTAKE_URL}}"
+    ctaSecondary: "See how I work"
+    ctaSecondaryHref: "#work-with-me"
+    availability: "Available for new engagements"
+    # A committed portrait under public/ (e.g. "/profile/portrait.webp"). The
+    # admin-uploaded photo (Settings -> Consultant) replaces it at runtime.
+    # portrait: "/profile/portrait.webp"
+
+  pillars:
+    eyebrow: "What I bring"
+    title: "Three things every engagement gets."
+    items:
+      - icon: "layers"
+        title: "Technical leadership"
+        body: "Senior engineering judgement on architecture, delivery and operations - the decisions that are expensive to revisit later."
+      - icon: "pulse"
+        title: "Delivery you can follow"
+        body: "Every project runs on one transparent platform: live status, one secure thread, the demo and the code in view."
+      - icon: "shieldNode"
+        title: "Security by default"
+        body: "Sandboxed builds, secrets never exposed, dependency vetting and threat-model defaults applied from the first commit."
+
+  services:
+    eyebrow: "Services"
+    title: "How I can help you."
+    intro: "What I do - and which door on the platform each one opens."
+    doorLabels:
+      curated: "Curated AI build"
+      direct: "Direct quote"
+      program: "Program"
+    items:
+      - icon: "zap"
+        title: "Product & MVP engineering"
+        summary: "A working product built by agents under my supervision, visible live from the first brief to the delivery."
+        capabilities:
+          - "Guided intake, honest estimate before any code"
+          - "Live build, demo on a subdomain, code as pull requests"
+          - "Senior structures and secure defaults from the first commit"
+        door: "curated"
+      - icon: "terminal"
+        title: "Infrastructure & DevOps"
+        summary: "Hand-built engagements for the systems agents should not touch alone."
+        capabilities:
+          - "Cloud and on-premise architecture"
+          - "CI/CD, observability and reliability engineering"
+          - "Migrations and hardening"
+        door: "direct"
+      - icon: "box"
+        title: "Recurring automation"
+        summary: "Small, scheduled automations that produce an output from your inputs, billed per run."
+        capabilities:
+          - "Reports, digests and syncs on a schedule"
+          - "Each run sandboxed, logged and delivered by webhook"
+          - "Your own systems reachable over a dedicated SSH key"
+        door: "program"
+
+  proof:
+    eyebrow: "Track record"
+    title: "Work in the open."
+    intro: "Talks, writing, open source and products - the public trail of the work. Replace these with your own."
+    stats:
+      - value: "10+"
+        label: "years of experience"
+      - value: "50+"
+        label: "projects delivered"
+      - value: "EU"
+        label: "based, remote first"
+    featured:
+      - kind: "Talk"
+        title: "A conference talk or podcast episode"
+        href: "https://example.com"
+        lang: "EN"
+      - kind: "Article"
+        title: "A piece you wrote that shows how you think"
+        href: "https://example.com"
+        lang: "EN"
+      - kind: "Product"
+        title: "Something you shipped"
+        href: "https://example.com"
+        lang: "EN"
+
+  about:
+    eyebrow: "About"
+    title: "Who is behind {{BRAND_NAME}}."
+    paragraphs:
+      - "A short first paragraph: who you are, what you have built and operated, and the standard you hold work to."
+      - "A second paragraph on how you work with clients, the sectors you know, and why you now deliver through this platform."
+  socials:
+    - label: "GitHub"
+      href: "https://github.com/your-handle"
+      icon: "github"
+    - label: "LinkedIn"
+      href: "https://www.linkedin.com/in/your-handle/"
+      icon: "linkedin"
+
 seo:
-  title: "{{BRAND_NAME}} - senior consulting you can follow live"
+  title: "{{CONSULTANT_NAME}} - senior consulting you can follow live | {{BRAND_NAME}}"
   description: "{{BRAND_NAME}} runs your whole engagement on one secure platform: live project status, one thread with consultant and agent, demo and code in view. Two ways to deliver the same senior standard: an AI build curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote. Work from the web app, or from your own coding agent over MCP."
   themeColor: "#090b11"
   ogSiteName: "{{BRAND_NAME}}"
@@ -42,20 +186,6 @@ legal:
 
 footer:
   tagline: "Senior consulting on one transparent platform: AI builds curated by {{CONSULTANT_NAME}}, or a hands-on engagement on a direct quote."
-
-hero:
-  eyebrow:
-    - "Senior consultancy"
-    - "Human-led, AI-accelerated"
-    - "Alpha"
-  titleLead: "Collaborating"
-  titleAccent: "at the AI age"
-  lede: "Senior engineering knowledge and experience shaping the code pushed to your repo. Chat with the consultant's agent team on the platform, or call it straight from your own coding agent over MCP."
-  ctaPrimary: "Deposit your project"
-  ctaSecondary: "See the three ways"
-  note: "Every project is personally reviewed and prompt improved before we start."
-  visualName: "CRM pilot"
-  visualCaption: "Your project dashboard - from first brief to delivery."
 
 specs:
   - "Self-hostable"
@@ -181,6 +311,8 @@ channels:
   note: "Not sure which fits - submit it as a direct quote, it costs nothing and {{CONSULTANT_NAME}} will tell you honestly if the AI-curated path would serve you better."
 
 projects:
+  visualName: "CRM pilot"
+  visualCaption: "Your project dashboard - from first brief to delivery."
   eyebrow: "Projects"
   title: 'No black box. No "any update?" emails.'
   intro: "A project is your idea becoming software - one secure workspace where you always know where it stands."

@@ -27,8 +27,9 @@ Sober, functional, fast. Dark-first.
 ```
 
 - Fonts: the landing defaults to the system font stack via `--font-brand`. To use a brand font, drop its files into `landing/public/fonts/`, declare the `@font-face` in the landing's global CSS, and repoint `--font-brand` at it.
-- Dark theme default (`--gray-0` background, `--gray-800` text). Light theme optional on the landing (toggle); the SPA can stay dark-only for the alpha.
-- Consultant photo (§consultant photo): optional and admin-uploaded (Settings → Consultant photo), never a repo asset. When the API serves one, the landing reveals a 56 px gradient-ringed portrait with the consultant's name under the hero call to action (the note becomes its caption) and a 48 px face on the Direct quote card in place of the pen glyph; without one, both spots render as before.
+- Dark theme default (`--gray-0` background, `--gray-800` text). The landing's light theme is a tokens flip (`html[data-theme='light']` inverts the navy scale and darkens the accent ink `--speed-ink`), enabled per instance by `theme.mode` in site.yml (`dark` | `light` | `toggle` - toggle adds a header switch remembered in localStorage); the SPA stays dark-only for the alpha.
+- Consultant photo (§consultant photo): the portrait is the hero visual (gradient-framed square, name + first role as caption) and the 48 px face on the Direct quote card in place of the pen glyph. It comes from a committed `public/` asset named in `profile.hero.portrait` and/or the admin upload (Settings → Consultant photo), which replaces the committed one at runtime once the API serves it; without either, both spots render photo-less.
+- Landing theme surface (§theme): fonts, colours, radius and the defence-tech ornaments (corner ticks, hero grid) are site.yml tokens emitted as `:root` overrides by `Base.astro`; components never read a brand value directly.
 - CTAs and key highlights use `--gradient-speed` (gradient background on buttons, gradient text-clip on hero keywords). Everything else stays sober navy.
 - Red "alpha" banner: thin bar or badge in the app header, `--alpha-red` background, white text, e.g. "⚠ alpha".
 - Aesthetic: generous whitespace, 1px borders in `--gray-100`, subtle noise/gradient backgrounds, rounded corners ~0.75rem, shadows only on elevation.

@@ -1,13 +1,7 @@
 ---
 import '../styles/global.css';
-import content from '../lib/content';
-import {
-  appUrl,
-  brandColorPrimary,
-  brandColorSecondary,
-  defaultColorPrimary,
-  defaultColorSecondary,
-} from '../lib/site';
+import content, { hasSection } from '../lib/content';
+import { appUrl, defaultColorPrimary, defaultColorSecondary } from '../lib/site';
 
 export interface Props {
   title?: string;
@@ -66,16 +60,75 @@ const serviceJsonLd = {
   })),
 };
 
-// Only override the gradient tokens when the build actually changes a colour;
-// an unconfigured build emits nothing and inherits global.css's default hexes.
+// §theme: site.yml style tokens, emitted as :root overrides. An unset key keeps
+// the stock token from global.css; the env colour stops still apply through
+// the {{BRAND_COLOR_*}} placeholders the content loader fills.
+const theme = content.theme ?? {};
+const paletteVars = (p: Record<string, string | undefined> = {}) => {
+  const map: Record<string, string> = {
+    bg: '--gray-0',
+    bgElevated: '--gray-50',
+    border: '--gray-100',
+    text: '--gray-800',
+    textMuted: '--gray-500',
+    textStrong: '--gray-999',
+    accent: '--accent-light',
+    gradientFrom: '--speed-from',
+    gradientTo: '--speed-to',
+  };
+  const out = Object.entries(p)
+    .filter(([k, v]) => v && map[k] && v !== defaultColorPrimary + '__never')
+    .map(([k, v]) => `${map[k]}:${v};`);
+  if (p.gradientFrom || p.gradientTo) {
+    out.push(
+      `--gradient-speed:linear-gradient(135deg, ${p.gradientFrom ?? defaultColorPrimary}, ${p.gradientTo ?? defaultColorSecondary});`
+    );
+  }
+  return out.join('');
+};
+const fontVars = [
+  theme.fonts?.brand && `--font-brand:'${theme.fonts.brand}', var(--font-system);`,
+  theme.fonts?.body && `--font-system:${theme.fonts.body};`,
+  theme.fonts?.mono && `--font-mono:${theme.fonts.mono};`,
+  theme.radius && `--radius:${theme.radius};`,
+]
+  .filter(Boolean)
+  .join('');
+const darkColors = { ...theme.colors };
+// The stock stops are the env defaults: drop them so an unconfigured build
+// emits nothing and inherits global.css verbatim.
+if (darkColors.gradientFrom === defaultColorPrimary && darkColors.gradientTo === defaultColorSecondary) {
+  delete darkColors.gradientFrom;
+  delete darkColors.gradientTo;
+}
+const rootVars = paletteVars(darkColors) + fontVars;
+const lightVars = paletteVars(theme.light);
 const colorOverride =
-  brandColorPrimary !== defaultColorPrimary || brandColorSecondary !== defaultColorSecondary
-    ? `:root{--speed-from:${brandColorPrimary};--speed-to:${brandColorSecondary};--gradient-speed:linear-gradient(135deg, ${brandColorPrimary}, ${brandColorSecondary});}`
-    : '';
+  (rootVars ? `:root{${rootVars}}` : '') + (lightVars ? `html[data-theme="light"]{${lightVars}}` : '');
+const themeMode = theme.mode ?? 'dark';
+const htmlClass = [
+  theme.ornaments?.ticks === false && 'no-ticks',
+  theme.ornaments?.grid === false && 'no-grid',
+  content.profile.hero.portrait && 'has-consultant-photo',
+]
+  .filter(Boolean)
+  .join(' ');
+
+// §profile: the consultant as a Person entity next to the Organization.
+const personJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Person',
+  name: legal.consultant,
+  jobTitle: [content.profile.hero.headline, content.profile.hero.accent].filter(Boolean).join(' '),
+  url: site,
+  image: content.profile.hero.portrait ? new URL(content.profile.hero.portrait, site).href : undefined,
+  worksFor: { '@type': 'Organization', name: seo.orgName, url: site },
+  sameAs: content.profile.socials.map((s) => s.href),
+};
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" class={htmlClass} data-theme={themeMode === 'light' ? 'light' : undefined}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -106,6 +159,7 @@ const colorOverride =
 
     <script type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
     <script type="application/ld+json" set:html={JSON.stringify(serviceJsonLd)} />
+    {hasSection('hero') && <script type="application/ld+json" set:html={JSON.stringify(personJsonLd)} />}
     {colorOverride && <style is:inline set:html={colorOverride} />}
   </head>
   <body>
@@ -114,6 +168,18 @@ const colorOverride =
       // never hide content for no-JS visitors or crawlers.
       document.documentElement.classList.add('js');
     </script>
+    {
+      themeMode === 'toggle' && (
+        <script is:inline>
+          // §theme toggle: the visitor's choice is remembered per browser and
+          // applied before first paint so the page never flashes the other theme.
+          try {
+            const t = localStorage.getItem('theme');
+            if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+          } catch (e) {}
+        </script>
+      )
+    }
     <slot />
     <script define:vars={{ siteHost, appHost, appUrl }}>
       // Repoint the canonical app links at the domain this page is actually
@@ -208,20 +274,22 @@ const colorOverride =
       })();
 
       // §consultant photo: the admin's portrait (Admin Settings -> Consultant
-      // photo) is served by the API, never baked into this static build. Every
-      // photo slot starts hidden; the first successful load flips one class on
-      // <html> and the slots (hero signature, Direct quote face) appear. A 404
-      // (no photo yet), a network error or a blocked host leaves the page as built.
+      // photo) is served by the API, never baked into this static build. The
+      // slots may already show a committed portrait (site.yml profile.hero.
+      // portrait); the API photo is probed off-DOM and swapped in only once it
+      // has loaded, so a 404 (no photo yet), a network error or a blocked host
+      // leaves the page exactly as built.
       (() => {
         const slots = document.querySelectorAll('img[data-consultant-photo-img]');
         if (!slots.length) return;
-        const src = apiOrigin() + '/api/meta/consultant-photo';
-        slots.forEach((img) => {
-          img.addEventListener('load', () => {
-            document.documentElement.classList.add('has-consultant-photo');
+        const probe = new Image();
+        probe.addEventListener('load', () => {
+          slots.forEach((img) => {
+            img.src = probe.src;
           });
-          img.src = src;
+          document.documentElement.classList.add('has-consultant-photo');
         });
+        probe.src = apiOrigin() + '/api/meta/consultant-photo';
       })();
     </script>
   </body>
