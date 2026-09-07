@@ -134,6 +134,25 @@ export default function AdminSettings() {
 
         <div className="between" style={{ alignItems: "flex-start" }}>
           <div style={{ paddingRight: "1rem" }}>
+            <strong>Disable document attachments in chat</strong>
+            <div className="muted small">
+              Refuses new document uploads (PDF, Word, Markdown, HTML, text) on every project, stops
+              the model from reading documents already attached, and stages none into dev
+              sandboxes. Already-sent documents stay downloadable. Images are governed by the
+              model&apos;s image support, not by this switch.
+            </div>
+          </div>
+          <Toggle
+            checked={settings.chat_documents_disabled}
+            disabled={busy !== null}
+            onChange={(v) => update({ chat_documents_disabled: v }, "documents")}
+          />
+        </div>
+
+        <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "1rem 0" }} />
+
+        <div className="between" style={{ alignItems: "flex-start" }}>
+          <div style={{ paddingRight: "1rem" }}>
             <strong>Pause chat deposits</strong>
             <div className="muted small">
               Stops new "Just chat with me" projects. Chat is opt-in and starts paused: enabling it

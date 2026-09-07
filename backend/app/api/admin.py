@@ -20,9 +20,9 @@ from app.schemas.schemas import (
     ProjectPatchIn, QuoteCancelIn, QuoteCreateIn, QuoteIn, QuotePatchIn, StatusIn,
 )
 from app.services import (
-    app_settings, brand, consultant_photo, dev_concurrency, dev_harness, egress,
-    hub_events, model_config, project_defaults, routines as routines_svc,
-    speciality as speciality_svc, stripe_svc, vision,
+    app_settings, brand, consultant_photo, dev_concurrency, dev_harness,
+    documents as documents_svc, egress, hub_events, model_config, project_defaults,
+    routines as routines_svc, speciality as speciality_svc, stripe_svc, vision,
 )
 from app.services.pricing import load_static
 from app.services.lifecycle import TransitionError, transition_async
@@ -99,6 +99,8 @@ async def _settings_out(db: AsyncSession) -> dict:
         db, vision.DEFAULT_MODEL_IMAGES_KEY)
     out["routines_disabled"] = await app_settings.get_flag(
         db, routines_svc.ROUTINES_DISABLED)
+    out["chat_documents_disabled"] = await app_settings.get_flag(
+        db, documents_svc.DISABLED_KEY)
     out["default_model"] = settings.openai_model
     # §14.5 caps: the instance defaults behind the per-project overrides, so the
     # project card can show the number a blank field inherits instead of the
@@ -147,6 +149,11 @@ async def update_settings(body: AppSettingsIn, db: AsyncSession = Depends(get_db
         # customer write, so flipping it takes effect without a deploy.
         await app_settings.set_flag(db, routines_svc.ROUTINES_DISABLED,
                                     body.routines_disabled)
+    if body.chat_documents_disabled is not None:
+        # §chat documents switch: read on every upload, every answer and every
+        # dispatch, so it takes effect without a deploy or a restart.
+        await app_settings.set_flag(db, documents_svc.DISABLED_KEY,
+                                    body.chat_documents_disabled)
     # §dev harness: validate the pair together - a default outside the allowed set
     # would resolve back to the built-in default and read as the setting being
     # ignored. Both are checked against the list being written, not the stored one.

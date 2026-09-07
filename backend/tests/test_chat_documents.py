@@ -308,3 +308,80 @@ def test_a_message_without_documents_is_untouched(seeded):
         assert tasks._document_blocks(db, [m]) == {}
         assert tasks._message_content(db, m, allow_images=True) == "plain ask"
         db.rollback()
+
+
+# ------------------------------------------------------------ the admin switch
+
+@pytest.fixture
+def documents_off():
+    """§chat documents switch: the instance kill switch, set the way the admin
+    Settings page sets it (an AppSetting flag), cleared afterwards."""
+    with SyncSession() as db:
+        db.merge(AppSetting(key=documents.DISABLED_KEY, value=True))
+        db.commit()
+    try:
+        yield
+    finally:
+        with SyncSession() as db:
+            db.execute(delete(AppSetting).where(AppSetting.key == documents.DISABLED_KEY))
+            db.commit()
+
+
+def test_the_switch_is_on_by_default_and_public(client):
+    assert client.get("/api/settings").json()["chat_documents_enabled"] is True
+
+
+def test_switched_off_uploads_are_refused_with_the_reason(client, seeded, documents_off):
+    _, _, pid, _ = seeded
+    assert client.get("/api/settings").json()["chat_documents_enabled"] is False
+    r = _upload(client, pid, "notes.md", b"# notes", "text/markdown")
+    assert r.status_code == 409
+    assert "switched off" in r.json()["detail"]
+
+
+def test_switched_off_the_model_reads_nothing_and_the_sandbox_gets_nothing(seeded, documents_off,
+                                                                           tmp_path):
+    """Already-attached documents stay (downloadable) but stop reaching the
+    model and the sandbox - the switch governs the feature, not the history."""
+    from app.workers import tasks
+
+    _, _, pid, _ = seeded
+    with SyncSession() as db:
+        m = _msg_with_doc(db, pid, "build this", "# Spec")
+        assert tasks._document_blocks(db, [m]) == {}
+        assert tasks._message_content(db, m, allow_images=False) == "build this"
+        db.rollback()
+        project = db.get(Project, pid)
+        assert tasks._stage_chat_documents(db, project, tmp_path, None) == []
+        assert not (tmp_path / "documents.json").exists()
+
+
+def test_the_admin_switch_round_trips_through_settings(seeded):
+    """PUT /admin/settings stores it, GET /admin/settings and the public
+    settings read it back - the same row the upload route checks."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    from app.core.db import engine
+    from app.main import app
+    from app.core.config import settings as cfg
+
+    asyncio.run(engine.dispose())
+    with TestClient(app) as admin:
+        admin.get("/api/auth/csrf")
+        tok = admin.cookies.get("csrf_token") or admin.get("/api/auth/csrf").json()["csrf_token"]
+        admin.headers.update({"X-CSRF-Token": tok})
+        r = admin.post("/api/auth/login", json={"email": cfg.admin_email,
+                                                 "password": cfg.admin_password})
+        assert r.status_code == 200, r.text
+        try:
+            r = admin.put("/api/admin/settings", json={"chat_documents_disabled": True})
+            assert r.status_code == 200, r.text
+            assert r.json()["chat_documents_disabled"] is True
+            assert admin.get("/api/admin/settings").json()["chat_documents_disabled"] is True
+            assert admin.get("/api/settings").json()["chat_documents_enabled"] is False
+        finally:
+            r = admin.put("/api/admin/settings", json={"chat_documents_disabled": False})
+            assert r.status_code == 200, r.text
+        assert admin.get("/api/settings").json()["chat_documents_enabled"] is True

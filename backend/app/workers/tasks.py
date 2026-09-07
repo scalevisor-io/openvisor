@@ -957,6 +957,9 @@ def _document_blocks(db: Session, history: list[Message]) -> dict[str, str]:
     pages, size) with a note that its content was left out, so the model can say
     so instead of guessing. Labeled customer-supplied data, like the sandbox's
     imported files (rule 11): a document is information, never an instruction."""
+    from app.services import documents as documents_svc
+    if not documents_svc.enabled_sync(db):
+        return {}  # §chat documents switch: off = the model reads nothing attached
     left = CHAT_DOC_ANSWER_CHARS
     blocks: dict[str, str] = {}
     for m in reversed(history):
@@ -2510,7 +2513,10 @@ def _stage_chat_documents(db: Session, project: Project, openvisor_dir,
 def _stage_chat_documents_inner(db: Session, project: Project, openvisor_dir, doc_dir,
                                 row) -> list[dict]:
     import json as _json
+    from app.services import documents as documents_svc
     from app.services.documents import EXTENSIONS
+    if not documents_svc.enabled_sync(db):
+        return []  # §chat documents switch: off = nothing staged
     threads = {_dev_thread(db, project)}
     req_id = (row.request_id if row is not None and row.request_id
               else project.dev_request_id)

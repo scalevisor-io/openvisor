@@ -47,6 +47,9 @@ async def upload_documents(files: list[UploadFile],
                            db: AsyncSession = Depends(get_db)):
     """Upload documents for the next chat message. Returns ids to pass as
     `document_ids` when posting it."""
+    if not await documents.enabled_async(db):
+        # 409 like the image gate: nothing is wrong with the caller's rights.
+        raise HTTPException(409, documents.DISABLED_REASON)
     if not files:
         raise HTTPException(400, "No documents provided")
     if len(files) > MAX_PER_MESSAGE:

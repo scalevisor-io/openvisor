@@ -27,6 +27,27 @@ from html.parser import HTMLParser
 from pathlib import PurePosixPath
 from xml.etree import ElementTree
 
+# §chat documents switch: one admin-level kill switch for the whole feature
+# (upload, the model reading attached text, sandbox staging), stored like the
+# routines switch as an AppSetting flag - absent means ON. Two readers, async for
+# the API and sync for the workers, so the composer, the upload route and the
+# answer paths can never disagree about whether documents are on.
+DISABLED_KEY = "chat_documents_disabled"
+DISABLED_REASON = ("Document attachments are switched off on this instance - an admin can "
+                   "enable them under Settings.")
+
+
+async def enabled_async(db) -> bool:
+    from app.services import app_settings
+    return not await app_settings.get_flag(db, DISABLED_KEY)
+
+
+def enabled_sync(db) -> bool:
+    from app.models import AppSetting
+    row = db.get(AppSetting, DISABLED_KEY)
+    return not (row is not None and bool(row.value))
+
+
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 HTML = "text/html"

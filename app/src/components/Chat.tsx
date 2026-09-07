@@ -181,6 +181,10 @@ export default function Chat({
 }) {
   const { settings } = useAuth();
   const consultant = settings?.consultant_first_name ?? "Consultant";
+  // §chat documents switch: advisory - the upload route re-checks it. Absent
+  // (an older API) reads as on, like the server's missing-row default.
+  const docsEnabled = settings?.chat_documents_enabled !== false;
+  const canAttach = docsEnabled || !!imageSupport?.enabled;
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState("");
@@ -312,7 +316,9 @@ export default function Chat({
         setError(err instanceof Error ? err.message : "Could not attach the image.");
       }
     }
-    if (docs.length) {
+    if (docs.length && !docsEnabled) {
+      setError("Document attachments are switched off on this instance.");
+    } else if (docs.length) {
       try {
         const up = await chatDocumentApi.upload(
           projectId, docs.slice(0, MAX_DOCUMENTS - pendingDocs.length));
@@ -568,8 +574,9 @@ export default function Chat({
       <form
         className="chat-composer"
         onSubmit={send}
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={(e) => canAttach && e.preventDefault()}
         onDrop={(e) => {
+          if (!canAttach) return;
           e.preventDefault();
           attach([...e.dataTransfer.files]);
         }}
@@ -600,15 +607,17 @@ export default function Chat({
           </div>
         )}
         <textarea
-          placeholder={imageSupport?.enabled
-            ? "Write a message… (paste or drop a document or an image)"
-            : "Write a message… (paste or drop a document)"}
+          placeholder={!canAttach ? "Write a message…"
+            : imageSupport?.enabled && docsEnabled
+              ? "Write a message… (paste or drop a document or an image)"
+              : docsEnabled ? "Write a message… (paste or drop a document)"
+                            : "Write a message… (paste or drop an image)"}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           style={{ minHeight: 64 }}
           onPaste={(e) => {
             const files = [...e.clipboardData.files];
-            if (files.length) attach(files);
+            if (files.length && canAttach) attach(files);
           }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") send(e);
@@ -628,22 +637,31 @@ export default function Chat({
             <span className="tiny faint">⌘/Ctrl + Enter to send</span>
           )}
           <div className="row gap-sm">
-            {/* Documents attach on every project (the model reads their text);
-                images only when the model reads pixels. The tooltip says which,
-                and why, so the capability is discoverable instead of mysterious. */}
+            {/* Documents attach wherever the instance switch is on (the model
+                reads their text); images only when the model reads pixels. The
+                button is always PRESENT - disabled with the reason when neither
+                applies - so the capability is discoverable instead of mysterious. */}
             <label
-              className="btn btn-sm btn-ghost"
-              title={imageSupport?.enabled
-                ? "Attach a document (PDF, Word, Markdown, HTML, text) or an image - or paste / drop one"
-                : "Attach a document (PDF, Word, Markdown, HTML, text) - or paste / drop one. "
-                  + (imageSupport?.reason ?? "Images need a model that reads them.")}
+              className={`btn btn-sm btn-ghost${canAttach ? "" : " is-disabled"}`}
+              title={!canAttach
+                ? "Attachments are off: documents are switched off on this instance, and "
+                  + (imageSupport?.reason ?? "images need a model that reads them.")
+                : docsEnabled && imageSupport?.enabled
+                  ? "Attach a document (PDF, Word, Markdown, HTML, text) or an image - or paste / drop one"
+                  : docsEnabled
+                    ? "Attach a document (PDF, Word, Markdown, HTML, text) - or paste / drop one. "
+                      + (imageSupport?.reason ?? "Images need a model that reads them.")
+                    : "Attach an image (or paste / drop one). Documents are switched off on this instance."}
             >
               <input
                 type="file"
-                accept={imageSupport?.enabled ? `${DOCUMENT_ACCEPT},${IMAGE_ACCEPT}` : DOCUMENT_ACCEPT}
+                accept={[docsEnabled ? DOCUMENT_ACCEPT : "", imageSupport?.enabled ? IMAGE_ACCEPT : ""]
+                  .filter(Boolean).join(",")}
                 multiple
                 hidden
-                disabled={pendingDocs.length >= MAX_DOCUMENTS && pending.length >= MAX_IMAGES}
+                disabled={!canAttach
+                  || ((!docsEnabled || pendingDocs.length >= MAX_DOCUMENTS)
+                      && (!imageSupport?.enabled || pending.length >= MAX_IMAGES))}
                 onChange={(e) => {
                   attach([...(e.target.files ?? [])]);
                   e.target.value = "";

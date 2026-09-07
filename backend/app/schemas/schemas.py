@@ -288,6 +288,10 @@ class AppSettingsIn(BaseModel):
     # §routines: instance kill switch for scheduled saved prompts (the
     # feature is on by default; this is what a future paid tier gates).
     routines_disabled: bool | None = None
+    # §chat documents: instance kill switch for document attachments in chat
+    # (on by default). Off = uploads refused, attached text no longer read by
+    # the model, nothing staged into sandboxes; existing chips keep downloading.
+    chat_documents_disabled: bool | None = None
     # §chat images: the instance-default model has no ModelEndpoint row to carry a
     # probe verdict, so the admin declares it here (saved endpoints are declared or
     # probed on the Model configuration page instead).
