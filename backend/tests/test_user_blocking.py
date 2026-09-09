@@ -122,7 +122,8 @@ def test_admin_toggles_blocking_and_admins_are_untouchable(client, world):
     uid = world["customer_id"]
 
     r = client.patch(f"/api/admin/users/{uid}", json={"blocked": True}, headers=h)
-    assert r.status_code == 200 and r.json() == {"id": uid, "blocked": True}
+    assert r.status_code == 200
+    assert r.json() == {"id": uid, "blocked": True, "email_verified": True}
     listed = {u["id"]: u for u in client.get("/api/admin/users", headers=h).json()}
     assert listed[uid]["blocked"] is True
 
@@ -138,6 +139,26 @@ def test_admin_toggles_blocking_and_admins_are_untouchable(client, world):
     assert client.patch(f"/api/admin/users/{uuid.uuid4()}",
                         json={"blocked": True}, headers=h).status_code == 404
 
-    r = client.patch(f"/api/admin/users/{uid}", json={"blocked": False}, headers=h)
-    assert r.status_code == 200 and r.json()["blocked"] is False
-    _auth(client, world["customer"], world["pwd"])  # login works again
+
+def test_admin_verifies_an_email_by_hand(client, world):
+    """The manual stand-in for the verification link: an unverified customer can
+    sign in but every require_verified route (project creation, MCP tokens)
+    answers 403 email_not_verified until an admin flips the flag."""
+    uid = world["customer_id"]
+    with SyncSession() as db:
+        db.get(User, uid).email_verified = False
+        db.commit()
+    hc, _ = _auth(client, world["customer"], world["pwd"])
+    r = client.get("/api/mcp/tokens", headers=hc)
+    assert r.status_code == 403 and r.json()["detail"] == "email_not_verified"
+
+    h, _ = _auth(client, world["admin"], world["pwd"])
+    r = client.patch(f"/api/admin/users/{uid}", json={"email_verified": True}, headers=h)
+    assert r.status_code == 200
+    assert r.json() == {"id": uid, "blocked": False, "email_verified": True}
+    listed = {u["id"]: u for u in client.get("/api/admin/users", headers=h).json()}
+    assert listed[uid]["email_verified"] is True
+
+    # the verified customer passes the gate like one who clicked the link
+    hc, _ = _auth(client, world["customer"], world["pwd"])
+    assert client.get("/api/mcp/tokens", headers=hc).status_code == 200

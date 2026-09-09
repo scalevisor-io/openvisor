@@ -704,7 +704,12 @@ async def patch_user(user_id: str, body: AdminUserPatchIn,
                      db: AsyncSession = Depends(get_db)):
     """§user blocking: flip a user's lockout. Blocking refuses their login with
     an explicit message and kills existing sessions and API tokens on their next
-    request (deps.get_current_user / _resolve_api_token / the MCP server)."""
+    request (deps.get_current_user / _resolve_api_token / the MCP server).
+
+    `email_verified` lets an admin stand in for the verification link: it sets
+    exactly what POST /auth/verify-email sets, nothing more, so a customer whose
+    mail bounced or landed in spam clears require_verified (project creation,
+    MCP tokens) without a resend round-trip."""
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(404, "User not found")
@@ -712,5 +717,8 @@ async def patch_user(user_id: str, body: AdminUserPatchIn,
         if user.role == "admin":
             raise HTTPException(403, "Admin accounts cannot be blocked")
         user.blocked = body.blocked
+    if body.email_verified is not None:
+        user.email_verified = body.email_verified
     await db.commit()
-    return {"id": user.id, "blocked": user.blocked}
+    return {"id": user.id, "blocked": user.blocked,
+            "email_verified": user.email_verified}

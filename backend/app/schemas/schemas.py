@@ -602,9 +602,12 @@ class McpDelegateIn(BaseModel):
 
 
 class AdminUserPatchIn(BaseModel):
-    """§user blocking: the only admin-editable user field so far. None = leave
-    unchanged, so the shape can grow more fields without breaking callers."""
+    """The admin-editable user fields. None = leave unchanged, so the shape can
+    grow more fields without breaking callers. `blocked` is §user blocking;
+    `email_verified` is the manual stand-in for the verification link (a
+    customer whose mail never arrived, or who wrote in from another address)."""
     blocked: bool | None = None
+    email_verified: bool | None = None
 
 
 class McpConsultIn(BaseModel):

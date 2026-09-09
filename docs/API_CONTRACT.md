@@ -370,7 +370,7 @@ Event outbox (spoke→hub): every status/message/evaluation/demo event on a `sou
 - `POST /admin/orgs/{org_id}/credits` `{amount, reason}` → `{credit_balance}` (manual adjust/topup)
 - `POST /admin/hub-token` → `{id, name, scope, token}` - mint a hub-scoped API token (plaintext once) authenticating a central hub to `/api/hub/*`. A hub token can read usage and grant credits but never bills a knowledge query.
 - `GET /admin/users` → `[{id, email, role, org_id, org_name, email_verified, blocked, created_at}]`
-- `PATCH /admin/users/{id}` `{blocked?}` → `{id, blocked}` - §user blocking: flip a user's lockout (applied only when the field is sent). 404 unknown user; 403 `"Admin accounts cannot be blocked"` for admin targets.
+- `PATCH /admin/users/{id}` `{blocked?, email_verified?}` → `{id, blocked, email_verified}` - each field is applied only when sent. `blocked` is §user blocking: flip a user's lockout (403 `"Admin accounts cannot be blocked"` for admin targets). `email_verified` is the manual stand-in for the verification link: it sets exactly what `POST /auth/verify-email` sets, so an admin can clear `require_verified` (403 `email_not_verified` on project creation and MCP tokens) for a customer whose mail never arrived. 404 unknown user.
 
 ## Notes for the SPA
 
