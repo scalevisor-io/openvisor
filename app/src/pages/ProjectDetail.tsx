@@ -386,6 +386,9 @@ export default function ProjectDetail() {
     // finished by hand reads neutral instead of thanking them for a decision
     // they never made.
     approvedByCustomer: approvedByCustomer(history),
+    // §20 review gate: a blocked project in development has no build coming -
+    // the panel says so instead of promising one that is never dispatched.
+    devBlocked: project.block_auto_development,
     consultant,
     runCounts,
   });
