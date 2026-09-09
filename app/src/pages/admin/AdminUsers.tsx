@@ -18,6 +18,23 @@ export default function AdminUsers() {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [blockBusyId, setBlockBusyId] = useState<string | null>(null);
+  const [verifyBusyId, setVerifyBusyId] = useState<string | null>(null);
+
+  // Manual stand-in for the verification link: sets exactly what the link sets.
+  async function verify(u: AdminUser) {
+    setVerifyBusyId(u.id);
+    try {
+      const res = await adminApi.patchUser(u.id, { email_verified: true });
+      setUsers((prev) =>
+        (prev ?? []).map((x) => (x.id === u.id ? { ...x, email_verified: res.email_verified } : x)),
+      );
+      toast.push(`${u.email} verified - they can create projects now`, "ok");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Failed", "err");
+    } finally {
+      setVerifyBusyId(null);
+    }
+  }
 
   // §user blocking: flip the lockout; the API refuses admin targets (403).
   async function toggleBlocked(u: AdminUser) {
@@ -111,7 +128,17 @@ export default function AdminUsers() {
                         {u.email_verified ? (
                           <Badge label="verified" kind="finished" />
                         ) : (
-                          <Badge label="unverified" kind="canceled" />
+                          <div className="row gap-sm">
+                            <Badge label="unverified" kind="canceled" />
+                            <button
+                              className="btn btn-sm"
+                              disabled={verifyBusyId === u.id}
+                              title="Mark the email verified without the link, so this user can create projects"
+                              onClick={() => verify(u)}
+                            >
+                              {verifyBusyId === u.id ? <Spinner /> : "Verify"}
+                            </button>
+                          </div>
                         )}
                       </td>
                       <td>
