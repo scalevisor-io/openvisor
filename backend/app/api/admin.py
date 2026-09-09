@@ -291,14 +291,22 @@ async def set_status(project_id: str, body: StatusIn, db: AsyncSession = Depends
     # entering development kicks the dev pipeline (unless blocked); §parallel-
     # builds MR1: through the slot chokepoint - a build already in flight means
     # the status change stands alone (previously this dispatched unguarded).
-    if body.status == "development" and not project.block_auto_development:
-        try:
-            run_id = await run_in_threadpool(dev_concurrency.acquire_for_project,
-                                             project.id)
-            celery.send_task("app.workers.tasks.run_development", args=[project.id],
-                             kwargs={"run_id": run_id})
-        except dev_concurrency.SlotRefused as exc:
-            log.info("admin status kick skipped for %s: %s", project.id, exc)
+    if body.status == "development":
+        if project.block_auto_development:
+            # §20 review gate: the status move stands, the build does not start,
+            # and only clearing the flag starts one. This branch was silent, so
+            # the sole trace of a project parked in development with nothing
+            # dispatched was the ABSENCE of a task - undiagnosable from the logs.
+            log.warning("admin status kick skipped for %s: automatic development "
+                        "is blocked pending authorization", project.id)
+        else:
+            try:
+                run_id = await run_in_threadpool(dev_concurrency.acquire_for_project,
+                                                 project.id)
+                celery.send_task("app.workers.tasks.run_development", args=[project.id],
+                                 kwargs={"run_id": run_id})
+            except dev_concurrency.SlotRefused as exc:
+                log.info("admin status kick skipped for %s: %s", project.id, exc)
     # §8: payment_due may auto-advance if the balance already covers the estimate
     if body.status == "payment_due":
         celery.send_task("app.workers.tasks.maybe_start_development", args=[project.id])

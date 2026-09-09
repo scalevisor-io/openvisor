@@ -73,6 +73,17 @@ export interface ProjectNowInput {
    * and stops the copy claiming branch progress that a crash never produced.
    */
   devFault?: string | null;
+  /**
+   * §20 review gate: automatic development is blocked pending the consultant's
+   * authorization (`Project.block_auto_development`). The flag survives the move
+   * INTO development - the admin status route dispatches nothing while it is set
+   * - so a project can sit in `development` with no run and none coming. Without
+   * this the panel reads "Development is queued. The build starts in a moment."
+   * to a customer for whom it never will (prod: a `review_required` evaluation
+   * blocked the project, the admin priced it and advanced it by hand, and the
+   * initial-build thread promised an imminent build for as long as anyone looked).
+   */
+  devBlocked?: boolean;
 }
 
 // The aggregate headline, or null when the singular copy should stand.
@@ -302,6 +313,19 @@ export function projectNow(i: ProjectNowInput): ProjectNow {
           primary: A("resume", "Resume development"),
           secondary: [],
         });
+      }
+      // §20 review gate: nothing is queued and nothing is watching while the
+      // flag is set - the dispatch is SKIPPED, not deferred, and only a human
+      // clearing the flag starts anything. Read before the auto_dev branch so a
+      // blocked sentinel stops claiming it is watching, and without the
+      // escalation: the consultant already holds the ball here.
+      if (i.devBlocked) {
+        return {
+          headline: "Development is on hold.",
+          body: `Automatic development is blocked pending review - ${consultant} has to authorize it before any build starts.`,
+          owner: "consultant",
+          secondary: [],
+        };
       }
       if (kind === "auto_dev") {
         return withEscalation({
