@@ -84,11 +84,11 @@ class Settings(BaseSettings):
     # Fail-safe caps on a single sandboxed dev run (§14.5). A run that exceeds
     # the wall-clock timeout is force-killed and reported as a failure (logs kept,
     # customer can resume); the iteration cap bounds token consumption per run.
-    dev_run_timeout_minutes: int = 20
+    dev_run_timeout_minutes: int = 60
     # Instance DEFAULT agent-iteration cap; Project.dev_max_iterations overrides
     # it per project (admin-set). Legacy env name DEV_MAX_ITERATIONS still read.
     dev_max_iterations_default: int = Field(
-        40, validation_alias=AliasChoices("DEV_MAX_ITERATIONS_DEFAULT", "DEV_MAX_ITERATIONS"))
+        170, validation_alias=AliasChoices("DEV_MAX_ITERATIONS_DEFAULT", "DEV_MAX_ITERATIONS"))
     # Third fail-safe on the same run: a provider-side spend ceiling in USD, handed
     # to the driver as DEV_RUN_MAX_USD. Only the Claude driver can enforce it (the
     # Agent SDK's max_budget_usd - the OpenAI-compatible API has no equivalent, so
