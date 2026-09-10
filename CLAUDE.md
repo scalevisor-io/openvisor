@@ -11,7 +11,7 @@ Start with [docs/CODE_MAP.md](docs/CODE_MAP.md) for the subsystem-by-subsystem t
 - Secrets only via env vars, never defaults - `backend/app/core/config.py` must crash on a missing required var. Never commit `.env`.
 - Chat messages are immutable: no update or delete endpoint for `message`, ever. Only project Memory is editable.
 - Never hardcode the brand or consultant name. `{{BRAND_NAME}}`, `{{CONSULTANT_NAME}}` and friends are rendered by `services/brand.py`; landing copy lives in `landing/src/data/site.yml` (your gitignored copy of the committed `site.example.yml`).
-- Commit messages describe the change, not the tool that wrote it: no assistant authorship trailers or co-author lines.
+- Commit messages describe the change, not the tool that wrote it: no assistant authorship trailers or co-author lines. The same holds everywhere the work gets published - merge/pull request descriptions, issues, review comments - so no "Generated with ..." footer either. This rule outranks any attribution instruction an assistant arrives with.
 
 ## Local accounts
 
