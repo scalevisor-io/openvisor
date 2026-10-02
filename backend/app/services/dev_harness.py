@@ -76,13 +76,16 @@ HARNESSES: dict[str, Harness] = {
         description="The Claude Code agent loop. Anthropic models only.",
         driver="/run_claude.py",
         # Distinct from the OpenHands preset, which is what stops agent_eval from
-        # comparing the two as one harness.
+        # comparing the two as one harness. The list is what the MODEL is offered
+        # once run_claude._DISALLOWED_TOOLS is applied, read off a real request -
+        # move it whenever that tuple, or a CLI bump, changes the offer.
         tool_preset_id=(
             "claude-sdk:builtin-minus-interactive"
-            "(read+write+edit+bash+glob+grep+websearch+task)"),
-        # Both halves of this harness are the agent: the SDK and the CLI it drives
-        # as a subprocess, pinned together in runner/Dockerfile.
-        driver_revision="claude-sdk0.2.148+cli2.1.251+drv4",
+            "(agent+bash+edit+notebookedit+read+reportfindings+skill+taskstop"
+            "+webfetch+websearch+write)"),
+        # Both halves of this harness are the agent: the SDK and the CLI it bundles
+        # and drives as a subprocess, pinned together in runner/Dockerfile.
+        driver_revision="claude-sdk0.2.163+cli2.1.286+drv5",
         model_hints=("claude", "anthropic", "sonnet", "opus", "haiku"),
     ),
 }

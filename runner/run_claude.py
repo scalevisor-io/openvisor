@@ -17,8 +17,9 @@ them:
   plan.md           written by the AGENT under PLAN_ONLY - task.md asks for it and
                     the entrypoint discards the working tree afterwards either way
 
-The Agent SDK runs the `claude` CLI as a subprocess, so the image needs BOTH the
-npm CLI and this Python package (see runner/Dockerfile).
+The Agent SDK runs the `claude` CLI as a subprocess - the copy bundled in its own
+wheel, which it prefers over any `claude` on PATH. runner/Dockerfile pins the two
+together and fails the build when they disagree.
 """
 import asyncio
 import json
@@ -165,7 +166,7 @@ def _transport(name: str, cfg) -> dict | None:
     `command`, and the CLI SKIPS it. Silently, from the build's side: the session
     opens with an empty tool list and the agent works on without the browser,
     Context7, the connected KBs or the §Tools action servers. Verified against
-    claude-code 2.1.251, which answers an untyped entry with `url_missing_type` and
+    claude-code 2.1.286, which answers an untyped entry with `url_missing_type` and
     an empty `mcp_servers`, and registers the identical entry once `type` is there.
 
     Every server the platform stages today is HTTP; `command` is mapped anyway so a
@@ -202,6 +203,35 @@ def _mcp_servers() -> dict:
         print(f"driver: mcp config unreadable ({exc}); running without MCP", file=sys.stderr)
         return {}
 
+
+# Tools that only mean something inside an interactive Claude Code session. Each
+# was measured against the pinned CLI with a scripted model, not assumed:
+#  - the wake-up family promises a turn that cannot happen here (see
+#    _HEADLESS_NOTE), or addresses agents and people this run has no channel to;
+#  - Workflow fans out to a swarm of agents on a customer's bill;
+#  - EnterWorktree moves the session into /workspace/.claude/worktrees/<name> and
+#    then REFUSES edits to /workspace itself, while the entrypoint publishes
+#    /workspace alone - the build would ship without the agent's work;
+#  - plan mode takes approvals away from `_approve` and hands them to the CLI's
+#    own classifier, a model call per action that blocks every command when the
+#    gateway cannot answer it, and ExitPlanMode's "user approval" would be our own
+#    rubber stamp. The platform's plan gate is PLAN_ONLY, not this;
+#  - AskUserQuestion has nobody to ask and returns "The user did not answer".
+# Changing this list CHANGES THE TOOL SET: move dev_harness's tool_preset_id with it.
+_DISALLOWED_TOOLS = (
+    "ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor",
+    "PushNotification", "SendMessage", "ListAgents", "DesignSync", "Workflow",
+    "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode",
+    "AskUserQuestion",
+)
+
+# §git identity: a build's commits and PR/MR ship under the project's configured
+# author ALONE. The CLI otherwise opens the conversation with a reminder to end
+# every commit with a Co-Authored-By trailer and every PR description with a
+# "Generated with" footer; empty strings switch both off at the source, so the
+# entrypoint's trailer scrub and the worker's are the backstop rather than the
+# mechanism. Passed inline (`--settings`), never read from the customer's repo.
+_CLI_SETTINGS = {"attribution": {"commit": "", "pr": ""}}
 
 # What this agent loop is, in the agent's own terms. The CLI's default system
 # prompt is written for an INTERACTIVE Claude Code session, where a background
@@ -371,7 +401,7 @@ _TOOL_KINDS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("WebFetch",), "browse", "Reading a page"),
     (("WebSearch",), "browse", "Searching the web"),
     (("TodoWrite", "ExitPlanMode"), "plan", "Updating the work plan"),
-    (("Task",), "action", "Delegating to a subagent"),
+    (("Agent", "Task"), "action", "Delegating to a subagent"),
 )
 
 # Tool inputs that name a target the customer can read without leaking anything a
@@ -467,13 +497,7 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
         model=_model(),
         cwd="/workspace",
         effort=effort if effort in ("low", "medium", "high", "xhigh", "max") else None,
-        # Tools that only mean something inside an interactive Claude Code
-        # session: they either promise a wake-up that cannot happen here (see
-        # _HEADLESS_NOTE), address agents and people this run has no channel to,
-        # or - Workflow - fan out to a swarm of agents on a customer's bill.
-        disallowed_tools=["ScheduleWakeup", "CronCreate", "CronDelete", "CronList",
-                          "PushNotification", "SendMessage", "ListAgents",
-                          "DesignSync", "Workflow"],
+        disallowed_tools=list(_DISALLOWED_TOOLS),
         # Edits are settled by the mode so they never round-trip through the
         # callback; everything else (Bash above all) lands on _approve.
         permission_mode="acceptEdits",
@@ -486,12 +510,25 @@ async def _run(feed, usage: _Usage) -> tuple[bool, int | None]:
         max_turns=max_turns or None,
         mcp_servers=_mcp_servers(),
         env={"BASH_DEFAULT_TIMEOUT_MS": str(cmd_timeout_ms),
-             "BASH_MAX_TIMEOUT_MS": str(cmd_timeout_ms)},
+             "BASH_MAX_TIMEOUT_MS": str(cmd_timeout_ms),
+             # A pinned harness must not be reconfigured from outside. With this
+             # unset the CLI fetches remote feature flags at startup and they
+             # change the agent: measured on 2.1.286, an extra tool (Monitor), a
+             # different Bash description and an extra API beta, on top of a
+             # billed session-title call nobody reads and telemetry to Anthropic
+             # from a build routed through somebody else's gateway.
+             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"},
         # §customer settings are NOT ours to load. /workspace is the customer's
         # repository: letting the SDK read its .claude/ would let a customer repo
         # inject hooks, skills and commands into a build running with our
         # credentials. Explicit empty list, never the ambient default.
         setting_sources=[],
+        settings=json.dumps(_CLI_SETTINGS),
+        # task.md is assembled by the worker from chat, plans and KB text. Left
+        # to its default the CLI treats that as something a person typed at its
+        # prompt: every `@path` in it is read off disk and attached, and a
+        # leading `/` dispatches a slash command.
+        verbatim_prompts=True,
     )
     hit_cap = False
     async for message in query(prompt=_prompt(), options=options):
