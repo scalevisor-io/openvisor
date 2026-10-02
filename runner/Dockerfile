@@ -44,18 +44,27 @@ RUN mkdir -p /usr/local/lib/docker/cli-plugins \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 
 # §dev harness: the claude_sdk driver. The Agent SDK is a Python wrapper that
-# runs the `claude` CLI as a SUBPROCESS, so both halves are required - the npm
-# CLI and the Python package. Node comes from NodeSource because Debian slim's
-# nodejs is too old for the CLI. Placed after the openhands layer so bumping one
-# harness never invalidates the other's cache.
+# runs the `claude` CLI as a SUBPROCESS - and its wheel BUNDLES that CLI, which
+# the SDK prefers over anything on PATH. So the binary a build executes is chosen
+# by CLAUDE_SDK_VERSION alone, and CLAUDE_CLI_VERSION has to name the CLI that
+# SDK release ships (its changelog says which): the checks closing this step fail
+# the build when the two disagree, because dev_harness's driver_revision is built
+# from both pins and would otherwise describe a CLI no build runs. The npm copy
+# is the same version on PATH, the SDK's fallback if a wheel ever ships without
+# its bundle. Node comes from NodeSource because Debian slim's nodejs is too old
+# for the CLI. Placed after the openhands layer so bumping one harness never
+# invalidates the other's cache.
 ARG NODE_MAJOR=22
-ARG CLAUDE_CLI_VERSION=2.1.251
-ARG CLAUDE_SDK_VERSION=0.2.148
+ARG CLAUDE_CLI_VERSION=2.1.286
+ARG CLAUDE_SDK_VERSION=0.2.163
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION} \
-    && uv pip install --system --no-cache claude-agent-sdk==${CLAUDE_SDK_VERSION}
+    && uv pip install --system --no-cache claude-agent-sdk==${CLAUDE_SDK_VERSION} \
+    && bundled="$(python -c 'import claude_agent_sdk, pathlib; print(pathlib.Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude")')" \
+    && "$bundled" --version | grep -qF "${CLAUDE_CLI_VERSION} " \
+    && claude --version | grep -qF "${CLAUDE_CLI_VERSION} "
 
 COPY run_dev.py /run_dev.py
 COPY run_claude.py /run_claude.py

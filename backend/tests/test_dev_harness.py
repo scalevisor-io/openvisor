@@ -493,6 +493,7 @@ def test_the_claude_driver_speaks_the_feed_contract():
         ("WebFetch", {"url": "https://x.test/a"}, "browse", "https://x.test/a"),
         ("TodoWrite", {"todos": []}, "plan", "Updating the work plan"),
         ("Task", {"prompt": "explore"}, "action", "Delegating to a subagent"),
+        ("Agent", {"prompt": "explore"}, "action", "Delegating to a subagent"),
         ("SomeNewTool", {}, "action", "Using SomeNewTool"),
     ]
     # every kind must be one the feed can draw
@@ -575,15 +576,71 @@ def test_the_driver_tells_the_agent_nothing_will_wake_it():
 
 def test_the_driver_refuses_the_interactive_only_tools():
     """A wake-up tool promises a turn that cannot happen; Workflow fans out to a
-    swarm of agents on a customer's bill. Disallowing them CHANGES THE TOOL SET,
-    so tool_preset_id has to move with it or agent_eval aggregates two different
-    agents as one."""
+    swarm of agents on a customer's bill; AskUserQuestion has nobody to ask.
+    Disallowing them CHANGES THE TOOL SET, so tool_preset_id has to move with it
+    or agent_eval aggregates two different agents as one."""
     if not RUN_CLAUDE.exists():
         pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    for tool in ("ScheduleWakeup", "Monitor", "PushNotification", "SendMessage",
+                 "Workflow", "AskUserQuestion"):
+        assert tool in mod._DISALLOWED_TOOLS, tool
+    assert "disallowed_tools=list(_DISALLOWED_TOOLS)" in RUN_CLAUDE.read_text()
+    preset = dev_harness.HARNESSES["claude_sdk"].tool_preset_id
+    assert "minus-interactive" in preset
+    # the preset names what the model is offered, so nothing refused may be in it
+    offered = preset.split("(", 1)[1].rstrip(")").split("+")
+    assert not {t.lower() for t in mod._DISALLOWED_TOOLS} & set(offered)
+
+
+def test_the_driver_keeps_the_agent_in_the_workspace_that_gets_published():
+    """Measured against the pinned CLI with a scripted model: EnterWorktree moves
+    the session into /workspace/.claude/worktrees/<name> and then REFUSES edits to
+    /workspace, while the entrypoint publishes /workspace alone - the branch ships
+    without the agent's work. Plan mode is the other way out of the driver's
+    hands: approvals stop reaching `_approve` and go to the CLI's own classifier,
+    a model call per action that blocks every command when the gateway cannot
+    answer it."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    for tool in ("EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode"):
+        assert tool in mod._DISALLOWED_TOOLS, tool
+
+
+def test_the_driver_ships_under_the_project_identity_alone():
+    """§git identity. The CLI opens the conversation by telling the agent to end
+    commits with `Co-Authored-By: Claude ...` and PR descriptions with a
+    "Generated with Claude Code" footer. The entrypoint scrubs the trailer, but
+    nothing scrubbed the footer out of a PR description - so the instruction is
+    switched off where it is given. Inline, never from the customer's repo."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    mod = _run_claude_module()
+    assert mod._CLI_SETTINGS["attribution"] == {"commit": "", "pr": ""}
     src = RUN_CLAUDE.read_text()
-    for tool in ("ScheduleWakeup", "PushNotification", "SendMessage", "Workflow"):
-        assert f'"{tool}"' in src.split("disallowed_tools=", 1)[1][:400], tool
-    assert "minus-interactive" in dev_harness.HARNESSES["claude_sdk"].tool_preset_id
+    assert "settings=json.dumps(_CLI_SETTINGS)" in src
+    assert "setting_sources=[]" in src
+
+
+def test_the_driver_delivers_the_task_as_written():
+    """task.md is assembled from chat, plans and KB text. Left to its default the
+    CLI treats it as typed at its own prompt: every `@path` in it is read off disk
+    and attached to the first request, and a leading `/` dispatches a command."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    assert "verbatim_prompts=True" in RUN_CLAUDE.read_text()
+
+
+def test_the_driver_is_not_reconfigured_from_outside():
+    """With this switch unset the CLI fetches remote feature flags at startup, and
+    they change the agent - measured on 2.1.286: an extra tool, a different Bash
+    description and an extra API beta, plus a billed session-title call. A harness
+    whose tool set is decided at run time by somebody else's flag service is not
+    the one its fingerprint names."""
+    if not RUN_CLAUDE.exists():
+        pytest.skip("runner source not mounted at /app/runner_src")
+    assert '"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"' in RUN_CLAUDE.read_text()
 
 
 def test_the_driver_honors_the_endpoint_reasoning_effort():
@@ -601,12 +658,16 @@ def test_the_driver_honors_the_endpoint_reasoning_effort():
 
 def test_the_runner_image_pins_both_halves_of_the_claude_harness():
     """The SDK drives the `claude` CLI as a subprocess, so both are the harness.
-    Unpinned, the fingerprint claims a configuration the image no longer has."""
+    Unpinned, the fingerprint claims a configuration the image no longer has. And
+    the SDK wheel BUNDLES the CLI it actually runs, so the CLI pin is only true
+    while it names that bundle - the image build has to check, or bumping the SDK
+    alone silently runs a CLI the fingerprint does not name."""
     if not RUNNER_DOCKERFILE.exists():
         pytest.skip("runner source not mounted at /app/runner_src")
     df = RUNNER_DOCKERFILE.read_text()
     assert "@anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}" in df
     assert "claude-agent-sdk==${CLAUDE_SDK_VERSION}" in df
+    assert '"$bundled" --version | grep -qF "${CLAUDE_CLI_VERSION} "' in df
     revision = dev_harness.HARNESSES["claude_sdk"].driver_revision
     for arg in ("CLAUDE_SDK_VERSION=", "CLAUDE_CLI_VERSION="):
         version = df.split(arg, 1)[1].split("\n", 1)[0].strip()
@@ -779,4 +840,11 @@ def test_driver_revisions_moved_with_the_command_cap():
     agent_eval from averaging a capped build with an uncapped one)."""
     from app.services.agent_eval.harness_version import DRIVER_REVISION
     assert DRIVER_REVISION.endswith("drv3")
-    assert dev_harness.HARNESSES["claude_sdk"].driver_revision.endswith("drv4")
+    assert not dev_harness.HARNESSES["claude_sdk"].driver_revision.endswith("drv3")
+
+
+def test_the_claude_revision_moved_with_the_session_it_now_opens():
+    """drv5: a smaller tool set, no attribution reminder, the task delivered
+    verbatim and no remote flags - every one changes what a build costs or does,
+    so runs before and after must not aggregate."""
+    assert dev_harness.HARNESSES["claude_sdk"].driver_revision.endswith("drv5")
