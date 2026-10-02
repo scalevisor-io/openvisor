@@ -88,6 +88,12 @@ def test_check_push_classifies_the_probe(monkeypatch):
     monkeypatch.setattr(repos, "_probe_push", scripted(128, "ssh: connect to host h port 22: Connection timed out\n"))
     verdict, detail = repos.check_push("git@h:o/r.git", "k", "p")
     assert verdict == "unreachable" and "Connection timed out" in detail
+    # git could not start ssh on OUR side: the remote was never asked, so it refused nothing
+    monkeypatch.setattr(repos, "_probe_push", scripted(128, (
+        "error: cannot fork() for ssh -i /tmp/x/id -o BatchMode=yes: Resource temporarily unavailable\n"
+        "fatal: unable to fork\n")))
+    verdict, detail = repos.check_push("git@h:o/r.git", "k", "p")
+    assert verdict == "error" and "cannot fork()" in detail
     # the probe ref is derived from the caller's id, sanitised
     seen = {}
     monkeypatch.setattr(repos, "_probe_push", lambda uri, repo, ref, env: seen.update(ref=ref) or subprocess.CompletedProcess([], 0, "", ""))
