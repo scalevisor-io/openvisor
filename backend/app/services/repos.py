@@ -222,6 +222,12 @@ def check_ssh(ssh_uri: str, deploy_private_key: str, write: bool = False) -> tup
 PREFLIGHT_REF = "refs/openvisor/preflight"
 _PROBE_TIMEOUT_S = 45
 
+# git failing to START its transport on OUR side: the remote was never asked,
+# so this is no verdict on the key. Prod parked a customer on "the repository
+# refused the push" when the worker itself could not fork ssh.
+_LOCAL_SPAWN_FAILURES = ("cannot fork()", "unable to fork", "cannot spawn",
+                         "resource temporarily unavailable", "cannot allocate memory")
+
 
 def _push_cause(err: str) -> str:
     """The line of a refused push that names the refusal. The forge speaks
@@ -288,6 +294,8 @@ def check_push(ssh_uri: str, deploy_private_key: str, probe: str,
     err = (proc.stderr or "").strip()
     detail = _push_cause(err)
     low = err.lower()
+    if any(sig in low for sig in _LOCAL_SPAWN_FAILURES):
+        return "error", f"Couldn't run the push probe ({detail})."
     if ("could not resolve" in low or "name or service not known" in low
             or "no route to host" in low or "connection refused" in low
             or "connection timed out" in low or "network is unreachable" in low
