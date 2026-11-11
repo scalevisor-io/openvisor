@@ -153,6 +153,18 @@ services:
     networks: [internal]
     restart: unless-stopped
 
+  sidecars-mcp:
+    # The MCP sidecars we write ourselves (sidecars/app.py), one route per
+    # sidecar on one image: today `email` (notification email to approved
+    # addresses, relayed to the api's internal route at API_INTERNAL_URL,
+    # default http://api:8000). Stateless and internal-only - the build's
+    # credential rides each request as Authorization: Bearer. Adding another
+    # sidecar is a module and a mount line, with no service, chart or
+    # NetworkPolicy change here.
+    build: ./sidecars
+    networks: [internal]
+    restart: unless-stopped
+
   donsetch-mcp:
     # The dev agent's web research (§web research): search, page fetch and site
     # crawl from one keyless engine, served over MCP by donsetch/bridge.py. Its

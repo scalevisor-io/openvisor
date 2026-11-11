@@ -38,7 +38,7 @@ def test_seed_tools_idempotent():
     with SyncSession() as db:
         rows = db.execute(select(Tool)).scalars().all()
         assert sorted(t.slug for t in rows) == [
-            "donsetch", "github", "gitlab", "websearch_serper", "websearch_staan"]
+            "donsetch", "email", "github", "gitlab", "websearch_serper", "websearch_staan"]
         assert all(not t.enabled for t in rows) or True  # default off unless admin enabled
 
 
@@ -144,7 +144,7 @@ def test_admin_tools_flow(client, monkeypatch):
     h = _admin_login(client)
     rows = client.get("/api/admin/tools").json()
     assert sorted(t["slug"] for t in rows) == [
-        "donsetch", "github", "gitlab", "websearch_serper", "websearch_staan"]
+        "donsetch", "email", "github", "gitlab", "websearch_serper", "websearch_staan"]
     gl = next(t for t in rows if t["slug"] == "gitlab")
     r = client.patch(f"/api/admin/tools/{gl['id']}",
                      json={"url": "https://gitlab.acme.example/api/v4/mcp",

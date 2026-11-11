@@ -349,16 +349,39 @@ class KnowledgeBaseCreateIn(BaseModel):
     http_username: str | None = Field(default=None, max_length=255)
 
 
+class EmailToolConfigIn(BaseModel):
+    """§Tools `email` row settings. Every field is optional: omitted = leave as
+    is; an empty string clears (an empty smtp_password removes the stored one).
+    The password is write-only - the API only ever answers `has_password`."""
+    smtp_host: str | None = Field(default=None, max_length=253)
+    smtp_port: int | None = Field(default=None, ge=1, le=65535)
+    smtp_security: Literal["starttls", "ssl", "none"] | None = None
+    smtp_username: str | None = Field(default=None, max_length=320)
+    smtp_password: str | None = Field(default=None, max_length=1000)
+    from_address: str | None = Field(default=None, max_length=320)
+    from_name: str | None = Field(default=None, max_length=120)
+    allowed_recipients: list[str] | None = Field(default=None, max_length=200)
+
+
+class EmailToolSendIn(BaseModel):
+    """What the email sidecar relays from a build's `send_email` call."""
+    to: list[str] = Field(min_length=1, max_length=10)
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=20000)
+
+
 class ToolPatchIn(BaseModel):
     """§Tools global row edit: URL (self-hosted GitLab MCP endpoints), key
     (empty string clears), enable flag (enabling re-scans server-side).
     `capabilities` applies to the §web research row only - the subset of
     search/fetch/crawl a build may call; an empty list leaves it with nothing to
-    offer and is refused while the row is enabled."""
+    offer and is refused while the row is enabled. `email` applies to the email
+    row only: its SMTP settings and recipient allowlist."""
     url: str | None = Field(default=None, max_length=512)
     api_key: str | None = Field(default=None, max_length=4000)
     enabled: bool | None = None
     capabilities: list[str] | None = Field(default=None, max_length=8)
+    email: EmailToolConfigIn | None = None
 
 
 class ProjectToolPatchIn(BaseModel):

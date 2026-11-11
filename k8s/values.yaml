@@ -162,6 +162,15 @@ websearchMcp:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }
 
+# The MCP sidecars we write ourselves (sidecars/app.py) - one route per sidecar
+# on one image, so a new one needs nothing here. Stateless HTTP proxying to a
+# vendor API: cheap, and safe to scale with replicas if it ever needs to.
+sidecarsMcp:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+
 # The dev agent's browser tool: official Playwright MCP image (bundled headless
 # chromium), one isolated in-memory browser per MCP session. Stateless per
 # session - scale with replicas (the Service pins a client to its replica).

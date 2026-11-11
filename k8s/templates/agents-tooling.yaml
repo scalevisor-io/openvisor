@@ -1,7 +1,9 @@
 # MCP tooling reachable from dev-run Jobs: Context7 (live library docs; needs npm
-# egress at start - it npx-installs the pinned package) and browser-mcp (the dev
+# egress at start - it npx-installs the pinned package), browser-mcp (the dev
 # agent's browser tool: the official Playwright MCP image with its own bundled
-# headless chromium, one isolated in-memory browser profile per MCP session).
+# headless chromium, one isolated in-memory browser profile per MCP session),
+# websearch-mcp, donsetch-mcp, and sidecars-mcp (the sidecars we write ourselves,
+# one route each on one image - adding one changes nothing in this file).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -197,6 +199,61 @@ metadata:
 spec:
   selector:
     app: websearch-mcp
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sidecars-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sidecarsMcp.replicas }}
+  selector:
+    matchLabels:
+      app: sidecars-mcp
+  template:
+    metadata:
+      labels:
+        app: sidecars-mcp
+        {{- include "openvisor.labels" . | nindent 8 }}
+    spec:
+      {{- include "openvisor.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: sidecars-mcp
+          # The MCP sidecars we write ourselves (sidecars/app.py), one route per
+          # sidecar: today `email`, which relays to the `api` Service (its
+          # API_INTERNAL_URL default, http://api:8000). Stateless - the build's
+          # credential rides each request as Authorization: Bearer, so nothing
+          # is held here and any replica can serve any call.
+          image: {{ include "openvisor.image" (dict "root" . "name" "sidecars-mcp") }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.sidecarsMcp.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sidecars-mcp
+  labels:
+    {{- include "openvisor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: sidecars-mcp
   ports:
     - name: http
       port: 3000

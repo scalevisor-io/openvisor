@@ -7,19 +7,22 @@ colliding slugs get unique keys; a keyless mcp KB is url-only; and with no
 context7 row at all we fall back to Context7 from settings (pre-MR2 DB).
 
 Hermetic: each test runs in a session it rolls back, having first cleared the
-context7 + mcp rows so it controls the exact set - the shared dev DB's seeded
-rows are left untouched.
+context7 + mcp rows AND disabled every §Tools row, so it controls the exact set -
+the shared dev DB is only ever written inside that rolled-back session. The tools
+half matters: `_mcp_config` merges enabled Tool rows too, so an admin who turns
+GitHub or email on in their local stack would otherwise fail every exact-set
+assertion here.
 """
 import json
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from app.core.config import settings
 from app.core.encryption import decrypt, encrypt
 from app.core.db import SyncSession
-from app.models import KnowledgeBase
+from app.models import KnowledgeBase, Tool
 from app.workers.tasks import _mcp_config
 
 
@@ -41,10 +44,11 @@ def db():
 
 
 def _reset_kbs(db):
-    """Clear the context7 + mcp rows so the test owns the exact set
-    (rolled back)."""
+    """Clear the context7 + mcp rows and switch off every §Tools row, so the test
+    owns the exact set (rolled back)."""
     db.execute(delete(KnowledgeBase).where(
         KnowledgeBase.kind.in_(("context7", "mcp"))))
+    db.execute(update(Tool).values(enabled=False))
     db.flush()
 
 

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { toolsApi, type Tool } from "../../lib/endpoints";
+import { toolsApi, type EmailToolConfigPatch, type Tool } from "../../lib/endpoints";
 import { useToast } from "../../lib/toast";
 import { McpNameChip, Modal, Spinner, Toggle } from "../../components/ui";
 import { ProgramIcon } from "../../components/programs";
+import EmailToolSettings from "../../components/EmailToolSettings";
 
 /** §Tools - MCP servers the dev agent can ACT through (GitHub / GitLab PR,
  * issue and review operations), as opposed to knowledge bases which inform.
@@ -18,6 +19,8 @@ const KIND_COPY: Record<string, string> = {
     "Give the agent hands on GitLab: merge requests, issues and reviews - on gitlab.com or your own self-hosted instance.",
   donsetch:
     "Let the agent research the live web: search, read a page as clean markdown, or crawl a documentation site. Keyless - no account, no API key. Choose below which of the three it may use.",
+  email:
+    "Let the agent send a notification email when one is asked for - to the project's customer, or to addresses you approve below. Your SMTP server; the platform sends on the build's behalf, so the build never holds the password.",
 };
 
 // Keyed web-search providers. One §Tools row each, so the copy is per PROVIDER
@@ -51,7 +54,15 @@ function toolCopy(t: Tool): string {
 /** A keyed provider can't search without its key, so the switch stays locked
  *  until one is stored - the server refuses the enable either way. */
 function needsKey(t: Tool): boolean {
-  return t.kind === "websearch" && !t.has_api_key;
+  return (
+    (t.kind === "websearch" && !t.has_api_key) ||
+    (t.kind === "email" && !t.email?.configured)
+  );
+}
+
+/** Why the switch is locked - the email row needs settings, not a key. */
+function lockedHint(t: Tool): string {
+  return t.kind === "email" ? "Save the SMTP settings first" : "Set the provider API key first";
 }
 
 // Brand tiles in the ProgramIcon duotone family. GitHub sits on the family's
@@ -61,6 +72,7 @@ const KIND_GRADIENT: Record<string, [string, string]> = {
   github: ["#64748b", "#334155"],
   gitlab: ["#fc6d26", "#e24329"],
   donsetch: ["#0ea5e9", "#4338ca"],
+  email: ["#f59e0b", "#b45309"],
 };
 
 // Per-provider tiles for the websearch rows, which share one kind.
@@ -84,6 +96,12 @@ const DONSETCH_GLYPH = {
   d: "M10.5 2a8.5 8.5 0 1 0 5.262 15.176l4.03 4.031a1 1 0 0 0 1.415-1.414l-4.03-4.031A8.5 8.5 0 0 0 10.5 2Zm0 2c.9 0 1.86 1.01 2.4 2.75H8.1C8.64 5.01 9.6 4 10.5 4ZM7.7 8.25h5.6a11.6 11.6 0 0 1 0 4.5H7.7a11.6 11.6 0 0 1 0-4.5Zm-1.55 4.5H4.29a6.53 6.53 0 0 1 0-4.5h1.86a13.6 13.6 0 0 0 0 4.5Zm.5 2h1.45c.29.96.68 1.79 1.15 2.42a6.53 6.53 0 0 1-2.6-2.42Zm4.35 2.75c-.9 0-1.86-1.01-2.4-2.75h4.8c-.54 1.74-1.5 2.75-2.4 2.75Zm2.9-.33c.47-.63.86-1.46 1.15-2.42h1.45a6.53 6.53 0 0 1-2.6 2.42Zm1.55-4.42a13.6 13.6 0 0 0 0-4.5h1.86a6.53 6.53 0 0 1 0 4.5h-1.86Zm-.4-6.5c-.29-.96-.68-1.79-1.15-2.42a6.53 6.53 0 0 1 2.6 2.42h-1.45Zm-6.85 0H6.75a6.53 6.53 0 0 1 2.6-2.42c-.47.63-.86 1.46-1.15 2.42Z",
 };
 
+// An envelope: notification email.
+const EMAIL_GLYPH = {
+  box: 24,
+  d: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v.51l8 5 8-5V6H4Zm16 2.86-7.47 4.67a1 1 0 0 1-1.06 0L4 8.86V18h16V8.86Z",
+};
+
 // A plain magnifier for the keyed search providers.
 const SEARCH_GLYPH = {
   box: 24,
@@ -100,6 +118,7 @@ function ToolIcon({ tool, size = 56 }: { tool: Tool; size?: number }) {
     : tool.kind === "gitlab" ? GITLAB_GLYPH
     : tool.kind === "donsetch" ? DONSETCH_GLYPH
     : tool.kind === "websearch" ? SEARCH_GLYPH
+    : tool.kind === "email" ? EMAIL_GLYPH
     : null;
   if (!grad || !glyph) return <ProgramIcon title={tool.name} seed={tool.id} size={size} />;
   return (
@@ -142,17 +161,25 @@ export default function Tools() {
 
   async function save(
     t: Tool,
-    patch: { url?: string; api_key?: string; enabled?: boolean; capabilities?: string[] },
+    patch: {
+      url?: string;
+      api_key?: string;
+      enabled?: boolean;
+      capabilities?: string[];
+      email?: EmailToolConfigPatch;
+    },
     doneMessage?: string,
-  ) {
+  ): Promise<boolean> {
     setBusy(t.id);
     try {
       const updated = await toolsApi.patch(t.id, patch);
       setTools((cur) => (cur ? cur.map((x) => (x.id === t.id ? updated : x)) : cur));
       setKeys((k) => ({ ...k, [t.id]: "" }));
       toast.push(doneMessage ?? `${t.name} saved.`, "ok");
+      return true;
     } catch (e) {
       toast.push(e instanceof Error ? e.message : "Save failed", "err");
+      return false;
     } finally {
       setBusy(null);
     }
@@ -212,7 +239,7 @@ export default function Tools() {
                   disabled={busy === t.id || (needsKey(t) && !t.enabled)}
                   title={
                     needsKey(t) && !t.enabled
-                      ? "Set the provider API key first"
+                      ? lockedHint(t)
                       : t.enabled
                         ? undefined
                         : "Enabling runs the tool-poisoning scan"
@@ -267,7 +294,7 @@ export default function Tools() {
                 disabled={busy === selected.id || (needsKey(selected) && !selected.enabled)}
                 title={
                   needsKey(selected) && !selected.enabled
-                    ? "Set the provider API key first"
+                    ? lockedHint(selected)
                     : selected.enabled
                       ? undefined
                       : "Enabling runs the tool-poisoning scan"
@@ -375,7 +402,15 @@ export default function Tools() {
               </p>
             )}
           </div>
-          {selected.kind !== "donsetch" && (
+          {selected.kind === "email" && (
+            <EmailToolSettings
+              key={selected.id}
+              tool={selected}
+              busy={busy === selected.id}
+              onSave={(patch, done) => save(selected, { email: patch }, done)}
+            />
+          )}
+          {selected.kind !== "donsetch" && selected.kind !== "email" && (
           <div className="field mt">
             <label>
               API key{" "}

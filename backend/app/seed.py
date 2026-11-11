@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.db import SyncSession
 from app.core.security import hash_password
 from app.models import Tool, KnowledgeBase, Membership, Organization, User
-from app.services import donsetch, websearch
+from app.services import donsetch, email_tool, websearch
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("seed")
@@ -75,14 +75,19 @@ _BUILTIN_TOOLS = [
     *((websearch.tool_slug(p), websearch.PROVIDER_NAMES[p], websearch.KIND,
        websearch.endpoint(settings.websearch_mcp_url, p))
       for p in websearch.PROVIDERS),
+    # Notification email to approved addresses, on the sidecars-mcp image.
+    # Disabled until its SMTP settings log in.
+    (email_tool.SLUG, email_tool.NAME, email_tool.KIND,
+     email_tool.endpoint(settings.sidecars_mcp_url)),
 ]
 
 
 def seed_tools() -> None:
     """Ensure the built-in MCP tools exist (§Tools): GitHub, GitLab, the §web
-    research engine and one row per keyed web-search provider. Idempotent per
-    slug; the unique index absorbs a concurrent double-seed. The GitLab row's URL
-    is editable for self-hosted instances (https://<host>/api/v4/mcp)."""
+    research engine, one row per keyed web-search provider, and email
+    notifications. Idempotent per slug; the unique index absorbs a concurrent
+    double-seed. The GitLab row's URL is editable for self-hosted instances
+    (https://<host>/api/v4/mcp)."""
     with SyncSession() as db:
         for slug, name, kind, url in _BUILTIN_TOOLS:
             if db.execute(select(Tool).where(Tool.slug == slug)).scalar_one_or_none():
@@ -94,6 +99,9 @@ def seed_tools() -> None:
                 # The provider is the row's identity for verification and for the
                 # sidecar route; derive nothing from the slug at call sites.
                 params = {"provider": slug.removeprefix("websearch_")}
+            elif kind == email_tool.KIND:
+                params = {"smtp": {"security": "starttls", "port": 587},
+                          "allowed_recipients": []}
             db.add(Tool(slug=slug, name=name, kind=kind, url=url, enabled=False,
                         params=params))
             try:
