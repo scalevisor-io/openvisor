@@ -317,10 +317,16 @@ def client():
     # the way out, or the next HTTP module inherits them closed.
     asyncio.run(engine.dispose(close=False))
     events._async_client = None
+    # Leave the shared login limiter (20 per IP, 10 per address, 15 min) as
+    # this module found it: later modules log in from the same TestClient IP.
+    for k in r.scan_iter("rl:*"):
+        r.delete(k)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def admin(client):
+    """One login for the whole module - per-test logins would eat the login
+    rate limit every later HTTP module shares."""
     from app.core.config import settings
     tok = client.get("/api/auth/csrf").json()["csrf_token"]
     r = client.post("/api/auth/login",
