@@ -1,7 +1,8 @@
 from fastapi import Depends, FastAPI
 
 from app.api import (
-    account, admin, auth, billing, chat, chat_documents, chat_images, demo, files, hub, knowledge,
+    account, admin, auth, billing, chat, chat_documents, chat_images, demo, email_tool, files, hub,
+    knowledge,
     knowledge_bases,
     tools, memory, meta, model_endpoints, org_memory, program_hooks, programs, projects,
     mcp_delegate,
@@ -50,6 +51,9 @@ app.include_router(knowledge.router)  # bearer-token auth, no cookies/CSRF
 app.include_router(hub.router)  # hub-token auth, no cookies/CSRF
 app.include_router(billing.router)  # webhook must stay CSRF-free
 app.include_router(program_hooks.router)  # §28 inbound hooks: HMAC-authed, no cookies/CSRF
+# §Tools email: the sidecar's relay, run-token-authed, under /internal (never routed
+# by Traefik or the SPA's nginx, which forward /api and /ws only).
+app.include_router(email_tool.router)
 
 
 @app.get("/api/health")

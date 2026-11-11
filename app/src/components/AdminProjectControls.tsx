@@ -701,31 +701,42 @@ function ProjectToolsModal({ projectId, onClose }: { projectId: string; onClose:
               <option value="off">Disabled for this project</option>
             </select>
           </div>
-          <div className="row gap-sm mt">
-            <input
-              value={urls[t.id] ?? ""}
-              onChange={(e) => setUrls((u) => ({ ...u, [t.id]: e.target.value }))}
-              placeholder={`URL override (default: ${t.url})`}
-              style={{ flex: 1 }}
-            />
-          </div>
-          <div className="row gap-sm mt">
-            <input
-              type="password"
-              value={keys[t.id] ?? ""}
-              onChange={(e) => setKeys((k) => ({ ...k, [t.id]: e.target.value }))}
-              placeholder={t.override_has_api_key ? "•••••••• (override set)" : "Key override (optional)"}
-              autoComplete="new-password"
-              style={{ flex: 1 }}
-            />
-            <button
-              className="btn btn-sm"
-              disabled={busy === t.id}
-              onClick={() => save(t, t.override_enabled)}
-            >
-              {busy === t.id ? <Spinner /> : "Save"}
-            </button>
-          </div>
+          {t.kind === "email" ? (
+            // Our own sidecar and a per-run token: there is no URL or key a
+            // project could meaningfully override, and the API refuses both.
+            <p className="tiny faint mt">
+              Writes only to this project's customer and the addresses approved on the
+              Tools page.
+            </p>
+          ) : (
+            <>
+              <div className="row gap-sm mt">
+                <input
+                  value={urls[t.id] ?? ""}
+                  onChange={(e) => setUrls((u) => ({ ...u, [t.id]: e.target.value }))}
+                  placeholder={`URL override (default: ${t.url})`}
+                  style={{ flex: 1 }}
+                />
+              </div>
+              <div className="row gap-sm mt">
+                <input
+                  type="password"
+                  value={keys[t.id] ?? ""}
+                  onChange={(e) => setKeys((k) => ({ ...k, [t.id]: e.target.value }))}
+                  placeholder={t.override_has_api_key ? "•••••••• (override set)" : "Key override (optional)"}
+                  autoComplete="new-password"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-sm"
+                  disabled={busy === t.id}
+                  onClick={() => save(t, t.override_enabled)}
+                >
+                  {busy === t.id ? <Spinner /> : "Save"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       ))}
     </Modal>

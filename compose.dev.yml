@@ -31,6 +31,9 @@ services:
       # Same rationale for the web-research bridge (donsetch/bridge.py): its own
       # image, so mount the source read-only for the sidecar test.
       - ./donsetch:/app/donsetch_src:ro
+      # Same rationale for the MCP sidecars we write ourselves (sidecars/): their
+      # own image, so mount the source read-only for the sidecar tests.
+      - ./sidecars:/app/sidecars_src:ro
       # Same rationale for the dev runner's pre-publish leak scan (runner/leak_scan.py):
       # a separate image, so mount its source read-only for the leak-scan test.
       - ./runner:/app/runner_src:ro

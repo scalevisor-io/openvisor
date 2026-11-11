@@ -849,14 +849,18 @@ class Tool(Base):
     websearch row re-probes its key against the PROVIDER on top of the poisoning
     scan, the way the KB page did before web search moved here. The GitLab row's `url` points at the instance's MCP
     endpoint (https://<host>/api/v4/mcp), so self-hosted instances are plain
-    configuration. `api_key_enc` is envelope-encrypted and never leaves the
+    configuration. The `email` row stores {"smtp": {host, port, security,
+    username, password_enc, from_address, from_name}, "allowed_recipients":
+    [...]} and leaves `api_key_enc` empty: a build never receives its SMTP
+    password, only a per-project run token (services/email_tool).
+    `api_key_enc` is envelope-encrypted and never leaves the
     server (the API exposes has_api_key only); `tools_fingerprint` supports the
     §KB rug-pull detection across builds."""
     __tablename__ = "tool"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     slug: Mapped[str] = mapped_column(String(40), unique=True)
     name: Mapped[str] = mapped_column(String(80))
-    kind: Mapped[str] = mapped_column(String(16))  # github | gitlab | custom
+    kind: Mapped[str] = mapped_column(String(16))  # github | gitlab | donsetch | websearch | email
     url: Mapped[str] = mapped_column(String(512))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     params: Mapped[dict | None] = mapped_column(JSON, nullable=True)

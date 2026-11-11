@@ -540,7 +540,7 @@ export type Tool = {
   id: string;
   slug: string;
   name: string;
-  kind: "github" | "gitlab" | "custom" | "donsetch" | "websearch";
+  kind: "github" | "gitlab" | "custom" | "donsetch" | "websearch" | "email";
   url: string;
   enabled: boolean;
   has_api_key: boolean;
@@ -553,7 +553,29 @@ export type Tool = {
   all_capabilities?: { slug: string; label: string }[];
   // §Tools websearch rows only: which search provider this row speaks for.
   provider?: string | null;
+  // §Tools email row only: its SMTP settings and recipient allowlist. The
+  // password is write-only - only has_password comes back.
+  email?: EmailToolConfig;
 };
+
+export type EmailSecurity = "starttls" | "ssl" | "none";
+
+export type EmailToolConfig = {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: EmailSecurity;
+  smtp_username: string;
+  has_password: boolean;
+  from_address: string;
+  from_name: string;
+  allowed_recipients: string[];
+  configured: boolean;
+};
+
+// What the admin page PATCHes: every field optional; smtp_password "" clears it.
+export type EmailToolConfigPatch = Partial<
+  Omit<EmailToolConfig, "has_password" | "configured"> & { smtp_password: string }
+>;
 
 export type ProjectTool = Tool & {
   override_enabled: boolean | null;
@@ -565,10 +587,14 @@ export type ProjectTool = Tool & {
 export const toolsApi = {
   list: () => api.get<Tool[]>("/admin/tools"),
   patch: (id: string,
-          body: { url?: string; api_key?: string; enabled?: boolean; capabilities?: string[] }) =>
+          body: { url?: string; api_key?: string; enabled?: boolean; capabilities?: string[];
+                  email?: EmailToolConfigPatch }) =>
     api.patch<Tool>(`/admin/tools/${id}`, body),
   verify: (id: string) =>
     api.post<{ ok: boolean; detail: string }>(`/admin/tools/${id}/verify`, {}),
+  // Email row only: one real message to the calling admin's own address.
+  testEmail: (id: string) =>
+    api.post<{ ok: boolean; detail: string }>(`/admin/tools/${id}/test-email`, {}),
   projectList: (projectId: string) => api.get<ProjectTool[]>(`/admin/projects/${projectId}/tools`),
   projectPut: (projectId: string, toolId: string,
                body: { url?: string; api_key?: string; enabled?: boolean | null }) =>

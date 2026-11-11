@@ -56,6 +56,10 @@ services:
     # compose.base override
     image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/mcp:${IMAGE_TAG:-latest}
 
+  sidecars-mcp:
+    # The MCP sidecars we write ourselves (sidecars/app.py), one image for all.
+    image: ${IMAGE_REGISTRY:-registry.example.com/openvisor}/sidecars-mcp:${IMAGE_TAG:-latest}
+
   donsetch-mcp:
     # §web research: its OWN image, not the mcp one - the engine needs glibc 2.38+
     # and is AGPL-3.0, so it stays in an image carrying its licence.

@@ -24,7 +24,7 @@ from app.models import (
     ProjectRoutine, Request, Tool, User, utcnow,
 )
 from app.agents import pipeline
-from app.services import acceptance, brand, contract, delivery, deployer_client, dev_concurrency, dev_faults, dev_harness, devfeed, donsetch, egress, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
+from app.services import acceptance, brand, contract, delivery, deployer_client, dev_concurrency, dev_faults, dev_harness, devfeed, donsetch, egress, email_tool, emailer, events, github, gitlab, hub_events, knowledge, llm, mcp_names, mcp_scan, model_config, rag, repos as repolib, routines as routines_svc, sbom, sovereign, speciality, vision, websearch, work_context
 from app.services.agent_eval.harness_version import compute_harness_version
 from app.services.leakscan import kb_fingerprints as _kb_fingerprints
 from app.services.lifecycle import TransitionError, transition_sync
@@ -2297,7 +2297,10 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
     resolved project override → project/org Memory secret (GITHUB_TOKEN /
     GITLAB_TOKEN) → global tool key. The §web research row resolves to the
     sidecar route serving exactly the capabilities it still has enabled, so a
-    capability the admin turned off is missing from the run's tools/list."""
+    capability the admin turned off is missing from the run's tools/list.
+    The email row never hands over a stored credential: its key is a token
+    minted for THIS project and this run's lifetime, and the SMTP password stays
+    on the platform side of the sidecar (services/email_tool)."""
     rows = db.execute(select(Tool).order_by(Tool.created_at)).scalars().all()
     if not rows:
         return []
@@ -2313,6 +2316,14 @@ def _project_tools(db: Session, project: Project | None) -> list[tuple]:
         ov = overrides.get(t.id)
         enabled = ov.enabled if (ov and ov.enabled is not None) else t.enabled
         if not enabled:
+            continue
+        if t.kind == email_tool.KIND:
+            # Recipients are resolved per project, so a project-less config
+            # has nobody to write to.
+            if project is not None and email_tool.is_configured(t):
+                out.append((t.slug, t.url, email_tool.mint_token(
+                    project.id, _run_timeout_minutes(project) * 60
+                    + email_tool.TOKEN_MARGIN_S)))
             continue
         url = (ov.url if ov and ov.url else t.url)
         if t.kind == donsetch.KIND:
